@@ -15,13 +15,16 @@ const PRODUCT_BARCODE_FORMATS = [
 ];
 
 // focusMode/focusDistance/pointsOfInterest are non-standard MediaTrackConstraints
-// extensions not in TS's lib.dom types yet, and support is inconsistent enough
-// that nothing here can be assumed to work — confirmed on a Galaxy S24+ in Chrome:
-// focusMode capability only lists "manual", and manually driving focusDistance
-// resolves successfully (browser echoes back the exact value requested) with zero
-// effect on the actual lens. pointsOfInterest isn't even listed as a capability on
-// that device, so tap-to-focus below is a genuine "try it and see" rather than a
-// confirmed-working fallback.
+// extensions not in TS's lib.dom types yet, and neither reliably reaches the
+// physical lens — confirmed on a Galaxy S24+ in Chrome: both manual focusDistance
+// and pointsOfInterest (tap-to-focus) resolve applyConstraints successfully, with
+// the browser echoing back the exact values requested, but produce no visible
+// focus change. That's a driver-level gap between what Chrome's camera shim
+// reports and what the Samsung camera stack actually does underneath it — not
+// something fixable from here. Both controls are kept anyway since they're
+// harmless and may genuinely work on other hardware/driver combinations; native
+// camera access (e.g. wrapping with Capacitor) is the real fix if reliable focus
+// control ever becomes a priority.
 interface ExtendedCapabilities extends MediaTrackCapabilities {
   focusMode?: string[];
   focusDistance?: { min: number; max: number; step: number };
@@ -68,7 +71,6 @@ export default function BarcodeScanner({
   const [focusRange, setFocusRange] = useState<{ min: number; max: number; step: number } | null>(null);
   const [focusDistance, setFocusDistance] = useState(0.1);
   const [tapMarker, setTapMarker] = useState<{ x: number; y: number } | null>(null);
-  const [tapDebug, setTapDebug] = useState<string | null>(null);
 
   // Deps intentionally empty: this starts the camera exactly once on mount and
   // tears it down on unmount. Reading onScan through a ref avoids restarting
@@ -147,8 +149,10 @@ export default function BarcodeScanner({
     track.applyConstraints(constraints as MediaTrackConstraints).catch(() => {});
   }
 
-  // Temporary diagnostic on the result text: remove once tap-to-focus is
-  // confirmed working (or confirmed not to be, on this device).
+  // Best-effort: not confirmed to actually move the lens on every device (see
+  // the file-level comment), but harmless to leave in — no downside if it's a
+  // no-op, and it may well work on hardware/driver combos other than the one
+  // this was tested against.
   function handleTap(e: React.MouseEvent<HTMLDivElement>) {
     const video = videoRef.current;
     const track = trackRef.current;
@@ -164,10 +168,7 @@ export default function BarcodeScanner({
     const constraints: ExtendedConstraints = {
       advanced: [{ pointsOfInterest: [{ x: coords.x, y: coords.y }] }],
     };
-    track
-      .applyConstraints(constraints as MediaTrackConstraints)
-      .then(() => setTapDebug(`pointsOfInterest (${coords.x.toFixed(2)}, ${coords.y.toFixed(2)}) resolved OK`))
-      .catch((err) => setTapDebug(`pointsOfInterest REJECTED: ${err?.name ?? ""} ${err?.message ?? String(err)}`));
+    track.applyConstraints(constraints as MediaTrackConstraints).catch(() => {});
   }
 
   return (
@@ -216,11 +217,6 @@ export default function BarcodeScanner({
               <span>Far</span>
             </div>
           </div>
-        )}
-        {tapDebug && (
-          <pre className="text-left text-[10px] leading-snug text-muted whitespace-pre-wrap break-all bg-surface rounded-md p-2 mt-2">
-            {tapDebug}
-          </pre>
         )}
       </div>
     </div>
