@@ -9,6 +9,9 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - DATA_DIR=/app/data
+      # Only gate protecting your food/weight/photo data on the tailnet — change any time,
+      # container just needs a restart, no data is keyed off this value.
+      - AUTH_PASSWORD=9wiU9KWIGDo9fbpn
     networks:
       - proxy
 

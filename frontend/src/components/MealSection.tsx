@@ -1,0 +1,71 @@
+import type { LogEntry, Meal } from "../api/types";
+
+const MEAL_LABELS: Record<Meal, string> = {
+  breakfast: "Breakfast",
+  lunch: "Lunch",
+  dinner: "Dinner",
+  snacks: "Snacks",
+};
+
+function fmt(n: number): string {
+  return Math.round(n).toLocaleString();
+}
+
+export default function MealSection({
+  meal,
+  entries,
+  onAdd,
+  onEdit,
+  onDelete,
+}: {
+  meal: Meal;
+  entries: LogEntry[];
+  onAdd: () => void;
+  onEdit: (entry: LogEntry) => void;
+  onDelete: (id: string) => void;
+}) {
+  const subtotal = entries.reduce((sum, e) => sum + e.nutrition.calories, 0);
+
+  return (
+    <div className="border border-line bg-surface rounded-md overflow-hidden">
+      <div className="px-4 py-2.5 flex items-center justify-between border-b border-line">
+        <span className="text-sm font-medium">{MEAL_LABELS[meal]}</span>
+        {entries.length > 0 && <span className="tabular text-xs text-muted">{fmt(subtotal)} kcal</span>}
+      </div>
+
+      {entries.map((entry) => (
+        <button
+          key={entry.id}
+          onClick={() => onEdit(entry)}
+          className="w-full flex items-center justify-between px-4 py-2.5 border-b border-line/60 last:border-b-0 text-left active:bg-surface-raised"
+        >
+          <span className="min-w-0">
+            <span className="block text-sm truncate">{entry.food.name}</span>
+            <span className="block text-xs text-muted tabular">{fmt(entry.quantityGrams)} g</span>
+          </span>
+          <span className="flex items-center gap-3 shrink-0">
+            <span className="tabular text-sm">{fmt(entry.nutrition.calories)}</span>
+            <span
+              role="button"
+              aria-label={`Remove ${entry.food.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(entry.id);
+              }}
+              className="text-muted text-lg leading-none px-1 active:text-ink"
+            >
+              ×
+            </span>
+          </span>
+        </button>
+      ))}
+
+      <button
+        onClick={onAdd}
+        className="w-full px-4 py-2.5 text-sm text-accent text-left active:bg-surface-raised"
+      >
+        + Add food
+      </button>
+    </div>
+  );
+}
