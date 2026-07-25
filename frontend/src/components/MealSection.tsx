@@ -17,12 +17,14 @@ export default function MealSection({
   onAdd,
   onEdit,
   onDelete,
+  onCopy,
 }: {
   meal: Meal;
   entries: LogEntry[];
   onAdd: () => void;
   onEdit: (entry: LogEntry) => void;
   onDelete: (id: string) => void;
+  onCopy: () => void;
 }) {
   const subtotal = entries.reduce((sum, e) => sum + e.nutrition.calories, 0);
 
@@ -30,7 +32,12 @@ export default function MealSection({
     <div className="border border-line bg-surface rounded-md overflow-hidden">
       <div className="px-4 py-2.5 flex items-center justify-between border-b border-line">
         <span className="text-sm font-medium">{MEAL_LABELS[meal]}</span>
-        {entries.length > 0 && <span className="tabular text-xs text-muted">{fmt(subtotal)} kcal</span>}
+        <span className="flex items-center gap-3">
+          {entries.length > 0 && <span className="tabular text-xs text-muted">{fmt(subtotal)} kcal</span>}
+          <button onClick={onCopy} className="text-xs text-accent">
+            Copy
+          </button>
+        </span>
       </div>
 
       {entries.map((entry) => (

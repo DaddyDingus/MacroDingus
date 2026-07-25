@@ -1,12 +1,13 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "../db/index.js";
 import { logs, foods } from "../db/schema.js";
 import { scaleNutrition, sumNutrition } from "../engine/nutrition.js";
 
 const MEALS = ["breakfast", "lunch", "dinner", "snacks"] as const;
+type MealType = (typeof MEALS)[number];
 
 const logInput = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -80,6 +81,135 @@ export function registerLogRoutes(app: FastifyInstance) {
 
     reply.code(201);
     return entryWithNutrition(id, req.userId!);
+  });
+
+  // Adds several entries to one day in a single round-trip — backs the add-food
+  // sheet's "select multiple, add them all" mode, where firing N individual
+  // POST /api/logs requests would mean N separate optimistic-update races.
+  app.post("/api/logs/bulk", async (req, reply) => {
+    const schema = z.object({
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      entries: z
+        .array(
+          z.object({
+            meal: z.enum(MEALS),
+            foodId: z.string(),
+            quantityGrams: z.number().positive(),
+          })
+        )
+        .min(1)
+        .max(50),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+
+    const foodIds = [...new Set(parsed.data.entries.map((e) => e.foodId))];
+    const foundFoods = await db.select().from(foods).where(inArray(foods.id, foodIds));
+    const foodMap = new Map(foundFoods.map((f) => [f.id, f]));
+    if (foundFoods.length !== foodIds.length) return reply.code(400).send({ error: "unknown foodId" });
+
+    const now = new Date().toISOString();
+    const rows = parsed.data.entries.map((e) => ({
+      id: randomUUID(),
+      userId: req.userId!,
+      date: parsed.data.date,
+      meal: e.meal,
+      foodId: e.foodId,
+      quantityGrams: e.quantityGrams,
+      loggedAt: now,
+      createdAt: now,
+    }));
+    await db.insert(logs).values(rows);
+
+    reply.code(201);
+    return {
+      entries: rows.map((row) => {
+        const food = foodMap.get(row.foodId)!;
+        return {
+          id: row.id,
+          meal: row.meal,
+          quantityGrams: row.quantityGrams,
+          loggedAt: row.loggedAt,
+          food,
+          nutrition: scaleNutrition(food, row.quantityGrams),
+        };
+      }),
+    };
+  });
+
+  // Copies entries from one day to another (optionally scoped to a single
+  // meal) — powers both "copy yesterday" and "copy this meal from a
+  // previous day." Copies are additive: existing entries on the target
+  // day/meal are left alone, not replaced.
+  app.post("/api/logs/copy", async (req, reply) => {
+    const schema = z.object({
+      sourceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      targetDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      meal: z.enum(MEALS).optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+
+    const { sourceDate, targetDate, meal } = parsed.data;
+    const userId = req.userId!;
+    const conditions = [eq(logs.userId, userId), eq(logs.date, sourceDate)];
+    if (meal) conditions.push(eq(logs.meal, meal));
+
+    const sourceRows = await db
+      .select()
+      .from(logs)
+      .where(and(...conditions));
+    if (sourceRows.length === 0) return { copied: 0 };
+
+    const now = new Date().toISOString();
+    const newRows = sourceRows.map((row) => ({
+      id: randomUUID(),
+      userId,
+      date: targetDate,
+      meal: row.meal,
+      foodId: row.foodId,
+      quantityGrams: row.quantityGrams,
+      loggedAt: now,
+      createdAt: now,
+    }));
+    await db.insert(logs).values(newRows);
+
+    return { copied: newRows.length };
+  });
+
+  // Recent days that have at least one entry, most recent first, with a
+  // calorie total per day so a copy-from picker reads as more than bare
+  // dates. Aggregated in JS rather than SQL — trivial at personal-diary scale
+  // and avoids fighting drizzle's query builder for a marginal gain.
+  app.get("/api/logs/recent-days", async (req) => {
+    const { limit, meal } = req.query as { limit?: string; meal?: string };
+    const take = Math.min(Number(limit) || 14, 60);
+    const userId = req.userId!;
+
+    const conditions = [eq(logs.userId, userId)];
+    if (meal && (MEALS as readonly string[]).includes(meal)) {
+      conditions.push(eq(logs.meal, meal as MealType));
+    }
+
+    const rows = await db
+      .select({ log: logs, food: foods })
+      .from(logs)
+      .innerJoin(foods, eq(logs.foodId, foods.id))
+      .where(and(...conditions));
+
+    const byDate = new Map<string, { calories: number; entryCount: number }>();
+    for (const { log, food } of rows) {
+      const calories = scaleNutrition(food, log.quantityGrams).calories;
+      const existing = byDate.get(log.date) ?? { calories: 0, entryCount: 0 };
+      existing.calories += calories;
+      existing.entryCount += 1;
+      byDate.set(log.date, existing);
+    }
+
+    return [...byDate.entries()]
+      .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+      .slice(0, take)
+      .map(([date, v]) => ({ date, calories: Math.round(v.calories), entryCount: v.entryCount }));
   });
 
   app.patch("/api/logs/:id", async (req, reply) => {

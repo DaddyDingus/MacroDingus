@@ -99,6 +99,75 @@ export function useUpdateLogQuantity(date: string) {
   });
 }
 
+export function useBulkAddLog(date: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { entries: { food: Food; meal: Meal; quantityGrams: number }[] }) =>
+      apiFetch<{ entries: LogEntry[] }>("/logs/bulk", {
+        method: "POST",
+        body: JSON.stringify({
+          date,
+          entries: input.entries.map((e) => ({
+            meal: e.meal,
+            foodId: e.food.id,
+            quantityGrams: e.quantityGrams,
+          })),
+        }),
+      }),
+    onMutate: async (input) => {
+      await qc.cancelQueries({ queryKey: ["logs", date] });
+      const previous = qc.getQueryData<DayLog>(["logs", date]);
+      const optimisticEntries: LogEntry[] = input.entries.map((e) => ({
+        id: `temp-${crypto.randomUUID()}`,
+        meal: e.meal,
+        quantityGrams: e.quantityGrams,
+        loggedAt: localIsoNoTz(),
+        food: e.food,
+        nutrition: scaleNutrition(e.food, e.quantityGrams),
+      }));
+      qc.setQueryData<DayLog>(["logs", date], (old) =>
+        withEntries(date, [...(old?.entries ?? []), ...optimisticEntries])
+      );
+      return { previous, tempIds: optimisticEntries.map((e) => e.id) };
+    },
+    onError: (_err, _input, ctx) => {
+      if (ctx?.previous) qc.setQueryData(["logs", date], ctx.previous);
+    },
+    onSuccess: (data, _input, ctx) => {
+      qc.setQueryData<DayLog>(["logs", date], (old) => {
+        if (!old) return old;
+        const remaining = old.entries.filter((e) => !ctx.tempIds.includes(e.id));
+        return withEntries(date, [...remaining, ...data.entries]);
+      });
+    },
+  });
+}
+
+export interface RecentDay {
+  date: string;
+  calories: number;
+  entryCount: number;
+}
+
+export function useRecentDays(meal?: Meal) {
+  return useQuery({
+    queryKey: ["logs", "recent-days", meal ?? "all"],
+    queryFn: () => apiFetch<RecentDay[]>(`/logs/recent-days${meal ? `?meal=${meal}` : ""}`),
+  });
+}
+
+export function useCopyDay(targetDate: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { sourceDate: string; meal?: Meal }) =>
+      apiFetch<{ copied: number }>("/logs/copy", {
+        method: "POST",
+        body: JSON.stringify({ sourceDate: input.sourceDate, targetDate, meal: input.meal }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["logs", targetDate] }),
+  });
+}
+
 export function useDeleteLog(date: string) {
   const qc = useQueryClient();
   return useMutation({

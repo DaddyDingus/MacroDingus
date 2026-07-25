@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import type { Food, LogEntry, Meal } from "../api/types";
 import { useFoodSearch, useCreateFood, useBarcodeLookup } from "../api/foods";
-import { useAddLog, useUpdateLogQuantity, useDeleteLog, useSmartHistory } from "../api/logs";
+import { useAddLog, useBulkAddLog, useUpdateLogQuantity, useDeleteLog, useSmartHistory } from "../api/logs";
 import { scaleNutrition } from "../lib/nutrition";
 import { localTimeString } from "../lib/date";
 import CreateFoodForm from "./CreateFoodForm";
@@ -38,6 +38,8 @@ export default function AddFoodSheet({
   const [selectedFood, setSelectedFood] = useState<Food | null>(null);
   const [grams, setGrams] = useState(100);
   const [scannedBarcode, setScannedBarcode] = useState<string | undefined>(undefined);
+  const [multiSelect, setMultiSelect] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const activeMeal = editingEntry?.meal ?? meal;
 
@@ -54,11 +56,14 @@ export default function AddFoodSheet({
     }
     setQuery("");
     setScannedBarcode(undefined);
+    setMultiSelect(false);
+    setSelectedIds(new Set());
   }, [open, editingEntry]);
 
   const search = useFoodSearch(query);
   const smartHistory = useSmartHistory(localTimeString());
   const addLog = useAddLog(date);
+  const bulkAddLog = useBulkAddLog(date);
   const updateLog = useUpdateLogQuantity(date);
   const deleteLog = useDeleteLog(date);
   const createFood = useCreateFood();
@@ -98,12 +103,32 @@ export default function AddFoodSheet({
     });
   }
 
+  function toggleSelected(food: Food) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(food.id)) next.delete(food.id);
+      else next.add(food.id);
+      return next;
+    });
+  }
+
+  function confirmMultiAdd() {
+    if (!activeMeal) return;
+    const chosen = (suggestions ?? []).filter((f) => selectedIds.has(f.id));
+    if (chosen.length === 0) return;
+    bulkAddLog.mutate({
+      entries: chosen.map((food) => ({ food, meal: activeMeal, quantityGrams: food.servingSizeGrams ?? 100 })),
+    });
+    onClose();
+  }
+
   const suggestions = query.trim() ? search.data : smartHistory.data?.foods;
   const suggestionsLabel = query.trim()
     ? "Results"
     : smartHistory.data?.basis === "time-of-day"
       ? "Usually around now"
       : "Recently logged";
+  const showMultiSelectUi = multiSelect && !query.trim();
 
   return (
     <div className="fixed inset-0 z-50">
@@ -121,7 +146,10 @@ export default function AddFoodSheet({
               <input
                 autoFocus
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  if (e.target.value.trim()) setMultiSelect(false);
+                }}
                 placeholder="Search foods…"
                 className="flex-1 min-w-0 rounded-md bg-surface-raised border border-line px-3 py-2.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent"
               />
@@ -133,34 +161,72 @@ export default function AddFoodSheet({
               </button>
             </div>
             <div className="flex-1 overflow-y-auto pb-4">
-              <p className="px-4 pb-1 text-[11px] tracking-widest uppercase text-muted">
-                {suggestionsLabel}
-              </p>
+              <div className="px-4 pb-1 flex items-center justify-between">
+                <p className="text-[11px] tracking-widest uppercase text-muted">{suggestionsLabel}</p>
+                {!query.trim() && (
+                  <button
+                    onClick={() => {
+                      setMultiSelect((v) => !v);
+                      setSelectedIds(new Set());
+                    }}
+                    className="text-xs text-accent"
+                  >
+                    {multiSelect ? "Cancel" : "Select multiple"}
+                  </button>
+                )}
+              </div>
               {suggestions?.length === 0 && (
                 <p className="px-4 py-3 text-sm text-muted">No foods found.</p>
               )}
-              {suggestions?.map((food) => (
+              {suggestions?.map((food) => {
+                const selected = selectedIds.has(food.id);
+                return (
+                  <button
+                    key={food.id}
+                    onClick={() => (showMultiSelectUi ? toggleSelected(food) : pickFood(food))}
+                    className={`w-full flex items-center justify-between px-4 py-2.5 border-b border-line/60 text-left active:bg-surface-raised ${
+                      selected ? "bg-surface-raised" : ""
+                    }`}
+                  >
+                    <span className="flex items-center gap-3 min-w-0">
+                      {showMultiSelectUi && (
+                        <span
+                          className={`h-4 w-4 rounded-full border shrink-0 ${
+                            selected ? "bg-accent border-accent" : "border-line"
+                          }`}
+                        />
+                      )}
+                      <span className="min-w-0">
+                        <span className="block text-sm truncate">{food.name}</span>
+                        {food.brand && <span className="block text-xs text-muted truncate">{food.brand}</span>}
+                      </span>
+                    </span>
+                    <span className="tabular text-xs text-muted shrink-0 ml-3">
+                      {Math.round(food.caloriesPer100g)} kcal/100g
+                    </span>
+                  </button>
+                );
+              })}
+              {!showMultiSelectUi && (
                 <button
-                  key={food.id}
-                  onClick={() => pickFood(food)}
-                  className="w-full flex items-center justify-between px-4 py-2.5 border-b border-line/60 text-left active:bg-surface-raised"
+                  onClick={() => setStep("create")}
+                  className="w-full px-4 py-3 text-sm text-accent text-left"
                 >
-                  <span className="min-w-0">
-                    <span className="block text-sm truncate">{food.name}</span>
-                    {food.brand && <span className="block text-xs text-muted truncate">{food.brand}</span>}
-                  </span>
-                  <span className="tabular text-xs text-muted shrink-0 ml-3">
-                    {Math.round(food.caloriesPer100g)} kcal/100g
-                  </span>
+                  + Create custom food{query.trim() ? ` "${query.trim()}"` : ""}
                 </button>
-              ))}
-              <button
-                onClick={() => setStep("create")}
-                className="w-full px-4 py-3 text-sm text-accent text-left"
-              >
-                + Create custom food{query.trim() ? ` "${query.trim()}"` : ""}
-              </button>
+              )}
             </div>
+            {showMultiSelectUi && selectedIds.size > 0 && (
+              <div className="p-4 shrink-0 border-t border-line">
+                <button
+                  onClick={confirmMultiAdd}
+                  className="w-full py-3 rounded-md bg-accent text-base font-medium"
+                  style={{ color: "#0B1210" }}
+                >
+                  Add {selectedIds.size} item{selectedIds.size > 1 ? "s" : ""} to {MEAL_LABELS[activeMeal]}
+                </button>
+              </div>
+            )}
           </>
         )}
 

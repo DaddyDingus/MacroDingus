@@ -6,6 +6,7 @@ import { addDays, formatDayLabel, localDateString } from "../lib/date";
 import DailyFactsPanel from "../components/DailyFactsPanel";
 import MealSection from "../components/MealSection";
 import AddFoodSheet from "../components/AddFoodSheet";
+import CopyDaySheet from "../components/CopyDaySheet";
 
 const MEALS: Meal[] = ["breakfast", "lunch", "dinner", "snacks"];
 
@@ -18,6 +19,8 @@ export default function TodayScreen() {
   const [sheetMeal, setSheetMeal] = useState<Meal | null>(null);
   const [editingEntry, setEditingEntry] = useState<LogEntry | null>(null);
   const sheetOpen = sheetMeal !== null || editingEntry !== null;
+
+  const [copyTarget, setCopyTarget] = useState<{ meal?: Meal } | null>(null);
 
   function closeSheet() {
     setSheetMeal(null);
@@ -38,7 +41,7 @@ export default function TodayScreen() {
 
   return (
     <div className="min-h-dvh pb-10">
-      <header className="px-4 pt-5 pb-3 flex items-center justify-between">
+      <header className="px-4 pt-5 pb-1 flex items-center justify-between">
         <button
           onClick={() => setDate((d) => addDays(d, -1))}
           className="text-muted text-xl leading-none px-2 py-1"
@@ -64,6 +67,12 @@ export default function TodayScreen() {
         </button>
       </header>
 
+      <div className="px-4 pb-3 flex justify-end max-w-md mx-auto">
+        <button onClick={() => setCopyTarget({})} className="text-xs text-accent">
+          Copy a day
+        </button>
+      </div>
+
       <main className="px-4 space-y-3 max-w-md mx-auto">
         <DailyFactsPanel totals={totals} />
 
@@ -75,6 +84,7 @@ export default function TodayScreen() {
             onAdd={() => setSheetMeal(meal)}
             onEdit={(entry) => setEditingEntry(entry)}
             onDelete={(id) => deleteLog.mutate(id)}
+            onCopy={() => setCopyTarget({ meal })}
           />
         ))}
       </main>
@@ -86,6 +96,10 @@ export default function TodayScreen() {
         editingEntry={editingEntry}
         onClose={closeSheet}
       />
+
+      {copyTarget && (
+        <CopyDaySheet targetDate={date} meal={copyTarget.meal} onClose={() => setCopyTarget(null)} />
+      )}
     </div>
   );
 }
