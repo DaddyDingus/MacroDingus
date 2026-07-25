@@ -31,6 +31,19 @@ export function useLogin() {
   });
 }
 
+export function useSignup() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { name: string; password: string }) =>
+      apiFetch<{ ok: true; user: AuthUser }>("/auth/signup", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: (data) =>
+      qc.setQueryData<AuthStatus>(["auth", "status"], { authenticated: true, user: data.user }),
+  });
+}
+
 export function useLogout() {
   const qc = useQueryClient();
   return useMutation({

@@ -9,14 +9,10 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - DATA_DIR=/app/data
-      # One entry per person, "Name:password", comma-separated. Whoever's password
-      # is entered on the login screen is signed in as that person — each phone
-      # just needs its own password, no separate "pick a user" step. Each person's
-      # food/weight log is private to them; the food database itself is shared.
-      # Edit the "Partner" name/password below whenever it's actually needed, then
-      # `docker compose up -d --build` (or redeploy via Dockge) to pick it up —
-      # existing users are never overwritten by this on restart, only new ones added.
-      - AUTH_USERS=Tristan:9wiU9KWIGDo9fbpn,Partner:changeme-partner-password
+      # Accounts are self-service (login screen has a "Create an account" link) —
+      # nothing to configure here. Passwords are bcrypt-hashed in the database,
+      # so a forgotten one can't be looked up; reset it from the host with:
+      #   docker exec -it macrotrack node dist/scripts/reset-password.js "Name" "new-password"
     networks:
       - proxy
 

@@ -23,15 +23,16 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // API requests are deliberately NOT routed through Workbox here. A runtime
+        // caching rule matches every HTTP method unless scoped, and the Cache API
+        // throws on any attempt to cache.put() a non-GET request/response — which
+        // surfaced to the page as a failed fetch() on every DELETE/PATCH/POST, even
+        // though the request had already succeeded server-side. TanStack Query's
+        // own IndexedDB persistence (see main.tsx) already covers instant-reopen
+        // and offline resilience for API data, so there's no need for a second,
+        // method-unsafe caching layer underneath it.
         globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
         navigateFallback: "/index.html",
-        runtimeCaching: [
-          {
-            urlPattern: /^\/api\//,
-            handler: "NetworkFirst",
-            options: { cacheName: "api-cache", networkTimeoutSeconds: 3 },
-          },
-        ],
       },
     }),
   ],

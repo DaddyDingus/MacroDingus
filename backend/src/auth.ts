@@ -4,9 +4,10 @@ import path from "node:path";
 import bcrypt from "bcrypt";
 import fastifyCookie from "@fastify/cookie";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db } from "./db/index.js";
-import { users, logs } from "./db/schema.js";
+import { users } from "./db/schema.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -23,46 +24,6 @@ function loadOrCreateSecret(dataDir: string): string {
   const secret = crypto.randomBytes(32).toString("hex");
   fs.writeFileSync(secretPath, secret, { mode: 0o600 });
   return secret;
-}
-
-// AUTH_USERS format: "Name:password,Name2:password2" — parsed once at boot.
-// A user row is only ever created if that name doesn't already exist, so this
-// just sets the *initial* password; nothing here overwrites a stored hash on
-// every restart (matters once there's a way to change your own password).
-async function seedUsers() {
-  const raw = process.env.AUTH_USERS;
-  if (!raw) {
-    throw new Error('AUTH_USERS env var is required, format: "Name:password,Name2:password2"');
-  }
-  const pairs = raw
-    .split(",")
-    .map((p) => p.trim())
-    .filter(Boolean);
-
-  const createdIds: string[] = [];
-  for (const pair of pairs) {
-    const idx = pair.indexOf(":");
-    if (idx === -1) continue;
-    const name = pair.slice(0, idx).trim();
-    const password = pair.slice(idx + 1);
-    if (!name || !password) continue;
-
-    const [existing] = await db.select().from(users).where(eq(users.name, name));
-    if (existing) continue;
-
-    const id = crypto.randomUUID();
-    const passwordHash = await bcrypt.hash(password, 10);
-    await db.insert(users).values({ id, name, passwordHash, createdAt: new Date().toISOString() });
-    createdIds.push(id);
-  }
-
-  // Migration 0001 added logs.user_id as NOT NULL DEFAULT '' to satisfy SQLite's
-  // ALTER TABLE requirement on a column with existing rows. Any row still holding
-  // that placeholder predates multi-user support entirely, so it belongs to
-  // whichever user was seeded first.
-  if (createdIds.length > 0) {
-    await db.update(logs).set({ userId: createdIds[0] }).where(eq(logs.userId, ""));
-  }
 }
 
 function signSession(reply: import("fastify").FastifyReply, userId: string) {
@@ -88,12 +49,40 @@ function parseSession(req: FastifyRequest): string | null {
   return userId;
 }
 
+const signupSchema = z.object({
+  name: z.string().trim().min(1).max(40),
+  password: z.string().min(8).max(200),
+});
+
 export async function registerAuth(app: FastifyInstance, dataDir: string) {
   const secret = process.env.COOKIE_SECRET ?? loadOrCreateSecret(dataDir);
   await app.register(fastifyCookie, { secret });
   app.decorateRequest("userId", undefined);
 
-  await seedUsers();
+  // Anyone who can reach this instance over the tailnet can create an account —
+  // there's no invite/approval step. That's fine for a closed household app
+  // where Tailscale ACLs are already the real access boundary (same model as
+  // every other service in this stack); it would need rethinking if this ever
+  // stopped being just-the-household.
+  app.post("/api/auth/signup", async (req, reply) => {
+    const parsed = signupSchema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "Enter a name and a password of at least 8 characters" };
+    }
+    const { name, password } = parsed.data;
+    const [existing] = await db.select().from(users).where(eq(users.name, name));
+    if (existing) {
+      reply.code(409);
+      return { error: "That name is already taken" };
+    }
+    const id = crypto.randomUUID();
+    const passwordHash = await bcrypt.hash(password, 10);
+    await db.insert(users).values({ id, name, passwordHash, createdAt: new Date().toISOString() });
+    signSession(reply, id);
+    reply.code(201);
+    return { ok: true, user: { id, name } };
+  });
 
   app.post("/api/auth/login", async (req, reply) => {
     const body = req.body as { password?: string };
