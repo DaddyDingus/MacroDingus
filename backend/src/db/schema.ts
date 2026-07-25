@@ -1,5 +1,15 @@
 import { sqliteTable, text, real, index } from "drizzle-orm/sqlite-core";
 
+// One household, a handful of people, each with their own log/weight/coaching
+// data. Seeded from the AUTH_USERS env var at boot (see auth.ts) rather than
+// a signup flow — this is a closed personal deployment, not a public app.
+export const users = sqliteTable("users", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
 // Nutrient fields that appear on essentially every real-world label live as
 // first-class columns since Phase 1 UI and Phase 6 analytics both need to
 // query/sum them directly. Rarer micros (vitamins, minerals, cholesterol)
@@ -31,6 +41,7 @@ export const foods = sqliteTable("foods", {
 
 export const logs = sqliteTable("logs", {
   id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id), // foods are shared; logs are per-person
   date: text("date").notNull(), // YYYY-MM-DD — the day it's logged to, as chosen by the client
   meal: text("meal").notNull(), // breakfast | lunch | dinner | snacks
   foodId: text("food_id").notNull().references(() => foods.id),
@@ -40,4 +51,5 @@ export const logs = sqliteTable("logs", {
 }, (table) => ({
   dateIdx: index("logs_date_idx").on(table.date),
   foodIdx: index("logs_food_idx").on(table.foodId),
+  userDateIdx: index("logs_user_date_idx").on(table.userId, table.date),
 }));

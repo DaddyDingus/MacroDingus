@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { LogEntry, Meal } from "../api/types";
 import { useDayLog, useDeleteLog } from "../api/logs";
+import { useAuthStatus } from "../api/auth";
 import { addDays, formatDayLabel, localDateString } from "../lib/date";
 import DailyFactsPanel from "../components/DailyFactsPanel";
 import MealSection from "../components/MealSection";
@@ -12,6 +13,7 @@ export default function TodayScreen() {
   const [date, setDate] = useState(localDateString());
   const dayLog = useDayLog(date);
   const deleteLog = useDeleteLog(date);
+  const authStatus = useAuthStatus();
 
   const [sheetMeal, setSheetMeal] = useState<Meal | null>(null);
   const [editingEntry, setEditingEntry] = useState<LogEntry | null>(null);
@@ -44,7 +46,14 @@ export default function TodayScreen() {
         >
           ‹
         </button>
-        <span className="text-sm font-medium">{formatDayLabel(date)}</span>
+        <span className="flex flex-col items-center leading-tight">
+          {authStatus.data?.user?.name && (
+            <span className="text-[10px] tracking-widest uppercase text-muted">
+              {authStatus.data.user.name}
+            </span>
+          )}
+          <span className="text-sm font-medium">{formatDayLabel(date)}</span>
+        </span>
         <button
           onClick={() => setDate((d) => addDays(d, 1))}
           disabled={date === localDateString()}

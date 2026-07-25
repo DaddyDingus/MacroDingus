@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { eq, sql } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "../db/index.js";
 import { logs, foods } from "../db/schema.js";
@@ -16,12 +16,12 @@ const logInput = z.object({
   loggedAt: z.string().optional(),
 });
 
-async function entryWithNutrition(logId: string) {
+async function entryWithNutrition(logId: string, userId: string) {
   const rows = await db
     .select({ log: logs, food: foods })
     .from(logs)
     .innerJoin(foods, eq(logs.foodId, foods.id))
-    .where(eq(logs.id, logId));
+    .where(and(eq(logs.id, logId), eq(logs.userId, userId)));
   const row = rows[0];
   if (!row) return null;
   return {
@@ -43,7 +43,7 @@ export function registerLogRoutes(app: FastifyInstance) {
       .select({ log: logs, food: foods })
       .from(logs)
       .innerJoin(foods, eq(logs.foodId, foods.id))
-      .where(eq(logs.date, date));
+      .where(and(eq(logs.date, date), eq(logs.userId, req.userId!)));
 
     const entries = rows.map(({ log, food }) => ({
       id: log.id,
@@ -69,6 +69,7 @@ export function registerLogRoutes(app: FastifyInstance) {
     const now = new Date().toISOString();
     await db.insert(logs).values({
       id,
+      userId: req.userId!,
       date: parsed.data.date,
       meal: parsed.data.meal,
       foodId: parsed.data.foodId,
@@ -78,7 +79,7 @@ export function registerLogRoutes(app: FastifyInstance) {
     });
 
     reply.code(201);
-    return entryWithNutrition(id);
+    return entryWithNutrition(id, req.userId!);
   });
 
   app.patch("/api/logs/:id", async (req, reply) => {
@@ -90,15 +91,18 @@ export function registerLogRoutes(app: FastifyInstance) {
     const parsed = patchSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
 
-    await db.update(logs).set(parsed.data).where(eq(logs.id, id));
-    const entry = await entryWithNutrition(id);
+    await db
+      .update(logs)
+      .set(parsed.data)
+      .where(and(eq(logs.id, id), eq(logs.userId, req.userId!)));
+    const entry = await entryWithNutrition(id, req.userId!);
     if (!entry) return reply.code(404).send({ error: "not found" });
     return entry;
   });
 
   app.delete("/api/logs/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    await db.delete(logs).where(eq(logs.id, id));
+    await db.delete(logs).where(and(eq(logs.id, id), eq(logs.userId, req.userId!)));
     reply.code(204);
     return null;
   });
@@ -111,12 +115,18 @@ export function registerLogRoutes(app: FastifyInstance) {
     const take = Math.min(Number(limit) || 8, 20);
     const [hh] = (time ?? new Date().toISOString().slice(11, 16)).split(":");
     const hour = Number(hh);
+    const userId = req.userId!;
 
     const windowRows = await db
       .select({ food: foods, cnt: sql<number>`count(*)` })
       .from(logs)
       .innerJoin(foods, eq(logs.foodId, foods.id))
-      .where(sql`abs((cast(strftime('%H', ${logs.loggedAt}) as integer) - ${hour} + 12) % 24 - 12) <= 2`)
+      .where(
+        and(
+          eq(logs.userId, userId),
+          sql`abs((cast(strftime('%H', ${logs.loggedAt}) as integer) - ${hour} + 12) % 24 - 12) <= 2`
+        )
+      )
       .groupBy(foods.id)
       .orderBy(sql`count(*) desc`, sql`max(${logs.loggedAt}) desc`)
       .limit(take);
@@ -129,6 +139,7 @@ export function registerLogRoutes(app: FastifyInstance) {
       .select({ food: foods })
       .from(logs)
       .innerJoin(foods, eq(logs.foodId, foods.id))
+      .where(eq(logs.userId, userId))
       .groupBy(foods.id)
       .orderBy(sql`max(${logs.loggedAt}) desc`)
       .limit(take);

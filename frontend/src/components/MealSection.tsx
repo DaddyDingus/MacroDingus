@@ -34,30 +34,29 @@ export default function MealSection({
       </div>
 
       {entries.map((entry) => (
-        <button
+        <div
           key={entry.id}
-          onClick={() => onEdit(entry)}
-          className="w-full flex items-center justify-between px-4 py-2.5 border-b border-line/60 last:border-b-0 text-left active:bg-surface-raised"
+          className="flex items-center justify-between px-4 py-2.5 border-b border-line/60 last:border-b-0"
         >
-          <span className="min-w-0">
+          <button
+            onClick={() => onEdit(entry)}
+            className="flex-1 min-w-0 text-left active:opacity-70"
+          >
             <span className="block text-sm truncate">{entry.food.name}</span>
             <span className="block text-xs text-muted tabular">{fmt(entry.quantityGrams)} g</span>
-          </span>
+          </button>
           <span className="flex items-center gap-3 shrink-0">
             <span className="tabular text-sm">{fmt(entry.nutrition.calories)}</span>
-            <span
-              role="button"
+            <button
+              type="button"
               aria-label={`Remove ${entry.food.name}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete(entry.id);
-              }}
-              className="text-muted text-lg leading-none px-1 active:text-ink"
+              onClick={() => onDelete(entry.id)}
+              className="text-muted text-lg leading-none px-2 py-1 active:text-ink"
             >
               ×
-            </span>
+            </button>
           </span>
-        </button>
+        </div>
       ))}
 
       <button
