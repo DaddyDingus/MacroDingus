@@ -31,7 +31,7 @@ export function scaleNutrition(food: FoodRow, quantityGrams: number): NutritionT
   };
 }
 
-const EMPTY: NutritionTotals = {
+export const EMPTY_NUTRITION: NutritionTotals = {
   calories: 0,
   protein: 0,
   carbs: 0,
@@ -54,6 +54,6 @@ export function sumNutrition(list: NutritionTotals[]): NutritionTotals {
       saturatedFat: round(acc.saturatedFat + n.saturatedFat),
       sodiumMg: round(acc.sodiumMg + n.sodiumMg),
     }),
-    { ...EMPTY }
+    { ...EMPTY_NUTRITION }
   );
 }

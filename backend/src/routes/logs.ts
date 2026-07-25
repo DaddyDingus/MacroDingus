@@ -1,10 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { eq, and, inArray, sql } from "drizzle-orm";
+import { eq, and, gte, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "../db/index.js";
 import { logs, foods } from "../db/schema.js";
-import { scaleNutrition, sumNutrition } from "../engine/nutrition.js";
+import { scaleNutrition, sumNutrition, EMPTY_NUTRITION } from "../engine/nutrition.js";
+import { addDaysToDateString } from "../engine/trendWeight.js";
 
 const MEALS = ["breakfast", "lunch", "dinner", "snacks"] as const;
 type MealType = (typeof MEALS)[number];
@@ -175,6 +176,38 @@ export function registerLogRoutes(app: FastifyInstance) {
     await db.insert(logs).values(newRows);
 
     return { copied: newRows.length };
+  });
+
+  // Full daily nutrition totals for every day in the range, including zero
+  // days (not just days with entries) — a continuous series is what a chart
+  // needs; gaps would read as missing data rather than "didn't log that day,"
+  // which is neutral information, not an error state.
+  app.get("/api/logs/history", async (req) => {
+    const { days } = req.query as { days?: string };
+    const take = Math.min(Number(days) || 30, 365);
+    const userId = req.userId!;
+    const today = new Date().toISOString().slice(0, 10);
+    const since = addDaysToDateString(today, -(take - 1));
+
+    const rows = await db
+      .select({ log: logs, food: foods })
+      .from(logs)
+      .innerJoin(foods, eq(logs.foodId, foods.id))
+      .where(and(eq(logs.userId, userId), gte(logs.date, since)));
+
+    const byDate = new Map<string, ReturnType<typeof sumNutrition>>();
+    for (const { log, food } of rows) {
+      const entryNutrition = scaleNutrition(food, log.quantityGrams);
+      const existing = byDate.get(log.date) ?? EMPTY_NUTRITION;
+      byDate.set(log.date, sumNutrition([existing, entryNutrition]));
+    }
+
+    const result = [];
+    for (let i = 0; i < take; i++) {
+      const date = addDaysToDateString(since, i);
+      result.push({ date, ...(byDate.get(date) ?? EMPTY_NUTRITION) });
+    }
+    return result;
   });
 
   // Recent days that have at least one entry, most recent first, with a

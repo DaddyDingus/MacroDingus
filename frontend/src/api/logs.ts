@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
-import type { DayLog, Food, LogEntry, Meal } from "./types";
+import type { DayLog, Food, LogEntry, Meal, Nutrition } from "./types";
 import { localIsoNoTz } from "../lib/date";
 import { scaleNutrition, sumNutrition } from "../lib/nutrition";
 
@@ -21,6 +21,17 @@ export function useSmartHistory(time: string) {
 
 function withEntries(date: string, entries: LogEntry[]): DayLog {
   return { date, entries, totals: sumNutrition(entries.map((e) => e.nutrition)) };
+}
+
+export interface DayHistory extends Nutrition {
+  date: string;
+}
+
+export function useLogsHistory(days: number) {
+  return useQuery({
+    queryKey: ["logs", "history", days],
+    queryFn: () => apiFetch<DayHistory[]>(`/logs/history?days=${days}`),
+  });
 }
 
 export function useAddLog(date: string) {

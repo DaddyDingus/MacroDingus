@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { useWeightTrend, useLogWeight } from "../api/weights";
+import { useLogsHistory } from "../api/logs";
 import { localDateString, addDays } from "../lib/date";
 import WeightChart from "../components/WeightChart";
+import MacroHistoryChart from "../components/MacroHistoryChart";
 
 const RANGE_PRESETS = [
   { label: "30d", days: 30 },
@@ -12,6 +14,7 @@ const RANGE_PRESETS = [
 export default function TrendsScreen() {
   const [days, setDays] = useState(90);
   const trend = useWeightTrend(days);
+  const history = useLogsHistory(Math.min(days, 90)); // macro bars past ~90 days get too dense to read
   const logWeight = useLogWeight();
   const [weightInput, setWeightInput] = useState("");
 
@@ -68,21 +71,28 @@ export default function TrendsScreen() {
           </div>
         )}
 
+        <div className="flex gap-2 px-1">
+          {RANGE_PRESETS.map((p) => (
+            <button
+              key={p.days}
+              onClick={() => setDays(p.days)}
+              className={`text-xs px-2.5 py-1 rounded-full border ${
+                days === p.days ? "border-accent text-accent" : "border-line text-muted"
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+
         <div className="border border-line bg-surface rounded-md p-4">
-          <div className="flex gap-2 mb-1">
-            {RANGE_PRESETS.map((p) => (
-              <button
-                key={p.days}
-                onClick={() => setDays(p.days)}
-                className={`text-xs px-2.5 py-1 rounded-full border ${
-                  days === p.days ? "border-accent text-accent" : "border-line text-muted"
-                }`}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
+          <p className="text-[11px] tracking-widest uppercase text-muted mb-1">Weight</p>
           <WeightChart points={points} />
+        </div>
+
+        <div className="border border-line bg-surface rounded-md p-4">
+          <p className="text-[11px] tracking-widest uppercase text-muted mb-1">Macros</p>
+          <MacroHistoryChart history={history.data ?? []} />
         </div>
       </main>
     </div>
