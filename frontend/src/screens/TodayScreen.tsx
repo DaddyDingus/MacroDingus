@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { LogEntry, Meal } from "../api/types";
 import { useDayLog, useDeleteLog } from "../api/logs";
 import { useAuthStatus } from "../api/auth";
+import { useCoachStatus } from "../api/coach";
 import { addDays, formatDayLabel, localDateString } from "../lib/date";
 import DailyFactsPanel from "../components/DailyFactsPanel";
 import MealSection from "../components/MealSection";
@@ -15,6 +16,7 @@ export default function TodayScreen() {
   const dayLog = useDayLog(date);
   const deleteLog = useDeleteLog(date);
   const authStatus = useAuthStatus();
+  const coachStatus = useCoachStatus();
 
   const [sheetMeal, setSheetMeal] = useState<Meal | null>(null);
   const [editingEntry, setEditingEntry] = useState<LogEntry | null>(null);
@@ -38,6 +40,17 @@ export default function TodayScreen() {
     saturatedFat: 0,
     sodiumMg: 0,
   };
+
+  const checkin = coachStatus.data?.latestCheckin;
+  const targets =
+    date === localDateString() && checkin
+      ? {
+          calories: checkin.targetCalories,
+          proteinG: checkin.targetProteinG,
+          carbsG: checkin.targetCarbsG,
+          fatG: checkin.targetFatG,
+        }
+      : null;
 
   return (
     <div className="min-h-dvh pb-24">
@@ -74,7 +87,7 @@ export default function TodayScreen() {
       </div>
 
       <main className="px-4 space-y-3 max-w-md mx-auto">
-        <DailyFactsPanel totals={totals} />
+        <DailyFactsPanel totals={totals} targets={targets} />
 
         {MEALS.map((meal) => (
           <MealSection

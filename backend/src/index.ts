@@ -9,6 +9,7 @@ import { registerFoodRoutes } from "./routes/foods.js";
 import { registerLogRoutes } from "./routes/logs.js";
 import { registerRecipeRoutes } from "./routes/recipes.js";
 import { registerWeightRoutes } from "./routes/weights.js";
+import { registerCoachRoutes } from "./routes/coach.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 3000);
@@ -28,6 +29,7 @@ registerFoodRoutes(app);
 registerLogRoutes(app);
 registerRecipeRoutes(app);
 registerWeightRoutes(app);
+registerCoachRoutes(app);
 
 app.register(fastifyStatic, {
   root: STATIC_DIR,

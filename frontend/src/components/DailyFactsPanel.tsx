@@ -4,7 +4,18 @@ function fmt(n: number, decimals = 0): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: decimals, minimumFractionDigits: decimals });
 }
 
-export default function DailyFactsPanel({ totals }: { totals: Nutrition }) {
+export interface MacroTargets {
+  calories: number;
+  proteinG: number;
+  carbsG: number;
+  fatG: number;
+}
+
+// Targets render as plain reference numbers beside the actuals — never a
+// colored bar, never red/green, never "X to go." Whether today lands over or
+// under is not this component's business to editorialize; it just states
+// both numbers and lets the reader draw their own conclusion.
+export default function DailyFactsPanel({ totals, targets }: { totals: Nutrition; targets?: MacroTargets | null }) {
   return (
     <div className="border border-line bg-surface rounded-md overflow-hidden">
       <div className="px-5 pt-4 pb-2">
@@ -12,6 +23,7 @@ export default function DailyFactsPanel({ totals }: { totals: Nutrition }) {
         <div className="flex items-baseline gap-1.5 mt-0.5">
           <span className="tabular text-4xl font-medium tracking-tight">{fmt(totals.calories)}</span>
           <span className="text-sm text-muted">kcal</span>
+          {targets && <span className="tabular text-sm text-muted">/ {fmt(targets.calories)}</span>}
         </div>
       </div>
 
@@ -21,19 +33,25 @@ export default function DailyFactsPanel({ totals }: { totals: Nutrition }) {
         <span className="flex items-center gap-2 text-sm">
           <span className="h-2 w-2 rounded-full bg-protein" /> Protein
         </span>
-        <span className="tabular text-sm">{fmt(totals.protein, 1)} g</span>
+        <span className="tabular text-sm">
+          {fmt(totals.protein, 1)} g{targets && <span className="text-muted"> / {fmt(targets.proteinG, 1)} g</span>}
+        </span>
       </div>
       <div className="px-5 py-2.5 flex items-center justify-between border-b border-line/70">
         <span className="flex items-center gap-2 text-sm">
           <span className="h-2 w-2 rounded-full bg-carbs" /> Carbs
         </span>
-        <span className="tabular text-sm">{fmt(totals.carbs, 1)} g</span>
+        <span className="tabular text-sm">
+          {fmt(totals.carbs, 1)} g{targets && <span className="text-muted"> / {fmt(targets.carbsG, 1)} g</span>}
+        </span>
       </div>
       <div className="px-5 py-2.5 flex items-center justify-between border-b border-line">
         <span className="flex items-center gap-2 text-sm">
           <span className="h-2 w-2 rounded-full bg-fat" /> Fat
         </span>
-        <span className="tabular text-sm">{fmt(totals.fat, 1)} g</span>
+        <span className="tabular text-sm">
+          {fmt(totals.fat, 1)} g{targets && <span className="text-muted"> / {fmt(targets.fatG, 1)} g</span>}
+        </span>
       </div>
 
       <div className="px-5 py-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs text-muted">
