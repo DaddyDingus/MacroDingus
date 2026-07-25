@@ -1,10 +1,9 @@
 import { useState } from "react";
-import { useWeightTrend, useWeights, useLogWeight, useDeleteWeight } from "../api/weights";
-import { useLogsHistory } from "../api/logs";
-import { localDateString, addDays, formatDayLabel } from "../lib/date";
-import { useWeightUnit, kgToUnit, unitToKg } from "../lib/weightUnit";
+import { useWeightTrend, useWeights, useDeleteWeight } from "../api/weights";
+import { addDays, formatDayLabel } from "../lib/date";
+import { useWeightUnit, kgToUnit } from "../lib/weightUnit";
 import WeightChart from "../components/WeightChart";
-import MacroHistoryChart from "../components/MacroHistoryChart";
+import LogWeightInline from "../components/LogWeightInline";
 
 const RANGE_PRESETS = [
   { label: "30d", days: 30 },
@@ -12,15 +11,12 @@ const RANGE_PRESETS = [
   { label: "1y", days: 365 },
 ];
 
-export default function TrendsScreen() {
+export default function WeightDetailScreen() {
   const [days, setDays] = useState(90);
   const { unit, setUnit } = useWeightUnit();
   const trend = useWeightTrend(days);
   const recentWeighIns = useWeights(30);
-  const history = useLogsHistory(Math.min(days, 90)); // macro bars past ~90 days get too dense to read
-  const logWeight = useLogWeight();
   const deleteWeight = useDeleteWeight();
-  const [weightInput, setWeightInput] = useState("");
   const [showRecent, setShowRecent] = useState(false);
 
   const points = trend.data ?? [];
@@ -29,17 +25,10 @@ export default function TrendsScreen() {
   const weekAgoPoint = weekAgoDate ? [...points].reverse().find((p) => p.date <= weekAgoDate) : undefined;
   const weekDeltaKg = latest && weekAgoPoint ? latest.trendKg - weekAgoPoint.trendKg : null;
 
-  function submitWeight() {
-    const value = Number(weightInput);
-    if (!value || value <= 0) return;
-    logWeight.mutate({ date: localDateString(), weightKg: unitToKg(value, unit) });
-    setWeightInput("");
-  }
-
   return (
     <div className="min-h-dvh pb-24">
       <header className="px-4 pt-5 pb-3 flex items-center justify-between">
-        <h1 className="text-lg font-medium">Trends</h1>
+        <h1 className="text-lg font-medium">Weight</h1>
         <div className="flex rounded-full border border-line overflow-hidden text-xs">
           {(["kg", "lb"] as const).map((u) => (
             <button
@@ -55,25 +44,7 @@ export default function TrendsScreen() {
       </header>
 
       <main className="px-4 space-y-3 max-w-md mx-auto">
-        <div className="border border-line bg-surface rounded-md p-4 flex items-center gap-2 focus-within:border-accent">
-          <input
-            type="number"
-            inputMode="decimal"
-            value={weightInput}
-            onChange={(e) => setWeightInput(e.target.value)}
-            placeholder="Log today's weight"
-            className="tabular flex-1 min-w-0 bg-transparent text-sm focus:outline-none placeholder:text-muted"
-          />
-          <span className="text-xs text-muted shrink-0">{unit}</span>
-          <button
-            onClick={submitWeight}
-            disabled={!weightInput || logWeight.isPending}
-            className="shrink-0 px-3 py-1.5 rounded-md bg-accent text-sm font-medium disabled:opacity-40"
-            style={{ color: "#0B1210" }}
-          >
-            Log
-          </button>
-        </div>
+        <LogWeightInline />
 
         {latest && (
           <div className="border border-line bg-surface rounded-md p-4">
@@ -146,11 +117,6 @@ export default function TrendsScreen() {
             )}
           </div>
         )}
-
-        <div className="border border-line bg-surface rounded-md p-4">
-          <p className="text-[11px] tracking-widest uppercase text-muted mb-1">Macros</p>
-          <MacroHistoryChart history={history.data ?? []} />
-        </div>
       </main>
     </div>
   );

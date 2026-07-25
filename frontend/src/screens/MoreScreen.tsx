@@ -1,9 +1,11 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useRecipes } from "../api/recipes";
 import { useAuthStatus, useLogout } from "../api/auth";
 import RecipeEditSheet from "../components/RecipeEditSheet";
 
 export default function MoreScreen() {
+  const navigate = useNavigate();
   const recipes = useRecipes();
   const authStatus = useAuthStatus();
   const logout = useLogout();
@@ -39,6 +41,16 @@ export default function MoreScreen() {
               </span>
             </button>
           ))}
+        </section>
+
+        <section className="border border-line bg-surface rounded-md overflow-hidden">
+          <button
+            onClick={() => navigate("/photos")}
+            className="w-full flex items-center justify-between px-4 py-2.5 text-left active:bg-surface-raised"
+          >
+            <span className="text-sm font-medium">Progress photos</span>
+            <span className="text-muted text-lg leading-none">›</span>
+          </button>
         </section>
 
         <section className="border border-line bg-surface rounded-md overflow-hidden">

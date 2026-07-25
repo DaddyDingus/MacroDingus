@@ -28,12 +28,19 @@ export default function AddFoodSheet({
   date,
   editingEntry,
   onClose,
+  initialStep,
+  initialFood,
 }: {
   open: boolean;
   meal: Meal | null;
   date: string;
   editingEntry: LogEntry | null;
   onClose: () => void;
+  // Lets callers outside the per-meal "Add" button (the global quick-actions
+  // sheet, a recipe picker) skip straight to scanning or to a preselected
+  // food's quantity step instead of always landing on search.
+  initialStep?: "search" | "scan";
+  initialFood?: Food;
 }) {
   const [step, setStep] = useState<Step>("search");
   const [query, setQuery] = useState("");
@@ -53,16 +60,20 @@ export default function AddFoodSheet({
       setGrams(editingEntry.quantityGrams);
       setEditMeal(editingEntry.meal);
       setStep("quantity");
+    } else if (initialFood) {
+      setSelectedFood(initialFood);
+      setGrams(initialFood.servingSizeGrams ?? 100);
+      setStep("quantity");
     } else {
       setSelectedFood(null);
       setGrams(100);
-      setStep("search");
+      setStep(initialStep ?? "search");
     }
     setQuery("");
     setScannedBarcode(undefined);
     setMultiSelect(false);
     setSelectedIds(new Set());
-  }, [open, editingEntry]);
+  }, [open, editingEntry, initialFood, initialStep]);
 
   const search = useFoodSearch(query);
   const smartHistory = useSmartHistory(localTimeString());
