@@ -1,4 +1,4 @@
-import { sqliteTable, text, real, index } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, real, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 // One household, a handful of people, each with their own log/weight/coaching
 // data. Seeded from the AUTH_USERS env var at boot (see auth.ts) rather than
@@ -77,4 +77,63 @@ export const logs = sqliteTable("logs", {
   dateIdx: index("logs_date_idx").on(table.date),
   foodIdx: index("logs_food_idx").on(table.foodId),
   userDateIdx: index("logs_user_date_idx").on(table.userId, table.date),
+}));
+
+// One scale reading per person per day — re-weighing the same day upserts
+// rather than creating a second entry. Trend weight (EWMA over this) is
+// computed on read, not stored, so it always reflects the full corrected
+// history rather than an incrementally-updated value that could drift.
+export const weights = sqliteTable("weights", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id),
+  date: text("date").notNull(),
+  weightKg: real("weight_kg").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => ({
+  userDateIdx: uniqueIndex("weights_user_date_idx").on(table.userId, table.date),
+}));
+
+// Inputs to the initial (pre-data) TDEE estimate and the macro split formula.
+// birthYear rather than a full DOB — age-in-years is all the Mifflin-St Jeor
+// estimate needs, and it's one less thing to ask for.
+export const profiles = sqliteTable("profiles", {
+  userId: text("user_id").primaryKey().references(() => users.id),
+  sex: text("sex").notNull(), // 'male' | 'female'
+  birthYear: integer("birth_year").notNull(),
+  heightCm: real("height_cm").notNull(),
+  activityLevel: text("activity_level").notNull(), // sedentary|light|moderate|active|very_active
+  goalType: text("goal_type").notNull(), // cut|bulk|maintain
+  targetRateKgPerWeek: real("target_rate_kg_per_week").notNull(), // negative=cut, positive=bulk, 0=maintain
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+// A check-in snapshots the targets that apply from that date until the next
+// one — daily targets are always "whatever the latest check-in produced,"
+// not recalculated live on every page load, so they stay stable day to day
+// the way MacroFactor's actually behave (a jump only happens when you
+// deliberately check in, not silently overnight).
+export const checkins = sqliteTable("checkins", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id),
+  date: text("date").notNull(),
+  tdee: real("tdee").notNull(),
+  targetCalories: real("target_calories").notNull(),
+  targetProteinG: real("target_protein_g").notNull(),
+  targetCarbsG: real("target_carbs_g").notNull(),
+  targetFatG: real("target_fat_g").notNull(),
+  trendWeightKg: real("trend_weight_kg").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => ({
+  userDateIdx: index("checkins_user_date_idx").on(table.userId, table.date),
+}));
+
+export const photos = sqliteTable("photos", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id),
+  date: text("date").notNull(),
+  filename: text("filename").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => ({
+  userDateIdx: index("photos_user_date_idx").on(table.userId, table.date),
 }));
