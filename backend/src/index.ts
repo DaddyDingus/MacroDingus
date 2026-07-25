@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
+import fastifyMultipart from "@fastify/multipart";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +11,7 @@ import { registerLogRoutes } from "./routes/logs.js";
 import { registerRecipeRoutes } from "./routes/recipes.js";
 import { registerWeightRoutes } from "./routes/weights.js";
 import { registerCoachRoutes } from "./routes/coach.js";
+import { registerPhotoRoutes } from "./routes/photos.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 3000);
@@ -24,12 +26,16 @@ runMigrations();
 const app = Fastify({ logger: true });
 
 await registerAuth(app, DATA_DIR);
+await app.register(fastifyMultipart, {
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB — generous for a phone camera photo
+});
 
 registerFoodRoutes(app);
 registerLogRoutes(app);
 registerRecipeRoutes(app);
 registerWeightRoutes(app);
 registerCoachRoutes(app);
+registerPhotoRoutes(app, DATA_DIR);
 
 app.register(fastifyStatic, {
   root: STATIC_DIR,

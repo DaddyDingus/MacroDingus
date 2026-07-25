@@ -10,9 +10,11 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   // Content-Type: application/json on a bodyless request (DELETE, most GETs) makes
   // Fastify's JSON body parser reject it outright — FST_ERR_CTP_EMPTY_JSON_BODY —
   // which is why deletes were silently failing and rolling back their optimistic
-  // update. Only attach the header when there's actually a body to describe.
+  // update. Only attach the header when the body is actually a JSON string —
+  // FormData bodies (photo upload) must NOT get this header, or the browser's
+  // auto-generated multipart boundary never gets set and the upload breaks.
   const headers: Record<string, string> = { ...(init?.headers as Record<string, string> | undefined) };
-  if (init?.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+  if (typeof init?.body === "string" && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
 
   const res = await fetch(`/api${path}`, {
     credentials: "include",
