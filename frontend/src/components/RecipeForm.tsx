@@ -8,19 +8,32 @@ interface Ingredient {
   quantityGrams: number;
 }
 
+export interface RecipeFormInitial {
+  name: string;
+  servings: number;
+  totalWeightGrams: number;
+  ingredients: Ingredient[];
+}
+
 export default function RecipeForm({
   initialName,
+  initial,
   onCancel,
   onCreated,
 }: {
   initialName: string;
+  initial?: RecipeFormInitial;
   onCancel: () => void;
   onCreated: (input: { name: string; servings: number; totalWeightGrams?: number; ingredients: Ingredient[] }) => void;
 }) {
-  const [name, setName] = useState(initialName);
-  const [ingredients, setIngredients] = useState<Ingredient[]>([]);
-  const [servings, setServings] = useState("4");
-  const [weightOverride, setWeightOverride] = useState("");
+  const [name, setName] = useState(initial?.name ?? initialName);
+  const [ingredients, setIngredients] = useState<Ingredient[]>(initial?.ingredients ?? []);
+  const [servings, setServings] = useState(String(initial?.servings ?? 4));
+  const [weightOverride, setWeightOverride] = useState(
+    initial && initial.totalWeightGrams !== initial.ingredients.reduce((s, i) => s + i.quantityGrams, 0)
+      ? String(initial.totalWeightGrams)
+      : ""
+  );
   const [ingredientQuery, setIngredientQuery] = useState("");
 
   const search = useFoodSearch(ingredientQuery);
@@ -70,7 +83,7 @@ export default function RecipeForm({
         <button onClick={onCancel} className="text-muted text-lg leading-none px-1">
           ‹
         </button>
-        <span className="text-sm font-medium">Create recipe</span>
+        <span className="text-sm font-medium">{initial ? "Edit recipe" : "Create recipe"}</span>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
@@ -206,7 +219,7 @@ export default function RecipeForm({
           className="w-full py-3 rounded-md bg-accent text-base disabled:opacity-40 font-medium"
           style={{ color: "#0B1210" }}
         >
-          Save recipe
+          {initial ? "Save changes" : "Save recipe"}
         </button>
       </div>
     </>

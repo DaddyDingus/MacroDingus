@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { eq, inArray } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "../db/index.js";
 import { foods, recipes, recipeIngredients } from "../db/schema.js";
@@ -24,22 +24,87 @@ const recipeInput = z.object({
     .max(50),
 });
 
+async function computeNutritionPer100g(ingredients: { foodId: string; quantityGrams: number }[], totalWeightGrams: number) {
+  const foodIds = [...new Set(ingredients.map((i) => i.foodId))];
+  const foundFoods = await db.select().from(foods).where(inArray(foods.id, foodIds));
+  const foodMap = new Map(foundFoods.map((f) => [f.id, f]));
+  if (foundFoods.length !== foodIds.length) return null;
+
+  const totals = sumNutrition(ingredients.map((i) => scaleNutrition(foodMap.get(i.foodId)!, i.quantityGrams)));
+  const factor = 100 / totalWeightGrams;
+  return {
+    caloriesPer100g: totals.calories * factor,
+    proteinPer100g: totals.protein * factor,
+    carbsPer100g: totals.carbs * factor,
+    fatPer100g: totals.fat * factor,
+    fiberPer100g: totals.fiber * factor,
+    sugarPer100g: totals.sugar * factor,
+    saturatedFatPer100g: totals.saturatedFat * factor,
+    sodiumMgPer100g: totals.sodiumMg * factor,
+  };
+}
+
+async function recipeDetail(recipeId: string, userId: string) {
+  const [recipe] = await db
+    .select()
+    .from(recipes)
+    .where(and(eq(recipes.id, recipeId), eq(recipes.userId, userId)));
+  if (!recipe) return null;
+
+  const ingredientRows = await db
+    .select({ ingredient: recipeIngredients, food: foods })
+    .from(recipeIngredients)
+    .innerJoin(foods, eq(recipeIngredients.foodId, foods.id))
+    .where(eq(recipeIngredients.recipeId, recipeId));
+
+  const [food] = await db.select().from(foods).where(eq(foods.id, recipe.foodId));
+
+  return {
+    id: recipe.id,
+    name: recipe.name,
+    servings: recipe.servings,
+    totalWeightGrams: recipe.totalWeightGrams,
+    food,
+    ingredients: ingredientRows.map(({ ingredient, food: ingredientFood }) => ({
+      foodId: ingredientFood.id,
+      food: ingredientFood,
+      quantityGrams: ingredient.quantityGrams,
+    })),
+  };
+}
+
 export function registerRecipeRoutes(app: FastifyInstance) {
+  app.get("/api/recipes", async (req) => {
+    const rows = await db.select().from(recipes).where(eq(recipes.userId, req.userId!));
+    const foodIds = rows.map((r) => r.foodId);
+    const foundFoods = foodIds.length ? await db.select().from(foods).where(inArray(foods.id, foodIds)) : [];
+    const foodMap = new Map(foundFoods.map((f) => [f.id, f]));
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      servings: r.servings,
+      totalWeightGrams: r.totalWeightGrams,
+      food: foodMap.get(r.foodId),
+    }));
+  });
+
+  app.get("/api/recipes/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const detail = await recipeDetail(id, req.userId!);
+    if (!detail) return reply.code(404).send({ error: "not found" });
+    return detail;
+  });
+
   app.post("/api/recipes", async (req, reply) => {
     const parsed = recipeInput.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
 
     const { name, servings, ingredients } = parsed.data;
-    const foodIds = [...new Set(ingredients.map((i) => i.foodId))];
-    const foundFoods = await db.select().from(foods).where(inArray(foods.id, foodIds));
-    const foodMap = new Map(foundFoods.map((f) => [f.id, f]));
-    if (foundFoods.length !== foodIds.length) return reply.code(400).send({ error: "unknown foodId" });
-
     const ingredientSumGrams = ingredients.reduce((sum, i) => sum + i.quantityGrams, 0);
     const totalWeightGrams = parsed.data.totalWeightGrams ?? ingredientSumGrams;
 
-    const totals = sumNutrition(ingredients.map((i) => scaleNutrition(foodMap.get(i.foodId)!, i.quantityGrams)));
-    const factor = 100 / totalWeightGrams;
+    const nutrition = await computeNutritionPer100g(ingredients, totalWeightGrams);
+    if (!nutrition) return reply.code(400).send({ error: "unknown foodId" });
 
     const now = new Date().toISOString();
     const foodId = randomUUID();
@@ -49,15 +114,8 @@ export function registerRecipeRoutes(app: FastifyInstance) {
       source: "recipe",
       servingSizeGrams: totalWeightGrams / servings,
       servingName: "1 serving",
-      caloriesPer100g: totals.calories * factor,
-      proteinPer100g: totals.protein * factor,
-      carbsPer100g: totals.carbs * factor,
-      fatPer100g: totals.fat * factor,
-      fiberPer100g: totals.fiber * factor,
-      sugarPer100g: totals.sugar * factor,
-      saturatedFatPer100g: totals.saturatedFat * factor,
-      sodiumMgPer100g: totals.sodiumMg * factor,
       createdAt: now,
+      ...nutrition,
     });
 
     const recipeId = randomUUID();
@@ -83,5 +141,75 @@ export function registerRecipeRoutes(app: FastifyInstance) {
     const [food] = await db.select().from(foods).where(eq(foods.id, foodId));
     reply.code(201);
     return food;
+  });
+
+  // Recomputes and overwrites the materialized food row in place, so any log
+  // entries already referencing it pick up the corrected nutrition (same
+  // retroactive-edit behavior as editing a plain custom food — nothing is
+  // snapshotted at log time anywhere in this app).
+  app.patch("/api/recipes/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const parsed = recipeInput.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+
+    const [recipe] = await db
+      .select()
+      .from(recipes)
+      .where(and(eq(recipes.id, id), eq(recipes.userId, req.userId!)));
+    if (!recipe) return reply.code(404).send({ error: "not found" });
+
+    const { name, servings, ingredients } = parsed.data;
+    const ingredientSumGrams = ingredients.reduce((sum, i) => sum + i.quantityGrams, 0);
+    const totalWeightGrams = parsed.data.totalWeightGrams ?? ingredientSumGrams;
+
+    const nutrition = await computeNutritionPer100g(ingredients, totalWeightGrams);
+    if (!nutrition) return reply.code(400).send({ error: "unknown foodId" });
+
+    await db
+      .update(foods)
+      .set({
+        name,
+        servingSizeGrams: totalWeightGrams / servings,
+        ...nutrition,
+      })
+      .where(eq(foods.id, recipe.foodId));
+
+    await db.update(recipes).set({ name, servings, totalWeightGrams }).where(eq(recipes.id, id));
+
+    await db.delete(recipeIngredients).where(eq(recipeIngredients.recipeId, id));
+    await db.insert(recipeIngredients).values(
+      ingredients.map((i) => ({
+        id: randomUUID(),
+        recipeId: id,
+        foodId: i.foodId,
+        quantityGrams: i.quantityGrams,
+      }))
+    );
+
+    return recipeDetail(id, req.userId!);
+  });
+
+  // Deletes the recipe's own metadata unconditionally; the materialized food
+  // row is only deleted if nothing (a log entry) references it yet — if it's
+  // already been logged, it's left in place as an ordinary food so history
+  // stays intact, just no longer editable as a recipe.
+  app.delete("/api/recipes/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const [recipe] = await db
+      .select()
+      .from(recipes)
+      .where(and(eq(recipes.id, id), eq(recipes.userId, req.userId!)));
+    if (!recipe) return reply.code(404).send({ error: "not found" });
+
+    await db.delete(recipeIngredients).where(eq(recipeIngredients.recipeId, id));
+    await db.delete(recipes).where(eq(recipes.id, id));
+    try {
+      await db.delete(foods).where(eq(foods.id, recipe.foodId));
+    } catch {
+      // still referenced by a log entry — keep the food, just drop the recipe
+    }
+
+    reply.code(204);
+    return null;
   });
 }

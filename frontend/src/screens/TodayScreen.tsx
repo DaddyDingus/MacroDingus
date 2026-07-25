@@ -40,7 +40,7 @@ export default function TodayScreen() {
   };
 
   return (
-    <div className="min-h-dvh pb-10">
+    <div className="min-h-dvh pb-24">
       <header className="px-4 pt-5 pb-1 flex items-center justify-between">
         <button
           onClick={() => setDate((d) => addDays(d, -1))}
