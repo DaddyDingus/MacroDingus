@@ -1,0 +1,8 @@
+node_modules/
+dist/
+backend/public/
+data/*.sqlite
+data/*.sqlite-*
+data/photos/*
+!data/photos/.gitkeep
+.env

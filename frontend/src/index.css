@@ -1,0 +1,25 @@
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body {
+    @apply bg-base text-ink;
+  }
+
+  body {
+    @apply font-sans antialiased;
+  }
+
+  /* All logged/measured values render in mono so they read as readouts, not prose. */
+  .tabular {
+    @apply font-mono tabular-nums;
+  }
+}
