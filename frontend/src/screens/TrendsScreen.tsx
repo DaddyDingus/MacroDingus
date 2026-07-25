@@ -38,7 +38,7 @@ export default function TrendsScreen() {
       </header>
 
       <main className="px-4 space-y-3 max-w-md mx-auto">
-        <div className="border border-line bg-surface rounded-md p-4 flex items-center gap-2">
+        <div className="border border-line bg-surface rounded-md p-4 flex items-center gap-2 focus-within:border-accent">
           <input
             type="number"
             inputMode="decimal"

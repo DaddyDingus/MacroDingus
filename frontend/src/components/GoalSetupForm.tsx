@@ -132,7 +132,7 @@ export default function GoalSetupForm({
           <span className="block text-xs text-muted mb-1">
             Target rate ({goalType === "cut" ? "negative to lose" : "positive to gain"})
           </span>
-          <div className="flex items-center rounded-md bg-surface-raised border border-line px-3">
+          <div className="flex items-center rounded-md bg-surface-raised border border-line px-3 focus-within:border-accent">
             <input
               type="number"
               inputMode="decimal"

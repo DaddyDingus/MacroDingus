@@ -171,7 +171,7 @@ export default function RecipeForm({
                 <span className="tabular">({Math.round(ingredientSumGrams)}g)</span>
               )}
             </span>
-            <div className="flex items-center rounded-md bg-surface-raised border border-line px-3">
+            <div className="flex items-center rounded-md bg-surface-raised border border-line px-3 focus-within:border-accent">
               <input
                 type="number"
                 inputMode="decimal"

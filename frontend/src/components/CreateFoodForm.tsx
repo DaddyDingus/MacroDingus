@@ -15,7 +15,7 @@ function NumberField({
   return (
     <label className="block">
       <span className="block text-xs text-muted mb-1">{label}</span>
-      <div className="flex items-center rounded-md bg-surface-raised border border-line px-3">
+      <div className="flex items-center rounded-md bg-surface-raised border border-line px-3 focus-within:border-accent">
         <input
           type="number"
           inputMode="decimal"
@@ -118,7 +118,7 @@ export default function CreateFoodForm({
 
         <label className="block pt-1">
           <span className="block text-xs text-muted mb-1">Serving size (optional)</span>
-          <div className="flex items-center rounded-md bg-surface-raised border border-line px-3">
+          <div className="flex items-center rounded-md bg-surface-raised border border-line px-3 focus-within:border-accent">
             <input
               type="number"
               inputMode="decimal"

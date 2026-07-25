@@ -348,7 +348,7 @@ function QuantityStep({
               inputMode="decimal"
               value={grams}
               onChange={(e) => setGrams(Math.max(0, Number(e.target.value) || 0))}
-              className="tabular w-24 bg-transparent text-3xl text-center focus:outline-none"
+              className="tabular w-24 bg-transparent text-3xl text-center border-b-2 border-transparent focus:outline-none focus:border-accent"
             />
             <span className="text-sm text-muted">g</span>
           </div>
