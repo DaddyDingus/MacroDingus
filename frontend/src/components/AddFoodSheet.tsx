@@ -1,10 +1,12 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import type { Food, LogEntry, Meal } from "../api/types";
 import { useFoodSearch, useCreateFood, useBarcodeLookup } from "../api/foods";
+import { useCreateRecipe } from "../api/recipes";
 import { useAddLog, useBulkAddLog, useUpdateLogQuantity, useDeleteLog, useSmartHistory } from "../api/logs";
 import { scaleNutrition } from "../lib/nutrition";
 import { localTimeString } from "../lib/date";
 import CreateFoodForm from "./CreateFoodForm";
+import RecipeForm from "./RecipeForm";
 
 // zxing's decoder is ~400kB and only ever needed for the occasional barcode
 // scan, not the everyday search-and-log path — split it into its own chunk
@@ -18,7 +20,7 @@ const MEAL_LABELS: Record<Meal, string> = {
   snacks: "Snacks",
 };
 
-type Step = "search" | "quantity" | "create" | "scan";
+type Step = "search" | "quantity" | "create" | "scan" | "recipe";
 
 export default function AddFoodSheet({
   open,
@@ -67,6 +69,7 @@ export default function AddFoodSheet({
   const updateLog = useUpdateLogQuantity(date);
   const deleteLog = useDeleteLog(date);
   const createFood = useCreateFood();
+  const createRecipe = useCreateRecipe();
   const barcodeLookup = useBarcodeLookup();
 
   if (!open || !activeMeal) return null;
@@ -208,12 +211,20 @@ export default function AddFoodSheet({
                 );
               })}
               {!showMultiSelectUi && (
-                <button
-                  onClick={() => setStep("create")}
-                  className="w-full px-4 py-3 text-sm text-accent text-left"
-                >
-                  + Create custom food{query.trim() ? ` "${query.trim()}"` : ""}
-                </button>
+                <>
+                  <button
+                    onClick={() => setStep("create")}
+                    className="w-full px-4 py-3 text-sm text-accent text-left"
+                  >
+                    + Create custom food{query.trim() ? ` "${query.trim()}"` : ""}
+                  </button>
+                  <button
+                    onClick={() => setStep("recipe")}
+                    className="w-full px-4 pb-3 text-sm text-accent text-left"
+                  >
+                    + Create recipe
+                  </button>
+                </>
               )}
             </div>
             {showMultiSelectUi && selectedIds.size > 0 && (
@@ -252,6 +263,27 @@ export default function AddFoodSheet({
               createFood.mutate(food, {
                 onSuccess: (created) => pickFood(created),
               });
+            }}
+          />
+        )}
+
+        {step === "recipe" && (
+          <RecipeForm
+            initialName={query.trim()}
+            onCancel={() => setStep("search")}
+            onCreated={(input) => {
+              createRecipe.mutate(
+                {
+                  name: input.name,
+                  servings: input.servings,
+                  totalWeightGrams: input.totalWeightGrams,
+                  ingredients: input.ingredients.map((i) => ({
+                    foodId: i.food.id,
+                    quantityGrams: i.quantityGrams,
+                  })),
+                },
+                { onSuccess: (created) => pickFood(created) }
+              );
             }}
           />
         )}

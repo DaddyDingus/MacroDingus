@@ -113,7 +113,15 @@ export function registerFoodRoutes(app: FastifyInstance) {
 
   app.delete("/api/foods/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    await db.delete(foods).where(eq(foods.id, id));
+    try {
+      await db.delete(foods).where(eq(foods.id, id));
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("FOREIGN KEY constraint failed")) {
+        reply.code(409);
+        return { error: "This food is used in a log entry or recipe and can't be deleted" };
+      }
+      throw err;
+    }
     reply.code(204);
     return null;
   });

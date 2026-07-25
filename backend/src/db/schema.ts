@@ -21,7 +21,7 @@ export const foods = sqliteTable("foods", {
   name: text("name").notNull(),
   brand: text("brand"),
   barcode: text("barcode"),
-  source: text("source").notNull().default("custom"), // 'custom' | 'openfoodfacts'
+  source: text("source").notNull().default("custom"), // 'custom' | 'openfoodfacts' | 'recipe'
   servingSizeGrams: real("serving_size_grams"),
   servingName: text("serving_name"),
   caloriesPer100g: real("calories_per_100g").notNull(),
@@ -38,6 +38,31 @@ export const foods = sqliteTable("foods", {
   nameIdx: index("foods_name_idx").on(table.name),
   barcodeIdx: index("foods_barcode_idx").on(table.barcode),
 }));
+
+// A recipe is materialized as a normal `foods` row (source: 'recipe') whose
+// per-100g values are computed from its ingredients — logging a recipe is
+// then just logging any other food (by serving via servingSizeGrams, or by
+// weighing out any gram amount), with zero special-casing anywhere in the
+// logging path. `totalWeightGrams` is stored separately from the ingredient
+// sum because cooking changes weight (water loss/gain) without changing the
+// total calories — nutrition-per-gram of the finished product depends on the
+// real final weight, not the sum of raw ingredient weights.
+export const recipes = sqliteTable("recipes", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id), // recipe metadata is personal; the resulting food is shared
+  foodId: text("food_id").notNull().references(() => foods.id),
+  name: text("name").notNull(),
+  totalWeightGrams: real("total_weight_grams").notNull(),
+  servings: real("servings").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
+export const recipeIngredients = sqliteTable("recipe_ingredients", {
+  id: text("id").primaryKey(),
+  recipeId: text("recipe_id").notNull().references(() => recipes.id),
+  foodId: text("food_id").notNull().references(() => foods.id),
+  quantityGrams: real("quantity_grams").notNull(),
+});
 
 export const logs = sqliteTable("logs", {
   id: text("id").primaryKey(),

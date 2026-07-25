@@ -7,6 +7,7 @@ import { runMigrations } from "./db/index.js";
 import { registerAuth } from "./auth.js";
 import { registerFoodRoutes } from "./routes/foods.js";
 import { registerLogRoutes } from "./routes/logs.js";
+import { registerRecipeRoutes } from "./routes/recipes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 3000);
@@ -24,6 +25,7 @@ await registerAuth(app, DATA_DIR);
 
 registerFoodRoutes(app);
 registerLogRoutes(app);
+registerRecipeRoutes(app);
 
 app.register(fastifyStatic, {
   root: STATIC_DIR,

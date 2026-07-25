@@ -3,7 +3,7 @@ export interface Food {
   name: string;
   brand: string | null;
   barcode: string | null;
-  source: "custom" | "openfoodfacts";
+  source: "custom" | "openfoodfacts" | "recipe";
   servingSizeGrams: number | null;
   servingName: string | null;
   caloriesPer100g: number;
@@ -60,4 +60,11 @@ export interface CreateFoodInput {
   sugarPer100g?: number;
   saturatedFatPer100g?: number;
   sodiumMgPer100g?: number;
+}
+
+export interface CreateRecipeInput {
+  name: string;
+  servings: number;
+  totalWeightGrams?: number;
+  ingredients: { foodId: string; quantityGrams: number }[];
 }
