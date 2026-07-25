@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
+import { BrowserMultiFormatReader } from "@zxing/browser";
 import type { IScannerControls } from "@zxing/browser";
 import { BarcodeFormat, DecodeHintType } from "@zxing/library";
 
@@ -14,9 +14,19 @@ const PRODUCT_BARCODE_FORMATS = [
   BarcodeFormat.CODE_128,
 ];
 
-// Chrome on Android supports continuous autofocus and torch as non-standard
-// MediaTrackConstraints extensions that aren't in TS's lib.dom types yet.
+// focusMode/focusDistance are non-standard MediaTrackConstraints/Capabilities
+// extensions not in TS's lib.dom types yet. Support is inconsistent enough
+// (confirmed on a Galaxy S24+ in Chrome: focusMode capability only lists
+// "manual", even though "continuous" shows as the live setting Chrome won't
+// let a page actually request) that continuous AF can't be assumed — manual
+// focusDistance with a slider is the only thing that reliably works.
+interface ExtendedCapabilities extends MediaTrackCapabilities {
+  focusMode?: string[];
+  focusDistance?: { min: number; max: number; step: number };
+}
 type ExtendedConstraints = MediaTrackConstraints & { advanced?: Array<Record<string, unknown>> };
+
+const MAX_USEFUL_FOCUS_METERS = 1; // capability "max" is often a meaningless huge sentinel value
 
 export default function BarcodeScanner({
   onScan,
@@ -30,8 +40,8 @@ export default function BarcodeScanner({
   const onScanRef = useRef(onScan);
   onScanRef.current = onScan;
   const [error, setError] = useState<string | null>(null);
-  const [torchSupported, setTorchSupported] = useState(false);
-  const [torchOn, setTorchOn] = useState(false);
+  const [focusRange, setFocusRange] = useState<{ min: number; max: number; step: number } | null>(null);
+  const [focusDistance, setFocusDistance] = useState(0.1);
 
   // Deps intentionally empty: this starts the camera exactly once on mount and
   // tears it down on unmount. Reading onScan through a ref avoids restarting
@@ -45,10 +55,7 @@ export default function BarcodeScanner({
     let cancelled = false;
     let stopped = false;
 
-    const videoConstraints: ExtendedConstraints = {
-      facingMode: "environment",
-      advanced: [{ focusMode: "continuous" }],
-    };
+    const videoConstraints: ExtendedConstraints = { facingMode: "environment" };
 
     reader
       .decodeFromConstraints({ video: videoConstraints }, videoRef.current!, (result) => {
@@ -67,16 +74,32 @@ export default function BarcodeScanner({
 
         const stream = videoRef.current?.srcObject as MediaStream | undefined;
         const track = stream?.getVideoTracks()[0];
-        if (!track) return;
+        if (!track || typeof track.getCapabilities !== "function") return;
         trackRef.current = track;
 
-        // Some devices only honor focusMode via applyConstraints after the
-        // stream is live, not in the initial getUserMedia call — try both.
-        const focusConstraints: ExtendedConstraints = { advanced: [{ focusMode: "continuous" }] };
-        track.applyConstraints(focusConstraints as MediaTrackConstraints).catch(() => {});
+        let caps: ExtendedCapabilities;
+        try {
+          caps = track.getCapabilities() as ExtendedCapabilities;
+        } catch {
+          return;
+        }
 
-        if (BrowserCodeReader.mediaStreamIsTorchCompatibleTrack(track)) {
-          setTorchSupported(true);
+        if (caps.focusMode?.includes("continuous")) {
+          const constraints: ExtendedConstraints = { advanced: [{ focusMode: "continuous" }] };
+          track.applyConstraints(constraints as MediaTrackConstraints).catch(() => {});
+        } else if (caps.focusMode?.includes("manual") && caps.focusDistance) {
+          const range = {
+            min: caps.focusDistance.min,
+            max: Math.min(caps.focusDistance.max, MAX_USEFUL_FOCUS_METERS),
+            step: caps.focusDistance.step || 0.01,
+          };
+          const initial = Math.min(Math.max(0.1, range.min), range.max);
+          setFocusRange(range);
+          setFocusDistance(initial);
+          const constraints: ExtendedConstraints = {
+            advanced: [{ focusMode: "manual", focusDistance: initial }],
+          };
+          track.applyConstraints(constraints as MediaTrackConstraints).catch(() => {});
         }
       })
       .catch(() => {
@@ -89,13 +112,12 @@ export default function BarcodeScanner({
     };
   }, []);
 
-  function toggleTorch() {
+  function handleFocusChange(value: number) {
+    setFocusDistance(value);
     const track = trackRef.current;
     if (!track) return;
-    const next = !torchOn;
-    BrowserCodeReader.mediaStreamSetTorch(track, next)
-      .then(() => setTorchOn(next))
-      .catch(() => {});
+    const constraints: ExtendedConstraints = { advanced: [{ focusMode: "manual", focusDistance: value }] };
+    track.applyConstraints(constraints as MediaTrackConstraints).catch(() => {});
   }
 
   return (
@@ -112,25 +134,32 @@ export default function BarcodeScanner({
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="w-64 h-40 border-2 border-accent/70 rounded-md" />
         </div>
-        {torchSupported && (
-          <button
-            onClick={toggleTorch}
-            className={`absolute bottom-4 right-4 h-11 w-11 rounded-full border flex items-center justify-center text-lg ${
-              torchOn ? "bg-accent border-accent" : "bg-black/40 border-line"
-            }`}
-            style={torchOn ? { color: "#0B1210" } : undefined}
-            aria-label={torchOn ? "Turn off flashlight" : "Turn on flashlight"}
-          >
-            ⚡
-          </button>
-        )}
       </div>
 
-      <div className="px-4 py-6 text-center shrink-0">
+      <div className="px-4 py-4 text-center shrink-0">
         {error ? (
           <p className="text-sm text-protein">{error}</p>
         ) : (
-          <p className="text-sm text-muted">Hold steady, close to the barcode</p>
+          <p className="text-sm text-muted mb-2">Hold steady, close to the barcode</p>
+        )}
+        {focusRange && (
+          <div className="pt-1">
+            <input
+              type="range"
+              min={focusRange.min}
+              max={focusRange.max}
+              step={focusRange.step}
+              value={focusDistance}
+              onChange={(e) => handleFocusChange(Number(e.target.value))}
+              className="w-full accent-accent"
+              aria-label="Focus distance"
+            />
+            <div className="flex justify-between text-[11px] text-muted">
+              <span>Close</span>
+              <span>Focus</span>
+              <span>Far</span>
+            </div>
+          </div>
         )}
       </div>
     </div>
