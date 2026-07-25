@@ -15,6 +15,8 @@ const profileInput = z.object({
   activityLevel: z.enum(["sedentary", "light", "moderate", "active", "very_active"]),
   goalType: z.enum(["cut", "bulk", "maintain"]),
   targetRateKgPerWeek: z.number().min(-2).max(2),
+  proteinPerKg: z.number().min(0.5).max(4).default(2.0),
+  fatPercent: z.number().min(0.1).max(0.6).default(0.25),
 });
 
 const CALORIE_LOOKBACK_DAYS = 21; // window for adaptive TDEE (needs 14 days of overlap; pad a bit for logging gaps
@@ -69,7 +71,7 @@ async function performCheckin(userId: string) {
   const tdee = adaptiveTdee ?? formulaTdee;
 
   const targetCalories = tdee + (profile.targetRateKgPerWeek * 7700) / 7;
-  const macros = computeMacroTargets(targetCalories, trendWeightKg);
+  const macros = computeMacroTargets(targetCalories, trendWeightKg, profile.proteinPerKg, profile.fatPercent);
 
   const id = randomUUID();
   await db.insert(checkins).values({

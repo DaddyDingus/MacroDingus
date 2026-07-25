@@ -12,6 +12,8 @@ export interface Profile {
   activityLevel: ActivityLevel;
   goalType: GoalType;
   targetRateKgPerWeek: number;
+  proteinPerKg: number;
+  fatPercent: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -42,6 +44,8 @@ export interface ProfileInput {
   activityLevel: ActivityLevel;
   goalType: GoalType;
   targetRateKgPerWeek: number;
+  proteinPerKg: number;
+  fatPercent: number;
 }
 
 export function useCoachStatus() {
@@ -68,5 +72,12 @@ export function useCheckIn() {
   return useMutation({
     mutationFn: () => apiFetch<{ checkin: Checkin; usedAdaptiveTdee: boolean }>("/checkins", { method: "POST" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["coach"] }),
+  });
+}
+
+export function useCheckinHistory() {
+  return useQuery({
+    queryKey: ["coach", "checkins"],
+    queryFn: () => apiFetch<Checkin[]>("/checkins"),
   });
 }

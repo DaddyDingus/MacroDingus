@@ -67,15 +67,22 @@ export interface MacroTargets {
   fatG: number;
 }
 
-// Default split: protein anchored to bodyweight (2.0 g/kg — comfortably
-// covers muscle-preservation needs across cut/maintain/bulk without needing
-// a training-experience input), fat at 25% of calories (adequate for
-// hormone function), carbs absorb the remainder. Not user-adjustable yet —
-// a reasonable evidence-based default, not a claim it's optimal for everyone.
-export function computeMacroTargets(targetCalories: number, trendWeightKg: number): MacroTargets {
-  const proteinG = 2.0 * trendWeightKg;
+// Split: protein anchored to trend bodyweight (g/kg), fat as a share of total
+// calories, carbs always absorb whatever's left. proteinPerKg/fatPercent are
+// user-adjustable (profiles.proteinPerKg/fatPercent); 2.0 g/kg and 25% fat
+// are just the defaults a new profile starts with, not hardcoded truths.
+// carbsKcal is clamped at 0 rather than going negative — an aggressive
+// protein+fat combination on a low-calorie cut can otherwise leave nothing
+// for carbs, which is a valid (if extreme) outcome, not a bug to hide.
+export function computeMacroTargets(
+  targetCalories: number,
+  trendWeightKg: number,
+  proteinPerKg: number,
+  fatPercent: number
+): MacroTargets {
+  const proteinG = proteinPerKg * trendWeightKg;
   const proteinKcal = proteinG * 4;
-  const fatKcal = 0.25 * targetCalories;
+  const fatKcal = fatPercent * targetCalories;
   const fatG = fatKcal / 9;
   const carbsKcal = Math.max(0, targetCalories - proteinKcal - fatKcal);
   const carbsG = carbsKcal / 4;

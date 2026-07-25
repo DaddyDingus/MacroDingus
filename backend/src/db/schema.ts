@@ -104,6 +104,11 @@ export const profiles = sqliteTable("profiles", {
   activityLevel: text("activity_level").notNull(), // sedentary|light|moderate|active|very_active
   goalType: text("goal_type").notNull(), // cut|bulk|maintain
   targetRateKgPerWeek: real("target_rate_kg_per_week").notNull(), // negative=cut, positive=bulk, 0=maintain
+  // Macro split inputs — protein anchored to trend bodyweight, fat as a share
+  // of total calories, carbs always absorb whatever's left. Defaults match
+  // what was hardcoded before this became adjustable (2.0 g/kg, 25% fat).
+  proteinPerKg: real("protein_per_kg").notNull().default(2.0),
+  fatPercent: real("fat_percent").notNull().default(0.25),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });

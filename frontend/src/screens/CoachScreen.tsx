@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { useCoachStatus, useSaveProfile, useCheckIn } from "../api/coach";
+import { useCoachStatus, useSaveProfile, useCheckIn, useCheckinHistory } from "../api/coach";
+import { useWeightUnit, kgToUnit } from "../lib/weightUnit";
+import { formatDayLabel } from "../lib/date";
 import GoalSetupForm from "../components/GoalSetupForm";
 
 function fmt(n: number, decimals = 0): string {
@@ -10,7 +12,10 @@ export default function CoachScreen() {
   const status = useCoachStatus();
   const saveProfile = useSaveProfile();
   const checkIn = useCheckIn();
+  const checkinHistory = useCheckinHistory();
+  const { unit } = useWeightUnit();
   const [editingGoal, setEditingGoal] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   if (status.isLoading) return null;
 
@@ -108,7 +113,9 @@ export default function CoachScreen() {
             </div>
             <div>
               <p className="text-[11px] tracking-widest uppercase text-muted">Trend weight</p>
-              <p className="tabular text-lg mt-0.5">{checkin.trendWeightKg.toFixed(1)} kg</p>
+              <p className="tabular text-lg mt-0.5">
+                {kgToUnit(checkin.trendWeightKg, unit).toFixed(1)} {unit}
+              </p>
             </div>
           </div>
         )}
@@ -134,6 +141,30 @@ export default function CoachScreen() {
             week — check in any time, there's no penalty for checking in early or late.
           </p>
         </div>
+
+        {checkinHistory.data && checkinHistory.data.length > 1 && (
+          <div className="border border-line bg-surface rounded-md overflow-hidden">
+            <button
+              onClick={() => setShowHistory((v) => !v)}
+              className="w-full px-4 py-2.5 flex items-center justify-between text-left"
+            >
+              <span className="text-[11px] tracking-widest uppercase text-muted">Check-in history</span>
+              <span className="text-xs text-accent">{showHistory ? "Hide" : "Show"}</span>
+            </button>
+            {showHistory && (
+              <div>
+                {checkinHistory.data.map((c) => (
+                  <div key={c.id} className="flex items-center justify-between px-4 py-2 border-t border-line/60">
+                    <span className="text-sm text-muted">{formatDayLabel(c.date)}</span>
+                    <span className="tabular text-sm">
+                      {fmt(c.targetCalories)} kcal · {fmt(c.tdee)} TDEE
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </main>
     </div>
   );

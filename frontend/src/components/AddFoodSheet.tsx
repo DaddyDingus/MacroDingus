@@ -39,6 +39,7 @@ export default function AddFoodSheet({
   const [query, setQuery] = useState("");
   const [selectedFood, setSelectedFood] = useState<Food | null>(null);
   const [grams, setGrams] = useState(100);
+  const [editMeal, setEditMeal] = useState<Meal | null>(null);
   const [scannedBarcode, setScannedBarcode] = useState<string | undefined>(undefined);
   const [multiSelect, setMultiSelect] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -50,6 +51,7 @@ export default function AddFoodSheet({
     if (editingEntry) {
       setSelectedFood(editingEntry.food);
       setGrams(editingEntry.quantityGrams);
+      setEditMeal(editingEntry.meal);
       setStep("quantity");
     } else {
       setSelectedFood(null);
@@ -83,7 +85,8 @@ export default function AddFoodSheet({
   function confirmQuantity() {
     if (!selectedFood || !activeMeal) return;
     if (editingEntry) {
-      updateLog.mutate({ id: editingEntry.id, quantityGrams: grams });
+      const meal = editMeal && editMeal !== editingEntry.meal ? editMeal : undefined;
+      updateLog.mutate({ id: editingEntry.id, quantityGrams: grams, meal });
     } else {
       addLog.mutate({ food: selectedFood, meal: activeMeal, quantityGrams: grams });
     }
@@ -248,6 +251,8 @@ export default function AddFoodSheet({
             setGrams={setGrams}
             meal={activeMeal}
             isEditing={!!editingEntry}
+            editMeal={editMeal}
+            setEditMeal={setEditMeal}
             onBack={() => (editingEntry ? onClose() : setStep("search"))}
             onConfirm={confirmQuantity}
             onRemove={editingEntry ? removeEntry : undefined}
@@ -304,6 +309,8 @@ function QuantityStep({
   setGrams,
   meal,
   isEditing,
+  editMeal,
+  setEditMeal,
   onBack,
   onConfirm,
   onRemove,
@@ -313,6 +320,8 @@ function QuantityStep({
   setGrams: (g: number) => void;
   meal: Meal;
   isEditing: boolean;
+  editMeal: Meal | null;
+  setEditMeal: (m: Meal) => void;
   onBack: () => void;
   onConfirm: () => void;
   onRemove?: () => void;
@@ -335,6 +344,21 @@ function QuantityStep({
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pb-2">
+        {isEditing && (
+          <div className="flex gap-2 justify-center pt-3">
+            {(Object.keys(MEAL_LABELS) as Meal[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => setEditMeal(m)}
+                className={`text-xs px-3 py-1.5 rounded-full border ${
+                  (editMeal ?? meal) === m ? "border-accent text-accent" : "border-line text-muted"
+                }`}
+              >
+                {MEAL_LABELS[m]}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex items-center justify-center gap-4 py-4">
           <button
             onClick={() => setGrams(Math.max(1, grams - 10))}

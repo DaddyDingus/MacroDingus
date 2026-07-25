@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { useWeightTrend, useLogWeight } from "../api/weights";
+import { useWeightTrend, useWeights, useLogWeight, useDeleteWeight } from "../api/weights";
 import { useLogsHistory } from "../api/logs";
-import { localDateString, addDays } from "../lib/date";
+import { localDateString, addDays, formatDayLabel } from "../lib/date";
+import { useWeightUnit, kgToUnit, unitToKg } from "../lib/weightUnit";
 import WeightChart from "../components/WeightChart";
 import MacroHistoryChart from "../components/MacroHistoryChart";
 
@@ -13,28 +14,44 @@ const RANGE_PRESETS = [
 
 export default function TrendsScreen() {
   const [days, setDays] = useState(90);
+  const { unit, setUnit } = useWeightUnit();
   const trend = useWeightTrend(days);
+  const recentWeighIns = useWeights(30);
   const history = useLogsHistory(Math.min(days, 90)); // macro bars past ~90 days get too dense to read
   const logWeight = useLogWeight();
+  const deleteWeight = useDeleteWeight();
   const [weightInput, setWeightInput] = useState("");
+  const [showRecent, setShowRecent] = useState(false);
 
   const points = trend.data ?? [];
   const latest = points[points.length - 1];
   const weekAgoDate = latest ? addDays(latest.date, -7) : null;
   const weekAgoPoint = weekAgoDate ? [...points].reverse().find((p) => p.date <= weekAgoDate) : undefined;
-  const weekDelta = latest && weekAgoPoint ? latest.trendKg - weekAgoPoint.trendKg : null;
+  const weekDeltaKg = latest && weekAgoPoint ? latest.trendKg - weekAgoPoint.trendKg : null;
 
   function submitWeight() {
-    const kg = Number(weightInput);
-    if (!kg || kg <= 0) return;
-    logWeight.mutate({ date: localDateString(), weightKg: kg });
+    const value = Number(weightInput);
+    if (!value || value <= 0) return;
+    logWeight.mutate({ date: localDateString(), weightKg: unitToKg(value, unit) });
     setWeightInput("");
   }
 
   return (
     <div className="min-h-dvh pb-24">
-      <header className="px-4 pt-5 pb-3">
+      <header className="px-4 pt-5 pb-3 flex items-center justify-between">
         <h1 className="text-lg font-medium">Trends</h1>
+        <div className="flex rounded-full border border-line overflow-hidden text-xs">
+          {(["kg", "lb"] as const).map((u) => (
+            <button
+              key={u}
+              onClick={() => setUnit(u)}
+              className={`px-2.5 py-1 ${unit === u ? "bg-accent" : "text-muted"}`}
+              style={unit === u ? { color: "#0B1210" } : undefined}
+            >
+              {u}
+            </button>
+          ))}
+        </div>
       </header>
 
       <main className="px-4 space-y-3 max-w-md mx-auto">
@@ -47,7 +64,7 @@ export default function TrendsScreen() {
             placeholder="Log today's weight"
             className="tabular flex-1 min-w-0 bg-transparent text-sm focus:outline-none placeholder:text-muted"
           />
-          <span className="text-xs text-muted shrink-0">kg</span>
+          <span className="text-xs text-muted shrink-0">{unit}</span>
           <button
             onClick={submitWeight}
             disabled={!weightInput || logWeight.isPending}
@@ -61,11 +78,13 @@ export default function TrendsScreen() {
         {latest && (
           <div className="border border-line bg-surface rounded-md p-4">
             <p className="text-[11px] tracking-widest uppercase text-muted">Trend weight</p>
-            <p className="tabular text-3xl font-medium tracking-tight">{latest.trendKg.toFixed(1)} kg</p>
-            {weekDelta !== null && (
+            <p className="tabular text-3xl font-medium tracking-tight">
+              {kgToUnit(latest.trendKg, unit).toFixed(1)} {unit}
+            </p>
+            {weekDeltaKg !== null && (
               <p className="tabular text-xs text-muted mt-1">
-                {weekDelta >= 0 ? "+" : ""}
-                {weekDelta.toFixed(1)} kg over 7 days
+                {weekDeltaKg >= 0 ? "+" : ""}
+                {kgToUnit(weekDeltaKg, unit).toFixed(1)} {unit} over 7 days
               </p>
             )}
           </div>
@@ -87,8 +106,46 @@ export default function TrendsScreen() {
 
         <div className="border border-line bg-surface rounded-md p-4">
           <p className="text-[11px] tracking-widest uppercase text-muted mb-1">Weight</p>
-          <WeightChart points={points} />
+          <WeightChart points={points} unit={unit} />
         </div>
+
+        {recentWeighIns.data && recentWeighIns.data.length > 0 && (
+          <div className="border border-line bg-surface rounded-md overflow-hidden">
+            <button
+              onClick={() => setShowRecent((v) => !v)}
+              className="w-full px-4 py-2.5 flex items-center justify-between text-left"
+            >
+              <span className="text-[11px] tracking-widest uppercase text-muted">Recent weigh-ins</span>
+              <span className="text-xs text-accent">{showRecent ? "Hide" : "Show"}</span>
+            </button>
+            {showRecent && (
+              <div>
+                {[...recentWeighIns.data]
+                  .reverse()
+                  .map((w) => (
+                    <div
+                      key={w.id}
+                      className="flex items-center justify-between px-4 py-2 border-t border-line/60"
+                    >
+                      <span className="text-sm text-muted">{formatDayLabel(w.date)}</span>
+                      <span className="flex items-center gap-3">
+                        <span className="tabular text-sm">
+                          {kgToUnit(w.weightKg, unit).toFixed(1)} {unit}
+                        </span>
+                        <button
+                          onClick={() => deleteWeight.mutate(w.id)}
+                          aria-label={`Delete weigh-in from ${formatDayLabel(w.date)}`}
+                          className="text-muted text-base leading-none px-1"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="border border-line bg-surface rounded-md p-4">
           <p className="text-[11px] tracking-widest uppercase text-muted mb-1">Macros</p>

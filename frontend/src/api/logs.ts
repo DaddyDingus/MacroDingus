@@ -83,10 +83,10 @@ export function useAddLog(date: string) {
 export function useUpdateLogQuantity(date: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { id: string; quantityGrams: number }) =>
+    mutationFn: (input: { id: string; quantityGrams: number; meal?: Meal }) =>
       apiFetch<LogEntry>(`/logs/${input.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ quantityGrams: input.quantityGrams }),
+        body: JSON.stringify({ quantityGrams: input.quantityGrams, meal: input.meal }),
       }),
     onMutate: async (input) => {
       await qc.cancelQueries({ queryKey: ["logs", date] });
@@ -97,7 +97,12 @@ export function useUpdateLogQuantity(date: string) {
           date,
           old.entries.map((e) =>
             e.id === input.id
-              ? { ...e, quantityGrams: input.quantityGrams, nutrition: scaleNutrition(e.food, input.quantityGrams) }
+              ? {
+                  ...e,
+                  quantityGrams: input.quantityGrams,
+                  meal: input.meal ?? e.meal,
+                  nutrition: scaleNutrition(e.food, input.quantityGrams),
+                }
               : e
           )
         );

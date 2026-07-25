@@ -28,6 +28,9 @@ export default function GoalSetupForm({
   const [activityLevel, setActivityLevel] = useState<ActivityLevel>(initial?.activityLevel ?? "moderate");
   const [goalType, setGoalType] = useState<GoalType>(initial?.goalType ?? "maintain");
   const [rate, setRate] = useState(String(initial?.targetRateKgPerWeek ?? 0));
+  const [showMacroSplit, setShowMacroSplit] = useState(false);
+  const [proteinPerKg, setProteinPerKg] = useState(String(initial?.proteinPerKg ?? 2.0));
+  const [fatPercent, setFatPercent] = useState(String(initial ? Math.round(initial.fatPercent * 100) : 25));
 
   function selectGoal(g: GoalType) {
     setGoalType(g);
@@ -45,6 +48,8 @@ export default function GoalSetupForm({
       activityLevel,
       goalType,
       targetRateKgPerWeek: goalType === "maintain" ? 0 : Number(rate),
+      proteinPerKg: Number(proteinPerKg) || 2.0,
+      fatPercent: (Number(fatPercent) || 25) / 100,
     });
   }
 
@@ -144,6 +149,48 @@ export default function GoalSetupForm({
             <span className="text-xs text-muted">kg/week</span>
           </div>
         </label>
+      )}
+
+      {!showMacroSplit ? (
+        <button onClick={() => setShowMacroSplit(true)} className="text-sm text-accent">
+          + Adjust macro split
+        </button>
+      ) : (
+        <div>
+          <p className="text-xs text-muted mb-1.5">
+            Macro split — protein by bodyweight, fat as a share of calories, carbs fill the rest
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="block text-xs text-muted mb-1">Protein</span>
+              <div className="flex items-center rounded-md bg-surface-raised border border-line px-3 focus-within:border-accent">
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.1"
+                  value={proteinPerKg}
+                  onChange={(e) => setProteinPerKg(e.target.value)}
+                  className="tabular w-full bg-transparent py-2.5 text-sm focus:outline-none"
+                />
+                <span className="text-xs text-muted">g/kg</span>
+              </div>
+            </label>
+            <label className="block">
+              <span className="block text-xs text-muted mb-1">Fat</span>
+              <div className="flex items-center rounded-md bg-surface-raised border border-line px-3 focus-within:border-accent">
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="1"
+                  value={fatPercent}
+                  onChange={(e) => setFatPercent(e.target.value)}
+                  className="tabular w-full bg-transparent py-2.5 text-sm focus:outline-none"
+                />
+                <span className="text-xs text-muted">% of cal.</span>
+              </div>
+            </label>
+          </div>
+        </div>
       )}
 
       <div className="flex gap-2 pt-1">
