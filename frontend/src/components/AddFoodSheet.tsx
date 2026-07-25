@@ -1,10 +1,15 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import type { Food, LogEntry, Meal } from "../api/types";
-import { useFoodSearch, useCreateFood } from "../api/foods";
+import { useFoodSearch, useCreateFood, useBarcodeLookup } from "../api/foods";
 import { useAddLog, useUpdateLogQuantity, useDeleteLog, useSmartHistory } from "../api/logs";
 import { scaleNutrition } from "../lib/nutrition";
 import { localTimeString } from "../lib/date";
 import CreateFoodForm from "./CreateFoodForm";
+
+// zxing's decoder is ~400kB and only ever needed for the occasional barcode
+// scan, not the everyday search-and-log path — split it into its own chunk
+// so it doesn't weigh down the initial load.
+const BarcodeScanner = lazy(() => import("./BarcodeScanner"));
 
 const MEAL_LABELS: Record<Meal, string> = {
   breakfast: "Breakfast",
@@ -13,7 +18,7 @@ const MEAL_LABELS: Record<Meal, string> = {
   snacks: "Snacks",
 };
 
-type Step = "search" | "quantity" | "create";
+type Step = "search" | "quantity" | "create" | "scan";
 
 export default function AddFoodSheet({
   open,
@@ -32,6 +37,7 @@ export default function AddFoodSheet({
   const [query, setQuery] = useState("");
   const [selectedFood, setSelectedFood] = useState<Food | null>(null);
   const [grams, setGrams] = useState(100);
+  const [scannedBarcode, setScannedBarcode] = useState<string | undefined>(undefined);
 
   const activeMeal = editingEntry?.meal ?? meal;
 
@@ -47,6 +53,7 @@ export default function AddFoodSheet({
       setStep("search");
     }
     setQuery("");
+    setScannedBarcode(undefined);
   }, [open, editingEntry]);
 
   const search = useFoodSearch(query);
@@ -55,6 +62,7 @@ export default function AddFoodSheet({
   const updateLog = useUpdateLogQuantity(date);
   const deleteLog = useDeleteLog(date);
   const createFood = useCreateFood();
+  const barcodeLookup = useBarcodeLookup();
 
   if (!open || !activeMeal) return null;
 
@@ -80,6 +88,16 @@ export default function AddFoodSheet({
     onClose();
   }
 
+  function handleScan(barcode: string) {
+    barcodeLookup.mutate(barcode, {
+      onSuccess: (food) => pickFood(food),
+      onError: () => {
+        setScannedBarcode(barcode);
+        setStep("create");
+      },
+    });
+  }
+
   const suggestions = query.trim() ? search.data : smartHistory.data?.foods;
   const suggestionsLabel = query.trim()
     ? "Results"
@@ -99,14 +117,20 @@ export default function AddFoodSheet({
                 ×
               </button>
             </div>
-            <div className="px-4 pb-3 shrink-0">
+            <div className="px-4 pb-3 shrink-0 flex gap-2">
               <input
                 autoFocus
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search foods…"
-                className="w-full rounded-md bg-surface-raised border border-line px-3 py-2.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent"
+                className="flex-1 min-w-0 rounded-md bg-surface-raised border border-line px-3 py-2.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:border-accent"
               />
+              <button
+                onClick={() => setStep("scan")}
+                className="shrink-0 rounded-md border border-line px-3 text-sm text-muted active:bg-surface-raised"
+              >
+                Scan
+              </button>
             </div>
             <div className="flex-1 overflow-y-auto pb-4">
               <p className="px-4 pb-1 text-[11px] tracking-widest uppercase text-muted">
@@ -156,6 +180,7 @@ export default function AddFoodSheet({
         {step === "create" && (
           <CreateFoodForm
             initialName={query.trim()}
+            barcode={scannedBarcode}
             onCancel={() => setStep("search")}
             onCreated={(food) => {
               createFood.mutate(food, {
@@ -165,6 +190,12 @@ export default function AddFoodSheet({
           />
         )}
       </div>
+
+      {step === "scan" && (
+        <Suspense fallback={<div className="fixed inset-0 z-[60] bg-black" />}>
+          <BarcodeScanner onScan={handleScan} onClose={() => setStep("search")} />
+        </Suspense>
+      )}
     </div>
   );
 }

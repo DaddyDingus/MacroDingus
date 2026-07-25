@@ -49,6 +49,7 @@ export interface DayLog {
 export interface CreateFoodInput {
   name: string;
   brand?: string;
+  barcode?: string;
   servingSizeGrams?: number;
   servingName?: string;
   caloriesPer100g: number;

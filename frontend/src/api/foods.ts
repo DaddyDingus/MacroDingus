@@ -10,6 +10,14 @@ export function useFoodSearch(query: string) {
   });
 }
 
+export function useBarcodeLookup() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (barcode: string) => apiFetch<Food>(`/foods/barcode/${encodeURIComponent(barcode)}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["foods"] }),
+  });
+}
+
 export function useCreateFood() {
   const qc = useQueryClient();
   return useMutation({

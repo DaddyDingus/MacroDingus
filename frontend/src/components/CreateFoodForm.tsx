@@ -31,10 +31,12 @@ function NumberField({
 
 export default function CreateFoodForm({
   initialName,
+  barcode,
   onCancel,
   onCreated,
 }: {
   initialName: string;
+  barcode?: string;
   onCancel: () => void;
   onCreated: (food: CreateFoodInput) => void;
 }) {
@@ -59,6 +61,7 @@ export default function CreateFoodForm({
     onCreated({
       name: name.trim(),
       brand: brand.trim() || undefined,
+      barcode,
       servingSizeGrams: num(servingSizeGrams),
       caloriesPer100g: Number(calories),
       proteinPer100g: Number(protein),
@@ -81,6 +84,12 @@ export default function CreateFoodForm({
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
+        {barcode && (
+          <p className="text-xs text-muted">
+            No product found for barcode <span className="tabular">{barcode}</span> — this will be
+            remembered for next time.
+          </p>
+        )}
         <label className="block">
           <span className="block text-xs text-muted mb-1">Name</span>
           <input
