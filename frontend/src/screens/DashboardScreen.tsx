@@ -2,12 +2,14 @@ import { lazy, Suspense, useState } from "react";
 import { useDayLog } from "../api/logs";
 import { useCoachStatus } from "../api/coach";
 import { localDateString } from "../lib/date";
-import { SHORTCUT_CATALOG, useDashboardShortcuts, type ShortcutId } from "../lib/shortcuts";
-import QuickActionFlow from "../components/QuickActionFlow";
+import ShortcutsBar from "../components/ShortcutsBar";
 
 // The only piece of the dashboard that pulls in recharts — kept out of this
-// screen's own (eager) bundle. See DashboardInsights.tsx for why.
-const DashboardInsights = lazy(() => import("../components/DashboardInsights"));
+// screen's own (eager) bundle. See DashboardTileSections.tsx for why.
+const DashboardTileSections = lazy(() => import("../components/DashboardTileSections"));
+// No recharts here, but still infrequently used (only when customizing),
+// so it's split the same way rather than landing in the eager bundle.
+const DashboardEditorSheet = lazy(() => import("../components/DashboardEditorSheet"));
 
 function fmt(n: number, decimals = 0): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: decimals, minimumFractionDigits: decimals });
@@ -17,13 +19,12 @@ const ZERO = { calories: 0, protein: 0, carbs: 0, fat: 0 };
 
 export default function DashboardScreen() {
   const today = localDateString();
-  const { shortcuts } = useDashboardShortcuts();
 
   const dayLog = useDayLog(today);
   const coachStatus = useCoachStatus();
 
   const [mode, setMode] = useState<"total" | "remaining">("total");
-  const [runningAction, setRunningAction] = useState<ShortcutId | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
 
   const totals = dayLog.data?.totals ?? ZERO;
   const checkin = coachStatus.data?.latestCheckin;
@@ -42,7 +43,7 @@ export default function DashboardScreen() {
       : totals;
 
   return (
-    <div className="min-h-dvh pb-24">
+    <div className="min-h-dvh pb-40">
       <header className="px-4 pt-5 pb-3">
         <h1 className="text-lg font-medium">Dashboard</h1>
       </header>
@@ -66,7 +67,7 @@ export default function DashboardScreen() {
                   className={`px-2.5 py-1 ${mode === "total" ? "bg-accent" : "text-muted"}`}
                   style={mode === "total" ? { color: "#0B1210" } : undefined}
                 >
-                  Total
+                  Consumed
                 </button>
                 <button
                   onClick={() => setMode("remaining")}
@@ -101,36 +102,37 @@ export default function DashboardScreen() {
           </div>
         </div>
 
-        <div className="grid grid-cols-4 gap-2">
-          {shortcuts.map((id) => {
-            const s = SHORTCUT_CATALOG.find((c) => c.id === id);
-            if (!s) return null;
-            return (
-              <button
-                key={id}
-                onClick={() => setRunningAction(id)}
-                className="border border-line bg-surface rounded-md py-3 px-1 text-center active:bg-surface-raised"
-              >
-                <span className="block text-xs leading-tight">{s.label}</span>
-              </button>
-            );
-          })}
-        </div>
-
         <Suspense
           fallback={
-            <div className="grid grid-cols-2 gap-3">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="border border-line bg-surface rounded-md p-4 h-[104px] animate-pulse" />
+            <div className="space-y-4">
+              {Array.from({ length: 2 }).map((_, section) => (
+                <div key={section} className="grid grid-cols-2 gap-3">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <div key={i} className="border border-line bg-surface rounded-md p-4 h-[104px] animate-pulse" />
+                  ))}
+                </div>
               ))}
             </div>
           }
         >
-          <DashboardInsights />
+          <DashboardTileSections />
         </Suspense>
+
+        <button
+          onClick={() => setEditorOpen(true)}
+          className="w-full text-center py-2.5 text-xs text-muted border border-line rounded-md active:bg-surface-raised"
+        >
+          Customise dashboard
+        </button>
       </main>
 
-      {runningAction && <QuickActionFlow action={runningAction} onClose={() => setRunningAction(null)} />}
+      <ShortcutsBar />
+
+      {editorOpen && (
+        <Suspense fallback={null}>
+          <DashboardEditorSheet onClose={() => setEditorOpen(false)} />
+        </Suspense>
+      )}
     </div>
   );
 }

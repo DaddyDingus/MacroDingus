@@ -109,6 +109,14 @@ export const profiles = sqliteTable("profiles", {
   // what was hardcoded before this became adjustable (2.0 g/kg, 25% fat).
   proteinPerKg: real("protein_per_kg").notNull().default(2.0),
   fatPercent: real("fat_percent").notNull().default(0.25),
+  // Goal Progress needs a target and a stable "start" point to measure
+  // against. goalStartedAt/goalStartWeightKg snapshot the trend weight at
+  // the moment goalWeightKg is set or changed (see coach.ts), so progress is
+  // always relative to the specific goal in effect, not a stale first-ever
+  // weigh-in from a previous goal.
+  goalWeightKg: real("goal_weight_kg"),
+  goalStartedAt: text("goal_started_at"),
+  goalStartWeightKg: real("goal_start_weight_kg"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });

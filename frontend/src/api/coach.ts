@@ -14,6 +14,9 @@ export interface Profile {
   targetRateKgPerWeek: number;
   proteinPerKg: number;
   fatPercent: number;
+  goalWeightKg: number | null;
+  goalStartedAt: string | null;
+  goalStartWeightKg: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -46,6 +49,7 @@ export interface ProfileInput {
   targetRateKgPerWeek: number;
   proteinPerKg: number;
   fatPercent: number;
+  goalWeightKg: number | null;
 }
 
 export function useCoachStatus() {

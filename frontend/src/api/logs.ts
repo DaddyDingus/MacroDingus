@@ -34,6 +34,16 @@ export function useLogsHistory(days: number) {
   });
 }
 
+// Full-history distinct logged dates, for the Habits logging-consistency
+// calendar — deliberately not `useLogsHistory`, which is dense/zero-filled
+// and capped at a year; this is sparse and unbounded.
+export function useLoggedDates() {
+  return useQuery({
+    queryKey: ["logs", "logged-dates"],
+    queryFn: () => apiFetch<{ dates: string[] }>("/logs/logged-dates"),
+  });
+}
+
 export function useAddLog(date: string) {
   const qc = useQueryClient();
   return useMutation({

@@ -245,6 +245,19 @@ export function registerLogRoutes(app: FastifyInstance) {
       .map(([date, v]) => ({ date, calories: Math.round(v.calories), entryCount: v.entryCount }));
   });
 
+  // Just the distinct dates something was logged, full history — backs the
+  // Habits logging-consistency calendar, which needs years of coverage, not
+  // a days-capped window. Cheap: covered by logs_user_date_idx, and bounded
+  // by how many distinct days the app's been used, not by entry count.
+  app.get("/api/logs/logged-dates", async (req) => {
+    const rows = await db
+      .selectDistinct({ date: logs.date })
+      .from(logs)
+      .where(eq(logs.userId, req.userId!))
+      .orderBy(logs.date);
+    return { dates: rows.map((r) => r.date) };
+  });
+
   app.patch("/api/logs/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     const patchSchema = z.object({

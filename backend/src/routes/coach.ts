@@ -17,6 +17,7 @@ const profileInput = z.object({
   targetRateKgPerWeek: z.number().min(-2).max(2),
   proteinPerKg: z.number().min(0.5).max(4).default(2.0),
   fatPercent: z.number().min(0.1).max(0.6).default(0.25),
+  goalWeightKg: z.number().positive().max(500).nullable(),
 });
 
 const CALORIE_LOOKBACK_DAYS = 21; // window for adaptive TDEE (needs 14 days of overlap; pad a bit for logging gaps
@@ -104,10 +105,24 @@ export function registerCoachRoutes(app: FastifyInstance) {
     const now = new Date().toISOString();
 
     const [existing] = await db.select().from(profiles).where(eq(profiles.userId, userId));
+
+    // Goal Progress needs a stable "start" snapshot for the *current* goal
+    // weight — re-snapshot only when goalWeightKg actually changes (including
+    // being newly set or cleared), not on every unrelated profile edit, so
+    // "% progress" stays relative to the goal actually in effect rather than
+    // drifting every time activity level or macro split is tweaked.
+    const previousGoalWeightKg = existing?.goalWeightKg ?? null;
+    const goalWeightChanged = parsed.data.goalWeightKg !== previousGoalWeightKg;
+    const goalSnapshot = !goalWeightChanged
+      ? {}
+      : parsed.data.goalWeightKg == null
+        ? { goalStartedAt: null, goalStartWeightKg: null }
+        : { goalStartedAt: now, goalStartWeightKg: await currentTrendKg(userId) };
+
     if (existing) {
-      await db.update(profiles).set({ ...parsed.data, updatedAt: now }).where(eq(profiles.userId, userId));
+      await db.update(profiles).set({ ...parsed.data, ...goalSnapshot, updatedAt: now }).where(eq(profiles.userId, userId));
     } else {
-      await db.insert(profiles).values({ userId, ...parsed.data, createdAt: now, updatedAt: now });
+      await db.insert(profiles).values({ userId, ...parsed.data, ...goalSnapshot, createdAt: now, updatedAt: now });
     }
 
     const result = await performCheckin(userId);

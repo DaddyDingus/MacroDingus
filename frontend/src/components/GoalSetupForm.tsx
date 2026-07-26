@@ -28,6 +28,7 @@ export default function GoalSetupForm({
   const [activityLevel, setActivityLevel] = useState<ActivityLevel>(initial?.activityLevel ?? "moderate");
   const [goalType, setGoalType] = useState<GoalType>(initial?.goalType ?? "maintain");
   const [rate, setRate] = useState(String(initial?.targetRateKgPerWeek ?? 0));
+  const [goalWeightKg, setGoalWeightKg] = useState(initial?.goalWeightKg != null ? String(initial.goalWeightKg) : "");
   const [showMacroSplit, setShowMacroSplit] = useState(false);
   const [proteinPerKg, setProteinPerKg] = useState(String(initial?.proteinPerKg ?? 2.0));
   const [fatPercent, setFatPercent] = useState(String(initial ? Math.round(initial.fatPercent * 100) : 25));
@@ -50,6 +51,7 @@ export default function GoalSetupForm({
       targetRateKgPerWeek: goalType === "maintain" ? 0 : Number(rate),
       proteinPerKg: Number(proteinPerKg) || 2.0,
       fatPercent: (Number(fatPercent) || 25) / 100,
+      goalWeightKg: goalWeightKg.trim() === "" ? null : Number(goalWeightKg) || null,
     });
   }
 
@@ -150,6 +152,24 @@ export default function GoalSetupForm({
           </div>
         </label>
       )}
+
+      <label className="block">
+        <span className="block text-xs text-muted mb-1">
+          Goal weight (optional{goalType === "maintain" ? " — the weight you're maintaining" : ""})
+        </span>
+        <div className="flex items-center rounded-md bg-surface-raised border border-line px-3 focus-within:border-accent">
+          <input
+            type="number"
+            inputMode="decimal"
+            step="0.1"
+            placeholder="Not set"
+            value={goalWeightKg}
+            onChange={(e) => setGoalWeightKg(e.target.value)}
+            className="tabular w-full bg-transparent py-2.5 text-sm focus:outline-none placeholder:text-muted"
+          />
+          <span className="text-xs text-muted">kg</span>
+        </div>
+      </label>
 
       {!showMacroSplit ? (
         <button onClick={() => setShowMacroSplit(true)} className="text-sm text-accent">

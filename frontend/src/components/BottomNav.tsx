@@ -26,7 +26,10 @@ function Tab({ to, label }: { to: string; label: string }) {
 
 export default function BottomNav() {
   return (
-    <nav className="fixed bottom-0 inset-x-0 bg-surface border-t border-line flex z-40 pb-[env(safe-area-inset-bottom)]">
+    <nav
+      id="app-bottom-nav"
+      className="fixed bottom-0 inset-x-0 bg-surface border-t border-line flex z-40 pb-[env(safe-area-inset-bottom)]"
+    >
       {TABS_LEFT.map((t) => (
         <Tab key={t.to} {...t} />
       ))}

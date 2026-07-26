@@ -4,6 +4,7 @@ import { addDays, formatDayLabel } from "../lib/date";
 import { useWeightUnit, kgToUnit } from "../lib/weightUnit";
 import WeightChart from "../components/WeightChart";
 import LogWeightInline from "../components/LogWeightInline";
+import RangeToggle from "../components/RangeToggle";
 
 const RANGE_PRESETS = [
   { label: "30d", days: 30 },
@@ -61,19 +62,7 @@ export default function WeightDetailScreen() {
           </div>
         )}
 
-        <div className="flex gap-2 px-1">
-          {RANGE_PRESETS.map((p) => (
-            <button
-              key={p.days}
-              onClick={() => setDays(p.days)}
-              className={`text-xs px-2.5 py-1 rounded-full border ${
-                days === p.days ? "border-accent text-accent" : "border-line text-muted"
-              }`}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
+        <RangeToggle presets={RANGE_PRESETS} value={days} onChange={setDays} />
 
         <div className="border border-line bg-surface rounded-md p-4">
           <p className="text-[11px] tracking-widest uppercase text-muted mb-1">Weight</p>
