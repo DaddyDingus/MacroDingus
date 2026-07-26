@@ -29,11 +29,8 @@ export interface Nutrition {
   sodiumMg: number;
 }
 
-export type Meal = "breakfast" | "lunch" | "dinner" | "snacks";
-
 export interface LogEntry {
   id: string;
-  meal: Meal;
   quantityGrams: number;
   loggedAt: string;
   food: Food;

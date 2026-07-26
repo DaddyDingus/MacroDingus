@@ -62,7 +62,7 @@ function GoalProgressBody({
 
       <div className="border border-line bg-surface rounded-md overflow-hidden">
         <div className="h-2 bg-surface-raised">
-          <div className="h-full bg-accent" style={{ width: `${clampedPercent}%` }} />
+          <div className="h-full bg-goal" style={{ width: `${clampedPercent}%` }} />
         </div>
       </div>
 

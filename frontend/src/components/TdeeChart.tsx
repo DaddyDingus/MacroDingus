@@ -1,7 +1,7 @@
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import type { Checkin } from "../api/coach";
 
-const ACCENT = "#6BE4C0";
+const ACCENT = "#D95926";
 const GRID = "#33373E";
 const MUTED = "#8A8F98";
 

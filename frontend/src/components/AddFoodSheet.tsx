@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import type { Food, LogEntry, Meal } from "../api/types";
+import type { Food, LogEntry } from "../api/types";
 import { useFoodSearch, useCreateFood, useBarcodeLookup } from "../api/foods";
 import { useCreateRecipe } from "../api/recipes";
 import { useAddLog, useBulkAddLog, useUpdateLogQuantity, useDeleteLog, useSmartHistory } from "../api/logs";
@@ -7,24 +7,17 @@ import { scaleNutrition } from "../lib/nutrition";
 import { localTimeString } from "../lib/date";
 import CreateFoodForm from "./CreateFoodForm";
 import RecipeForm from "./RecipeForm";
+import BottomSheet from "./BottomSheet";
 
 // zxing's decoder is ~400kB and only ever needed for the occasional barcode
 // scan, not the everyday search-and-log path — split it into its own chunk
 // so it doesn't weigh down the initial load.
 const BarcodeScanner = lazy(() => import("./BarcodeScanner"));
 
-const MEAL_LABELS: Record<Meal, string> = {
-  breakfast: "Breakfast",
-  lunch: "Lunch",
-  dinner: "Dinner",
-  snacks: "Snacks",
-};
-
 type Step = "search" | "quantity" | "create" | "scan" | "recipe";
 
 export default function AddFoodSheet({
   open,
-  meal,
   date,
   editingEntry,
   onClose,
@@ -32,33 +25,29 @@ export default function AddFoodSheet({
   initialFood,
 }: {
   open: boolean;
-  meal: Meal | null;
   date: string;
   editingEntry: LogEntry | null;
   onClose: () => void;
-  // Lets callers outside the per-meal "Add" button (the global quick-actions
-  // sheet, a recipe picker) skip straight to scanning or to a preselected
-  // food's quantity step instead of always landing on search.
+  // Lets callers outside the timeline's own "+ Log food" button (the global
+  // quick-actions sheet, a recipe picker) skip straight to scanning or to a
+  // preselected food's quantity step instead of always landing on search.
   initialStep?: "search" | "scan";
   initialFood?: Food;
 }) {
   const [step, setStep] = useState<Step>("search");
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [selectedFood, setSelectedFood] = useState<Food | null>(null);
   const [grams, setGrams] = useState(100);
-  const [editMeal, setEditMeal] = useState<Meal | null>(null);
   const [scannedBarcode, setScannedBarcode] = useState<string | undefined>(undefined);
   const [multiSelect, setMultiSelect] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-
-  const activeMeal = editingEntry?.meal ?? meal;
 
   useEffect(() => {
     if (!open) return;
     if (editingEntry) {
       setSelectedFood(editingEntry.food);
       setGrams(editingEntry.quantityGrams);
-      setEditMeal(editingEntry.meal);
       setStep("quantity");
     } else if (initialFood) {
       setSelectedFood(initialFood);
@@ -70,12 +59,25 @@ export default function AddFoodSheet({
       setStep(initialStep ?? "search");
     }
     setQuery("");
+    setDebouncedQuery("");
     setScannedBarcode(undefined);
     setMultiSelect(false);
     setSelectedIds(new Set());
   }, [open, editingEntry, initialFood, initialStep]);
 
-  const search = useFoodSearch(query);
+  // Every keystroke used to fire an immediate request, including the
+  // name-search fallback to OpenFoodFacts (see api/foods.ts on the backend) —
+  // typing "oats" fired "o", "oa", "oat", "oats" back to back, hammering
+  // OFF's search endpoint fast enough that it started 503-ing mid-word, so
+  // the last keystroke's results (what the user actually sees) sometimes
+  // came back empty even though the same term worked a moment later.
+  // Debouncing to one request per pause fixes that at the source.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(query), 350);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const search = useFoodSearch(debouncedQuery);
   const smartHistory = useSmartHistory(localTimeString());
   const addLog = useAddLog(date);
   const bulkAddLog = useBulkAddLog(date);
@@ -85,21 +87,29 @@ export default function AddFoodSheet({
   const createRecipe = useCreateRecipe();
   const barcodeLookup = useBarcodeLookup();
 
-  if (!open || !activeMeal) return null;
+  if (!open) return null;
 
   function pickFood(food: Food) {
+    // A search result from OpenFoodFacts (not yet a real row — see
+    // GET /api/foods on the backend) has a synthetic `off:<barcode>` id.
+    // Resolve it into an actual cached food first, via the same
+    // cache-or-fetch endpoint the barcode scanner uses, so logging always
+    // references a real foods.id.
+    if (food.id.startsWith("off:") && food.barcode) {
+      barcodeLookup.mutate(food.barcode, { onSuccess: (resolved) => pickFood(resolved) });
+      return;
+    }
     setSelectedFood(food);
     setGrams(food.servingSizeGrams ?? 100);
     setStep("quantity");
   }
 
   function confirmQuantity() {
-    if (!selectedFood || !activeMeal) return;
+    if (!selectedFood) return;
     if (editingEntry) {
-      const meal = editMeal && editMeal !== editingEntry.meal ? editMeal : undefined;
-      updateLog.mutate({ id: editingEntry.id, quantityGrams: grams, meal });
+      updateLog.mutate({ id: editingEntry.id, quantityGrams: grams });
     } else {
-      addLog.mutate({ food: selectedFood, meal: activeMeal, quantityGrams: grams });
+      addLog.mutate({ food: selectedFood, quantityGrams: grams });
     }
     onClose();
   }
@@ -130,11 +140,10 @@ export default function AddFoodSheet({
   }
 
   function confirmMultiAdd() {
-    if (!activeMeal) return;
     const chosen = (suggestions ?? []).filter((f) => selectedIds.has(f.id));
     if (chosen.length === 0) return;
     bulkAddLog.mutate({
-      entries: chosen.map((food) => ({ food, meal: activeMeal, quantityGrams: food.servingSizeGrams ?? 100 })),
+      entries: chosen.map((food) => ({ food, quantityGrams: food.servingSizeGrams ?? 100 })),
     });
     onClose();
   }
@@ -148,13 +157,16 @@ export default function AddFoodSheet({
   const showMultiSelectUi = multiSelect && !query.trim();
 
   return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="absolute inset-x-0 bottom-0 max-h-[85vh] flex flex-col bg-surface rounded-t-xl border-t border-line">
+    <>
+    <BottomSheet
+      onClose={onClose}
+      backdropClassName="bg-black/50"
+      panelClassName="max-h-[85vh] bg-surface rounded-t-xl border-t border-line"
+    >
         {step === "search" && (
           <>
             <div className="px-4 pt-4 pb-2 flex items-center justify-between shrink-0">
-              <span className="text-sm font-medium">Add to {MEAL_LABELS[activeMeal]}</span>
+              <span className="text-sm font-medium">Add food</span>
               <button onClick={onClose} className="text-muted text-xl leading-none px-1">
                 ×
               </button>
@@ -215,7 +227,13 @@ export default function AddFoodSheet({
                       )}
                       <span className="min-w-0">
                         <span className="block text-sm truncate">{food.name}</span>
-                        {food.brand && <span className="block text-xs text-muted truncate">{food.brand}</span>}
+                        {(food.brand || food.id.startsWith("off:")) && (
+                          <span className="block text-xs text-muted truncate">
+                            {food.brand}
+                            {food.brand && food.id.startsWith("off:") ? " · " : ""}
+                            {food.id.startsWith("off:") ? "Online" : ""}
+                          </span>
+                        )}
                       </span>
                     </span>
                     <span className="tabular text-xs text-muted shrink-0 ml-3">
@@ -248,7 +266,7 @@ export default function AddFoodSheet({
                   className="w-full py-3 rounded-md bg-accent text-base font-medium"
                   style={{ color: "#0B1210" }}
                 >
-                  Add {selectedIds.size} item{selectedIds.size > 1 ? "s" : ""} to {MEAL_LABELS[activeMeal]}
+                  Add {selectedIds.size} item{selectedIds.size > 1 ? "s" : ""}
                 </button>
               </div>
             )}
@@ -260,10 +278,7 @@ export default function AddFoodSheet({
             food={selectedFood}
             grams={grams}
             setGrams={setGrams}
-            meal={activeMeal}
             isEditing={!!editingEntry}
-            editMeal={editMeal}
-            setEditMeal={setEditMeal}
             onBack={() => (editingEntry ? onClose() : setStep("search"))}
             onConfirm={confirmQuantity}
             onRemove={editingEntry ? removeEntry : undefined}
@@ -303,14 +318,14 @@ export default function AddFoodSheet({
             }}
           />
         )}
-      </div>
+    </BottomSheet>
 
       {step === "scan" && (
         <Suspense fallback={<div className="fixed inset-0 z-[60] bg-black" />}>
           <BarcodeScanner onScan={handleScan} onClose={() => setStep("search")} />
         </Suspense>
       )}
-    </div>
+    </>
   );
 }
 
@@ -318,10 +333,7 @@ function QuantityStep({
   food,
   grams,
   setGrams,
-  meal,
   isEditing,
-  editMeal,
-  setEditMeal,
   onBack,
   onConfirm,
   onRemove,
@@ -329,10 +341,7 @@ function QuantityStep({
   food: Food;
   grams: number;
   setGrams: (g: number) => void;
-  meal: Meal;
   isEditing: boolean;
-  editMeal: Meal | null;
-  setEditMeal: (m: Meal) => void;
   onBack: () => void;
   onConfirm: () => void;
   onRemove?: () => void;
@@ -355,21 +364,6 @@ function QuantityStep({
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pb-2">
-        {isEditing && (
-          <div className="flex gap-2 justify-center pt-3">
-            {(Object.keys(MEAL_LABELS) as Meal[]).map((m) => (
-              <button
-                key={m}
-                onClick={() => setEditMeal(m)}
-                className={`text-xs px-3 py-1.5 rounded-full border ${
-                  (editMeal ?? meal) === m ? "border-accent text-accent" : "border-line text-muted"
-                }`}
-              >
-                {MEAL_LABELS[m]}
-              </button>
-            ))}
-          </div>
-        )}
         <div className="flex items-center justify-center gap-4 py-4">
           <button
             onClick={() => setGrams(Math.max(1, grams - 10))}
@@ -444,7 +438,7 @@ function QuantityStep({
           className="flex-1 py-3 rounded-md bg-accent text-base disabled:opacity-40 font-medium"
           style={{ color: "#0B1210" }}
         >
-          {isEditing ? "Save" : `Add to ${MEAL_LABELS[meal]}`}
+          {isEditing ? "Save" : "Add"}
         </button>
       </div>
     </>

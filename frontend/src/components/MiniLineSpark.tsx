@@ -1,8 +1,11 @@
 import { LineChart, Line, YAxis, ResponsiveContainer } from "recharts";
 
-// Same accent used everywhere else a single continuous series is drawn
-// (WeightChart's trend line) — one hue, thin 2px line, no axes/grid/legend.
-const ACCENT = "#6BE4C0";
+// Caller passes the same hue that metric/tile is drawn in everywhere else
+// (e.g. the weight-purple in WeightChart, the calories-blue in the totals
+// card) — this used to be one hardcoded teal for every tile regardless of
+// what it represented, which is why every nutrient sparkline on the
+// Dashboard looked identical no matter which macro it was.
+const DEFAULT_COLOR = "#6BE4C0";
 
 // A sparkline must tightly fit its own data range, not a zero baseline —
 // without an explicit domain, recharts' default made small-but-real ranges
@@ -18,16 +21,31 @@ function sparkDomain([dataMin, dataMax]: [number, number]): [number, number] {
   return [dataMin - pad, dataMax + pad];
 }
 
-export default function MiniLineSpark({ values }: { values: number[] }) {
+export default function MiniLineSpark({
+  values,
+  color = DEFAULT_COLOR,
+  showDots = false,
+}: {
+  values: number[];
+  color?: string;
+  showDots?: boolean;
+}) {
   if (values.length < 2) {
     return <div className="h-full flex items-center text-[11px] text-muted">Not enough data yet</div>;
   }
   const data = values.map((v, i) => ({ i, v }));
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={data} margin={{ top: 2, right: 2, left: 2, bottom: 2 }}>
+      <LineChart data={data} margin={{ top: 4, right: 4, left: 4, bottom: 4 }}>
         <YAxis hide domain={sparkDomain} />
-        <Line type="monotone" dataKey="v" stroke={ACCENT} strokeWidth={2} dot={false} isAnimationActive={false} />
+        <Line
+          type="monotone"
+          dataKey="v"
+          stroke={color}
+          strokeWidth={2}
+          dot={showDots ? { r: 2.5, fill: color, strokeWidth: 0 } : false}
+          isAnimationActive={false}
+        />
       </LineChart>
     </ResponsiveContainer>
   );

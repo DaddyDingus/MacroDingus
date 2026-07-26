@@ -43,6 +43,13 @@
       "when": 1785022473555,
       "tag": "0005_lethal_sue_storm",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1785065719000,
+      "tag": "0006_open_omega_flight",
+      "breakpoints": true
     }
   ]
 }

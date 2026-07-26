@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import type { Food, Meal } from "../api/types";
+import type { Food } from "../api/types";
 import { useRecipes, useCreateRecipe } from "../api/recipes";
 import { localDateString } from "../lib/date";
 import type { ShortcutId } from "../lib/shortcuts";
@@ -9,32 +9,30 @@ import QuickAddSheet from "./QuickAddSheet";
 import CopyDaySheet from "./CopyDaySheet";
 import RecipeForm from "./RecipeForm";
 import LogWeightInline from "./LogWeightInline";
+import BottomSheet from "./BottomSheet";
 
-const MEAL_LABELS: Record<Meal, string> = {
-  breakfast: "Breakfast",
-  lunch: "Lunch",
-  dinner: "Dinner",
-  snacks: "Snacks",
-};
-
-type Step = "mealPicker" | "recipesList" | "logWeight" | "newRecipe" | "copyDay" | "quickAdd" | "addFood";
+type Step = "recipesList" | "logWeight" | "newRecipe" | "copyDay" | "quickAdd" | "addFood";
 
 // Runs a single quick action to completion (today's date always — date
 // navigation stays on the Food log screen). Shared by the FAB's quick-actions
 // menu and the Dashboard's pinned shortcut buttons, since a pinned shortcut
-// is just a shortcut into this same flow, skipping the menu step.
+// is just a shortcut into this same flow, skipping the menu step. No meal
+// selection anywhere in here — logging no longer tracks a meal at all (see
+// backend/src/db/schema.ts), it's a straight timeline of when things were
+// actually logged.
 export default function QuickActionFlow({ action, onClose }: { action: ShortcutId; onClose: () => void }) {
   const navigate = useNavigate();
   const today = localDateString();
   const recipes = useRecipes();
   const createRecipe = useCreateRecipe();
-  const [meal, setMeal] = useState<Meal | null>(null);
   const [pickedFood, setPickedFood] = useState<Food | null>(null);
   const [step, setStep] = useState<Step>(() => {
     if (action === "logWeight") return "logWeight";
     if (action === "newRecipe") return "newRecipe";
     if (action === "copyDay") return "copyDay";
-    return "mealPicker"; // quickAdd / search / scan / recipes
+    if (action === "recipes") return "recipesList";
+    if (action === "quickAdd") return "quickAdd";
+    return "addFood"; // search / scan
   });
 
   // Photos has no sheet of its own — jump straight there.
@@ -44,24 +42,16 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
     return null;
   }
 
-  function pickMeal(m: Meal) {
-    setMeal(m);
-    if (action === "recipes") setStep("recipesList");
-    else if (action === "quickAdd") setStep("quickAdd");
-    else setStep("addFood");
-  }
-
   function pickRecipe(food: Food) {
     setPickedFood(food);
     setStep("addFood");
   }
 
   // Leaf flows that already own a full-screen backdrop+panel.
-  if (step === "addFood" && meal) {
+  if (step === "addFood") {
     return (
       <AddFoodSheet
         open
-        meal={meal}
         date={today}
         editingEntry={null}
         initialStep={action === "scan" ? "scan" : "search"}
@@ -70,46 +60,26 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
       />
     );
   }
-  if (step === "quickAdd" && meal) {
-    return <QuickAddSheet meal={meal} date={today} onClose={onClose} />;
+  if (step === "quickAdd") {
+    return <QuickAddSheet date={today} onClose={onClose} />;
   }
   if (step === "copyDay") {
     return <CopyDaySheet targetDate={today} onClose={onClose} />;
   }
 
   return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="absolute inset-x-0 bottom-0 max-h-[85vh] flex flex-col bg-surface rounded-t-xl border-t border-line pb-[env(safe-area-inset-bottom)]">
-        {step === "mealPicker" && (
+    <BottomSheet
+      onClose={onClose}
+      backdropClassName="bg-black/50"
+      panelClassName="max-h-[85vh] bg-surface rounded-t-xl border-t border-line pb-[env(safe-area-inset-bottom)]"
+    >
+        {step === "recipesList" && (
           <>
             <div className="px-4 pt-4 pb-2 flex items-center justify-between shrink-0">
-              <span className="text-sm font-medium">Log to which meal?</span>
+              <span className="text-sm font-medium">Log a recipe</span>
               <button onClick={onClose} className="text-muted text-xl leading-none px-1">
                 ×
               </button>
-            </div>
-            <div className="flex flex-wrap gap-2 px-4 pb-4">
-              {(Object.keys(MEAL_LABELS) as Meal[]).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => pickMeal(m)}
-                  className="text-sm px-4 py-2 rounded-full border border-line active:bg-surface-raised"
-                >
-                  {MEAL_LABELS[m]}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-
-        {step === "recipesList" && (
-          <>
-            <div className="px-4 pt-4 pb-2 flex items-center gap-3 shrink-0">
-              <button onClick={() => setStep("mealPicker")} className="text-muted text-lg leading-none px-1">
-                ‹
-              </button>
-              <span className="text-sm font-medium">Log a recipe</span>
             </div>
             <div className="flex-1 overflow-y-auto pb-4">
               {recipes.data?.length === 0 && (
@@ -167,7 +137,6 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
             }}
           />
         )}
-      </div>
-    </div>
+    </BottomSheet>
   );
 }

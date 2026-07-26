@@ -22,4 +22,13 @@
   .tabular {
     @apply font-mono tabular-nums;
   }
+
+  /* Hides the scrollbar on snap-scrolling carousels while keeping them scrollable. */
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
 }

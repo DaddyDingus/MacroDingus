@@ -14,14 +14,15 @@ export type TileId =
   | "protein"
   | "carbs"
   | "fat"
-  | "scaleWeight";
+  | "scaleWeight"
+  | "progressPhotos";
 
 // Fixed, not user-reorderable/toggleable — only the tiles within each are.
 export const CATEGORIES: { id: Category; label: string }[] = [
-  { id: "insights", label: "Insights & analytics" },
+  { id: "insights", label: "Insights & Analytics" },
   { id: "habits", label: "Habits" },
   { id: "nutrition", label: "Nutrition" },
-  { id: "bodyMetrics", label: "Body metrics" },
+  { id: "bodyMetrics", label: "Body Metrics" },
 ];
 
 export const TILE_CATALOG: { id: TileId; category: Category; label: string }[] = [
@@ -37,6 +38,7 @@ export const TILE_CATALOG: { id: TileId; category: Category; label: string }[] =
   { id: "carbs", category: "nutrition", label: "Carbs" },
   { id: "fat", category: "nutrition", label: "Fat" },
   { id: "scaleWeight", category: "bodyMetrics", label: "Scale weight" },
+  { id: "progressPhotos", category: "bodyMetrics", label: "Progress photos" },
 ];
 
 // Unlike shortcuts.tsx's curated-4-of-8 default, this defaults to every tile
@@ -46,7 +48,7 @@ const DEFAULT_ORDER: Record<Category, TileId[]> = {
   insights: ["trendWeight", "expenditure", "energyBalance", "goalProgress"],
   habits: ["weighInConsistency", "loggingConsistency"],
   nutrition: ["macros", "calories", "protein", "carbs", "fat"],
-  bodyMetrics: ["scaleWeight"],
+  bodyMetrics: ["scaleWeight", "progressPhotos"],
 };
 
 const STORAGE_KEY = "macrotrack-dashboard-layout";
@@ -94,7 +96,7 @@ function load(): LayoutState {
 interface DashboardLayoutContextValue {
   layout: LayoutState;
   toggle: (category: Category, id: TileId) => void;
-  move: (category: Category, id: TileId, direction: "up" | "down") => void;
+  reorder: (category: Category, id: TileId, toIndex: number) => void;
 }
 
 const DashboardLayoutContext = createContext<DashboardLayoutContextValue | null>(null);
@@ -113,17 +115,20 @@ export function DashboardLayoutProvider({ children }: { children: ReactNode }) {
     persist({ ...layout, [category]: next });
   }
 
-  function move(category: Category, id: TileId, direction: "up" | "down") {
+  // Drives the drag-to-reorder handle in DashboardCustomizeScreen — the drag
+  // gesture itself is tracked purely in that component's local state (no DnD
+  // library anywhere in this app, deliberately), and calls this to commit a
+  // tile straight to its new index once the drag crosses into a new slot.
+  function reorder(category: Category, id: TileId, toIndex: number) {
     const current = [...layout[category]];
-    const idx = current.indexOf(id);
-    if (idx === -1) return;
-    const swapWith = direction === "up" ? idx - 1 : idx + 1;
-    if (swapWith < 0 || swapWith >= current.length) return;
-    [current[idx], current[swapWith]] = [current[swapWith], current[idx]];
+    const fromIndex = current.indexOf(id);
+    if (fromIndex === -1 || fromIndex === toIndex) return;
+    current.splice(fromIndex, 1);
+    current.splice(toIndex, 0, id);
     persist({ ...layout, [category]: current });
   }
 
-  return <DashboardLayoutContext.Provider value={{ layout, toggle, move }}>{children}</DashboardLayoutContext.Provider>;
+  return <DashboardLayoutContext.Provider value={{ layout, toggle, reorder }}>{children}</DashboardLayoutContext.Provider>;
 }
 
 export function useDashboardLayout() {

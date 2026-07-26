@@ -75,12 +75,53 @@ export function mapOffProduct(barcode: string, product: OffProduct): MappedFood 
   };
 }
 
+// OpenFoodFacts' public endpoints 503 ("Page temporarily unavailable")
+// noticeably often even under normal, human-paced request rates — confirmed
+// by hand, not just under rapid typing — so every call to them gets one
+// short-backoff retry rather than surfacing a transient blip as a real
+// failure.
+async function fetchOffWithRetry(url: string, attempts = 2): Promise<Response> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(url, { headers: { "User-Agent": "macrotrack/1.0 - self-hosted personal nutrition tracker" } });
+      if (res.ok) return res;
+      lastErr = new Error(`OpenFoodFacts request failed: ${res.status}`);
+    } catch (err) {
+      lastErr = err;
+    }
+    if (i < attempts - 1) await new Promise((r) => setTimeout(r, 400));
+  }
+  throw lastErr;
+}
+
 export async function fetchOffProduct(barcode: string): Promise<OffProduct | null> {
-  const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(barcode)}.json`, {
-    headers: { "User-Agent": "macrotrack/1.0 - self-hosted personal nutrition tracker" },
-  });
-  if (!res.ok) throw new Error(`OpenFoodFacts request failed: ${res.status}`);
+  const res = await fetchOffWithRetry(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(barcode)}.json`);
   const data = (await res.json()) as { status: number; product?: OffProduct };
   if (data.status !== 1 || !data.product) return null;
   return data.product;
+}
+
+export interface OffSearchResult {
+  code: string;
+  product: OffProduct;
+}
+
+// The v2 product-by-barcode endpoint above has no free-text search; this is
+// OFF's older but still-supported search endpoint, used only for matching by
+// name (barcode lookups always go through fetchOffProduct instead).
+export async function searchOffProducts(query: string, limit: number): Promise<OffSearchResult[]> {
+  const params = new URLSearchParams({
+    search_terms: query,
+    search_simple: "1",
+    action: "process",
+    json: "1",
+    page_size: String(Math.max(limit, 1)),
+    fields: "code,product_name,brands,nutriments,serving_quantity,serving_size",
+  });
+  const res = await fetchOffWithRetry(`https://world.openfoodfacts.org/cgi/search.pl?${params}`);
+  const data = (await res.json()) as { products?: (OffProduct & { code?: string })[] };
+  return (data.products ?? [])
+    .filter((p): p is OffProduct & { code: string } => !!p.code && !!p.product_name)
+    .map((p) => ({ code: p.code, product: p }));
 }

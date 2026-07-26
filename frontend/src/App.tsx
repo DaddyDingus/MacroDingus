@@ -23,6 +23,7 @@ const GoalProgressDetailScreen = lazy(() => import("./screens/GoalProgressDetail
 const WeighInConsistencyScreen = lazy(() => import("./screens/WeighInConsistencyScreen"));
 const LoggingConsistencyScreen = lazy(() => import("./screens/LoggingConsistencyScreen"));
 const NutrientDetailScreen = lazy(() => import("./screens/NutrientDetailScreen"));
+const DashboardCustomizeScreen = lazy(() => import("./screens/DashboardCustomizeScreen"));
 
 export default function App() {
   const status = useAuthStatus();
@@ -48,6 +49,7 @@ export default function App() {
                 <Route path="/habits/weigh-ins" element={<WeighInConsistencyScreen />} />
                 <Route path="/habits/logging" element={<LoggingConsistencyScreen />} />
                 <Route path="/nutrition/:metric" element={<NutrientDetailScreen />} />
+                <Route path="/dashboard/customize" element={<DashboardCustomizeScreen />} />
                 <Route path="/photos" element={<PhotosScreen />} />
                 <Route path="/more" element={<MoreScreen />} />
               </Routes>

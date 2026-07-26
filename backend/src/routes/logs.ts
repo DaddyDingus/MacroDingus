@@ -7,12 +7,8 @@ import { logs, foods } from "../db/schema.js";
 import { scaleNutrition, sumNutrition, EMPTY_NUTRITION } from "../engine/nutrition.js";
 import { addDaysToDateString } from "../engine/trendWeight.js";
 
-const MEALS = ["breakfast", "lunch", "dinner", "snacks"] as const;
-type MealType = (typeof MEALS)[number];
-
 const logInput = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  meal: z.enum(MEALS),
   foodId: z.string(),
   quantityGrams: z.number().positive(),
   loggedAt: z.string().optional(),
@@ -28,7 +24,6 @@ async function entryWithNutrition(logId: string, userId: string) {
   if (!row) return null;
   return {
     id: row.log.id,
-    meal: row.log.meal,
     quantityGrams: row.log.quantityGrams,
     loggedAt: row.log.loggedAt,
     food: row.food,
@@ -49,7 +44,6 @@ export function registerLogRoutes(app: FastifyInstance) {
 
     const entries = rows.map(({ log, food }) => ({
       id: log.id,
-      meal: log.meal,
       quantityGrams: log.quantityGrams,
       loggedAt: log.loggedAt,
       food,
@@ -73,7 +67,6 @@ export function registerLogRoutes(app: FastifyInstance) {
       id,
       userId: req.userId!,
       date: parsed.data.date,
-      meal: parsed.data.meal,
       foodId: parsed.data.foodId,
       quantityGrams: parsed.data.quantityGrams,
       loggedAt: parsed.data.loggedAt ?? now,
@@ -93,7 +86,6 @@ export function registerLogRoutes(app: FastifyInstance) {
       entries: z
         .array(
           z.object({
-            meal: z.enum(MEALS),
             foodId: z.string(),
             quantityGrams: z.number().positive(),
           })
@@ -114,7 +106,6 @@ export function registerLogRoutes(app: FastifyInstance) {
       id: randomUUID(),
       userId: req.userId!,
       date: parsed.data.date,
-      meal: e.meal,
       foodId: e.foodId,
       quantityGrams: e.quantityGrams,
       loggedAt: now,
@@ -128,7 +119,6 @@ export function registerLogRoutes(app: FastifyInstance) {
         const food = foodMap.get(row.foodId)!;
         return {
           id: row.id,
-          meal: row.meal,
           quantityGrams: row.quantityGrams,
           loggedAt: row.loggedAt,
           food,
@@ -138,28 +128,23 @@ export function registerLogRoutes(app: FastifyInstance) {
     };
   });
 
-  // Copies entries from one day to another (optionally scoped to a single
-  // meal) — powers both "copy yesterday" and "copy this meal from a
-  // previous day." Copies are additive: existing entries on the target
-  // day/meal are left alone, not replaced.
+  // Copies every entry from one day to another — powers "copy a day."
+  // Additive: existing entries on the target day are left alone, not replaced.
   app.post("/api/logs/copy", async (req, reply) => {
     const schema = z.object({
       sourceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       targetDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-      meal: z.enum(MEALS).optional(),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
 
-    const { sourceDate, targetDate, meal } = parsed.data;
+    const { sourceDate, targetDate } = parsed.data;
     const userId = req.userId!;
-    const conditions = [eq(logs.userId, userId), eq(logs.date, sourceDate)];
-    if (meal) conditions.push(eq(logs.meal, meal));
 
     const sourceRows = await db
       .select()
       .from(logs)
-      .where(and(...conditions));
+      .where(and(eq(logs.userId, userId), eq(logs.date, sourceDate)));
     if (sourceRows.length === 0) return { copied: 0 };
 
     const now = new Date().toISOString();
@@ -167,7 +152,6 @@ export function registerLogRoutes(app: FastifyInstance) {
       id: randomUUID(),
       userId,
       date: targetDate,
-      meal: row.meal,
       foodId: row.foodId,
       quantityGrams: row.quantityGrams,
       loggedAt: now,
@@ -215,20 +199,15 @@ export function registerLogRoutes(app: FastifyInstance) {
   // dates. Aggregated in JS rather than SQL — trivial at personal-diary scale
   // and avoids fighting drizzle's query builder for a marginal gain.
   app.get("/api/logs/recent-days", async (req) => {
-    const { limit, meal } = req.query as { limit?: string; meal?: string };
+    const { limit } = req.query as { limit?: string };
     const take = Math.min(Number(limit) || 14, 60);
     const userId = req.userId!;
-
-    const conditions = [eq(logs.userId, userId)];
-    if (meal && (MEALS as readonly string[]).includes(meal)) {
-      conditions.push(eq(logs.meal, meal as MealType));
-    }
 
     const rows = await db
       .select({ log: logs, food: foods })
       .from(logs)
       .innerJoin(foods, eq(logs.foodId, foods.id))
-      .where(and(...conditions));
+      .where(eq(logs.userId, userId));
 
     const byDate = new Map<string, { calories: number; entryCount: number }>();
     for (const { log, food } of rows) {
@@ -262,7 +241,6 @@ export function registerLogRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const patchSchema = z.object({
       quantityGrams: z.number().positive().optional(),
-      meal: z.enum(MEALS).optional(),
     });
     const parsed = patchSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });

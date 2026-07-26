@@ -1,6 +1,13 @@
 import { useState } from "react";
-import { SHORTCUT_CATALOG, MAX_DASHBOARD_SHORTCUTS, useDashboardShortcuts, type ShortcutId } from "../lib/shortcuts";
+import {
+  SHORTCUT_CATALOG,
+  SHORTCUT_COLOR_CATALOG,
+  MAX_DASHBOARD_SHORTCUTS,
+  useDashboardShortcuts,
+  type ShortcutId,
+} from "../lib/shortcuts";
 import QuickActionFlow from "./QuickActionFlow";
+import BottomSheet from "./BottomSheet";
 
 // The center nav button and everything it opens: the full quick-actions menu,
 // an edit-shortcuts checklist, and (once an action is picked) the shared
@@ -12,8 +19,7 @@ export default function QuickActionsButton() {
       <button
         onClick={() => setOpen(true)}
         aria-label="Quick actions"
-        className="h-12 w-12 -translate-y-3 rounded-full bg-accent shadow-lg shadow-black/30 flex items-center justify-center text-2xl leading-none active:scale-95 transition-transform"
-        style={{ color: "#0B1210" }}
+        className="h-12 w-12 -translate-y-3 rounded-full bg-white text-black shadow-lg shadow-black/40 ring-1 ring-black/10 flex items-center justify-center text-2xl leading-none active:scale-95 transition-transform"
       >
         +
       </button>
@@ -23,7 +29,7 @@ export default function QuickActionsButton() {
 }
 
 function QuickActionsSheet({ onClose }: { onClose: () => void }) {
-  const { shortcuts, toggle } = useDashboardShortcuts();
+  const { shortcuts, toggle, colors, setColor } = useDashboardShortcuts();
   const [view, setView] = useState<"menu" | "edit">("menu");
   const [runningAction, setRunningAction] = useState<ShortcutId | null>(null);
 
@@ -32,9 +38,11 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="absolute inset-x-0 bottom-0 max-h-[85vh] flex flex-col bg-surface rounded-t-xl border-t border-line pb-[env(safe-area-inset-bottom)]">
+    <BottomSheet
+      onClose={onClose}
+      backdropClassName="bg-black/50"
+      panelClassName="max-h-[85vh] bg-surface rounded-t-xl border-t border-line pb-[env(safe-area-inset-bottom)]"
+    >
         {view === "menu" && (
           <>
             <div className="px-4 pt-4 pb-2 flex items-center justify-between shrink-0">
@@ -77,26 +85,42 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
               {SHORTCUT_CATALOG.map((s) => {
                 const selected = shortcuts.includes(s.id);
                 const disabled = !selected && shortcuts.length >= MAX_DASHBOARD_SHORTCUTS;
+                const colorId = colors[s.id] ?? "default";
                 return (
-                  <button
-                    key={s.id}
-                    onClick={() => toggle(s.id)}
-                    disabled={disabled}
-                    className="w-full flex items-center justify-between px-4 py-3 border-b border-line/60 text-left active:bg-surface-raised disabled:opacity-30"
-                  >
-                    <span className="text-sm">{s.label}</span>
-                    <span
-                      className={`h-4 w-4 rounded-full border shrink-0 ${
-                        selected ? "bg-accent border-accent" : "border-line"
-                      }`}
-                    />
-                  </button>
+                  <div key={s.id} className="border-b border-line/60">
+                    <button
+                      onClick={() => toggle(s.id)}
+                      disabled={disabled}
+                      className="w-full flex items-center justify-between px-4 py-3 text-left active:bg-surface-raised disabled:opacity-30"
+                    >
+                      <span className="text-sm">{s.label}</span>
+                      <span
+                        className={`h-4 w-4 rounded-full border shrink-0 ${
+                          selected ? "bg-accent border-accent" : "border-line"
+                        }`}
+                      />
+                    </button>
+                    {selected && (
+                      <div className="px-4 pb-3 flex items-center gap-2.5">
+                        {SHORTCUT_COLOR_CATALOG.map((c) => (
+                          <button
+                            key={c.id}
+                            onClick={() => setColor(s.id, c.id)}
+                            aria-label={c.label}
+                            className={`h-6 w-6 rounded-full shrink-0 border-2 transition ${
+                              colorId === c.id ? "border-white" : "border-transparent"
+                            }`}
+                            style={{ backgroundColor: c.hex }}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 );
               })}
             </div>
           </>
         )}
-      </div>
-    </div>
+    </BottomSheet>
   );
 }

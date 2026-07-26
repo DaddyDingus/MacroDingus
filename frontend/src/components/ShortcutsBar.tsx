@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { SHORTCUT_CATALOG, useDashboardShortcuts, type ShortcutId } from "../lib/shortcuts";
+import { SHORTCUT_CATALOG, SHORTCUT_COLOR_CATALOG, useDashboardShortcuts, type ShortcutId } from "../lib/shortcuts";
 import useHideOnScroll from "../lib/useHideOnScroll";
 import QuickActionFlow from "./QuickActionFlow";
 
@@ -8,7 +8,7 @@ import QuickActionFlow from "./QuickActionFlow";
 // repositioned/animated version of what used to be an inline grid in
 // DashboardScreen's body.
 export default function ShortcutsBar() {
-  const { shortcuts } = useDashboardShortcuts();
+  const { shortcuts, colors } = useDashboardShortcuts();
   const [runningAction, setRunningAction] = useState<ShortcutId | null>(null);
   const visible = useHideOnScroll();
   const [navHeight, setNavHeight] = useState(0);
@@ -26,22 +26,31 @@ export default function ShortcutsBar() {
   return (
     <>
       <div
-        className={`fixed inset-x-0 z-30 px-4 pb-3 transition-[transform,opacity] duration-200 ease-out ${
+        className={`fixed inset-x-0 z-30 transition-[transform,opacity] duration-200 ease-out ${
           visible ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0 pointer-events-none"
         }`}
         style={{ bottom: navHeight }}
       >
-        <div className="max-w-md mx-auto grid grid-cols-4 gap-2">
+        <div className="bg-dashboardBg flex">
           {shortcuts.map((id) => {
             const s = SHORTCUT_CATALOG.find((c) => c.id === id);
             if (!s) return null;
+            const Icon = s.icon;
+            const colorId = colors[id] ?? "default";
+            const color = SHORTCUT_COLOR_CATALOG.find((c) => c.id === colorId) ?? SHORTCUT_COLOR_CATALOG[0];
             return (
               <button
                 key={id}
                 onClick={() => setRunningAction(id)}
-                className="border border-line bg-surface rounded-md py-3 px-1 text-center shadow-lg shadow-black/20 active:bg-surface-raised"
+                aria-label={s.label}
+                className="flex-1 py-2.5 flex items-center justify-center active:brightness-110 transition"
               >
-                <span className="block text-xs leading-tight">{s.label}</span>
+                <span
+                  className="h-10 w-16 rounded-full flex items-center justify-center"
+                  style={{ backgroundColor: color.hex }}
+                >
+                  <Icon size={18} strokeWidth={2} className={color.icon === "black" ? "text-black" : "text-white"} />
+                </span>
               </button>
             );
           })}

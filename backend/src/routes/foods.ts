@@ -4,7 +4,7 @@ import { eq, like, desc } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "../db/index.js";
 import { foods } from "../db/schema.js";
-import { fetchOffProduct, mapOffProduct } from "../engine/openfoodfacts.js";
+import { fetchOffProduct, mapOffProduct, searchOffProducts } from "../engine/openfoodfacts.js";
 
 const foodInput = z.object({
   name: z.string().min(1),
@@ -29,11 +29,32 @@ export function registerFoodRoutes(app: FastifyInstance) {
     if (!q || q.trim() === "") {
       return db.select().from(foods).orderBy(desc(foods.createdAt)).limit(take);
     }
-    return db
-      .select()
-      .from(foods)
-      .where(like(foods.name, `%${q.trim()}%`))
-      .limit(take);
+    const trimmed = q.trim();
+    const local = await db.select().from(foods).where(like(foods.name, `%${trimmed}%`)).limit(take);
+
+    // This instance's `foods` table only ever gets rows from a barcode scan, a
+    // custom entry, or a materialized recipe — there's no bulk generic food
+    // database seeded anywhere, so a plain-language term like "oats" can come
+    // back empty from local matches alone. Fold in OpenFoodFacts name-search
+    // results for whatever local didn't cover. These are synthetic (id
+    // `off:<barcode>`, not a real row yet) — the frontend resolves one into an
+    // actual cached food via the existing barcode lookup only once the user
+    // picks it, same cache-on-select behavior the barcode scanner already has.
+    if (local.length < take) {
+      try {
+        const localBarcodes = new Set(local.map((f) => f.barcode).filter((b): b is string => !!b));
+        const offResults = await searchOffProducts(trimmed, take - local.length);
+        const remote = offResults
+          .filter((r) => !localBarcodes.has(r.code))
+          .map((r) => ({ id: `off:${r.code}`, createdAt: new Date().toISOString(), ...mapOffProduct(r.code, r.product) }));
+        return [...local, ...remote];
+      } catch (err) {
+        req.log.error(err);
+        return local;
+      }
+    }
+
+    return local;
   });
 
   // Cache-first: a barcode already in our own database (whether from a previous

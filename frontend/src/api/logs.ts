@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
-import type { DayLog, Food, LogEntry, Meal, Nutrition } from "./types";
+import type { DayLog, Food, LogEntry, Nutrition } from "./types";
 import { localIsoNoTz } from "../lib/date";
 import { scaleNutrition, sumNutrition } from "../lib/nutrition";
 
@@ -47,12 +47,11 @@ export function useLoggedDates() {
 export function useAddLog(date: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { food: Food; meal: Meal; quantityGrams: number }) =>
+    mutationFn: (input: { food: Food; quantityGrams: number }) =>
       apiFetch<LogEntry>("/logs", {
         method: "POST",
         body: JSON.stringify({
           date,
-          meal: input.meal,
           foodId: input.food.id,
           quantityGrams: input.quantityGrams,
           loggedAt: localIsoNoTz(),
@@ -64,7 +63,6 @@ export function useAddLog(date: string) {
       const tempId = `temp-${crypto.randomUUID()}`;
       const optimistic: LogEntry = {
         id: tempId,
-        meal: input.meal,
         quantityGrams: input.quantityGrams,
         loggedAt: localIsoNoTz(),
         food: input.food,
@@ -93,10 +91,10 @@ export function useAddLog(date: string) {
 export function useUpdateLogQuantity(date: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { id: string; quantityGrams: number; meal?: Meal }) =>
+    mutationFn: (input: { id: string; quantityGrams: number }) =>
       apiFetch<LogEntry>(`/logs/${input.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ quantityGrams: input.quantityGrams, meal: input.meal }),
+        body: JSON.stringify({ quantityGrams: input.quantityGrams }),
       }),
     onMutate: async (input) => {
       await qc.cancelQueries({ queryKey: ["logs", date] });
@@ -107,12 +105,7 @@ export function useUpdateLogQuantity(date: string) {
           date,
           old.entries.map((e) =>
             e.id === input.id
-              ? {
-                  ...e,
-                  quantityGrams: input.quantityGrams,
-                  meal: input.meal ?? e.meal,
-                  nutrition: scaleNutrition(e.food, input.quantityGrams),
-                }
+              ? { ...e, quantityGrams: input.quantityGrams, nutrition: scaleNutrition(e.food, input.quantityGrams) }
               : e
           )
         );
@@ -128,13 +121,12 @@ export function useUpdateLogQuantity(date: string) {
 export function useBulkAddLog(date: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { entries: { food: Food; meal: Meal; quantityGrams: number }[] }) =>
+    mutationFn: (input: { entries: { food: Food; quantityGrams: number }[] }) =>
       apiFetch<{ entries: LogEntry[] }>("/logs/bulk", {
         method: "POST",
         body: JSON.stringify({
           date,
           entries: input.entries.map((e) => ({
-            meal: e.meal,
             foodId: e.food.id,
             quantityGrams: e.quantityGrams,
           })),
@@ -145,7 +137,6 @@ export function useBulkAddLog(date: string) {
       const previous = qc.getQueryData<DayLog>(["logs", date]);
       const optimisticEntries: LogEntry[] = input.entries.map((e) => ({
         id: `temp-${crypto.randomUUID()}`,
-        meal: e.meal,
         quantityGrams: e.quantityGrams,
         loggedAt: localIsoNoTz(),
         food: e.food,
@@ -175,20 +166,20 @@ export interface RecentDay {
   entryCount: number;
 }
 
-export function useRecentDays(meal?: Meal) {
+export function useRecentDays() {
   return useQuery({
-    queryKey: ["logs", "recent-days", meal ?? "all"],
-    queryFn: () => apiFetch<RecentDay[]>(`/logs/recent-days${meal ? `?meal=${meal}` : ""}`),
+    queryKey: ["logs", "recent-days"],
+    queryFn: () => apiFetch<RecentDay[]>("/logs/recent-days"),
   });
 }
 
 export function useCopyDay(targetDate: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { sourceDate: string; meal?: Meal }) =>
+    mutationFn: (input: { sourceDate: string }) =>
       apiFetch<{ copied: number }>("/logs/copy", {
         method: "POST",
-        body: JSON.stringify({ sourceDate: input.sourceDate, targetDate, meal: input.meal }),
+        body: JSON.stringify({ sourceDate: input.sourceDate, targetDate }),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["logs", targetDate] }),
   });

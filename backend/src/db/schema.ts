@@ -68,7 +68,6 @@ export const logs = sqliteTable("logs", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id), // foods are shared; logs are per-person
   date: text("date").notNull(), // YYYY-MM-DD — the day it's logged to, as chosen by the client
-  meal: text("meal").notNull(), // breakfast | lunch | dinner | snacks
   foodId: text("food_id").notNull().references(() => foods.id),
   quantityGrams: real("quantity_grams").notNull(),
   loggedAt: text("logged_at").notNull(), // ISO timestamp — drives smart-history time-of-day ranking

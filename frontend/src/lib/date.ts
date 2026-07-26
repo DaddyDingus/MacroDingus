@@ -22,6 +22,41 @@ export function addDays(dateStr: string, delta: number): string {
   return localDateString(dt);
 }
 
+// UTC-based so a server-timezone-dependent off-by-one never creeps in here
+// the way it could with plain Date subtraction — same reasoning as the
+// trend-weight engine's date math.
+export function daysBetween(fromDateStr: string, toDateStr: string): number {
+  const [fy, fm, fd] = fromDateStr.split("-").map(Number);
+  const [ty, tm, td] = toDateStr.split("-").map(Number);
+  const from = Date.UTC(fy, fm - 1, fd);
+  const to = Date.UTC(ty, tm - 1, td);
+  return Math.round((to - from) / 86400000);
+}
+
+// loggedAt is a fake-UTC ISO string that's actually local wall-clock time
+// (see localIsoNoTz above) — pull the hour/minute out directly rather than
+// going through `Date`, which would apply a real UTC-to-local conversion and
+// shift the displayed time by the browser's timezone offset.
+export function formatLogTime(loggedAt: string): string {
+  const match = loggedAt.match(/T(\d{2}):(\d{2})/);
+  if (!match) return "";
+  let hour = Number(match[1]);
+  const minute = match[2];
+  const suffix = hour >= 12 ? "PM" : "AM";
+  hour = hour % 12 || 12;
+  return `${hour}:${minute} ${suffix}`;
+}
+
+function minutesSinceMidnight(loggedAt: string): number {
+  const match = loggedAt.match(/T(\d{2}):(\d{2})/);
+  if (!match) return 0;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+export function minutesBetweenLoggedAt(a: string, b: string): number {
+  return Math.abs(minutesSinceMidnight(b) - minutesSinceMidnight(a));
+}
+
 export function formatDayLabel(dateStr: string): string {
   const today = localDateString();
   if (dateStr === today) return "Today";

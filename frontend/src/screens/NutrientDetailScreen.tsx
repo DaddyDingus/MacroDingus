@@ -9,10 +9,10 @@ import RangeToggle from "../components/RangeToggle";
 import NutrientHistoryChart from "../components/NutrientHistoryChart";
 
 const METRIC_CONFIG = {
-  calories: { label: "Calories", unit: "kcal", color: "#6BE4C0", targetKey: "targetCalories" as const, decimals: 0 },
+  calories: { label: "Calories", unit: "kcal", color: "#3987E5", targetKey: "targetCalories" as const, decimals: 0 },
   protein: { label: "Protein", unit: "g", color: "#D95926", targetKey: "targetProteinG" as const, decimals: 1 },
-  carbs: { label: "Carbs", unit: "g", color: "#3987E5", targetKey: "targetCarbsG" as const, decimals: 1 },
-  fat: { label: "Fat", unit: "g", color: "#199E70", targetKey: "targetFatG" as const, decimals: 1 },
+  carbs: { label: "Carbs", unit: "g", color: "#059669", targetKey: "targetCarbsG" as const, decimals: 1 },
+  fat: { label: "Fat", unit: "g", color: "#F0B400", targetKey: "targetFatG" as const, decimals: 1 },
 };
 type MetricId = keyof typeof METRIC_CONFIG;
 

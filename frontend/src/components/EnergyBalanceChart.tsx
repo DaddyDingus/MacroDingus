@@ -3,12 +3,13 @@ import type { DayHistory } from "../api/logs";
 import type { Checkin } from "../api/coach";
 import { activeCheckinForDate } from "../lib/checkins";
 
-// "Calories in" reuses the carbs-blue already established elsewhere in the
-// app as a general intake color; "calories out" reuses the same teal TDEE
-// is drawn in everywhere else (TdeeChart, the Expenditure tile). Two series,
-// one shared kcal axis — not a dual-axis chart, just two lines on one scale.
+// "Calories in" reuses the same blue calories are drawn in everywhere else
+// (Dashboard's totals card, the Calories nutrient tile); "calories out"
+// reuses the same orange TDEE/expenditure is drawn in everywhere else
+// (TdeeChart, the Expenditure tile). Two series, one shared kcal axis — not
+// a dual-axis chart, just two lines on one scale.
 const IN = "#3987E5";
-const OUT = "#6BE4C0";
+const OUT = "#D95926";
 const GRID = "#33373E";
 const MUTED = "#8A8F98";
 

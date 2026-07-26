@@ -1,14 +1,7 @@
 import { useEffect, useState } from "react";
-import type { Meal } from "../api/types";
 import { useCreateFood } from "../api/foods";
 import { useAddLog } from "../api/logs";
-
-const MEAL_LABELS: Record<Meal, string> = {
-  breakfast: "Breakfast",
-  lunch: "Lunch",
-  dinner: "Dinner",
-  snacks: "Snacks",
-};
+import BottomSheet from "./BottomSheet";
 
 function NumberField({
   label,
@@ -45,11 +38,9 @@ function NumberField({
 // the entered totals as its per-100g values, logged at 100g (i.e. "1x") — so
 // it reuses the existing food/log data model with zero backend changes.
 export default function QuickAddSheet({
-  meal,
   date,
   onClose,
 }: {
-  meal: Meal;
   date: string;
   onClose: () => void;
 }) {
@@ -85,7 +76,7 @@ export default function QuickAddSheet({
       },
       {
         onSuccess: (food) => {
-          addLog.mutate({ food, meal, quantityGrams: 100 });
+          addLog.mutate({ food, quantityGrams: 100 });
           onClose();
         },
       }
@@ -93,50 +84,51 @@ export default function QuickAddSheet({
   }
 
   return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="absolute inset-x-0 bottom-0 max-h-[85vh] flex flex-col bg-surface rounded-t-xl border-t border-line">
-        <div className="px-4 pt-4 pb-2 flex items-center justify-between shrink-0">
-          <span className="text-sm font-medium">Quick add to {MEAL_LABELS[meal]}</span>
-          <button onClick={onClose} className="text-muted text-xl leading-none px-1">
-            ×
-          </button>
-        </div>
+    <BottomSheet
+      onClose={onClose}
+      backdropClassName="bg-black/50"
+      panelClassName="max-h-[85vh] bg-surface rounded-t-xl border-t border-line"
+    >
+      <div className="px-4 pt-4 pb-2 flex items-center justify-between shrink-0">
+        <span className="text-sm font-medium">Quick add</span>
+        <button onClick={onClose} className="text-muted text-xl leading-none px-1">
+          ×
+        </button>
+      </div>
 
-        <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
-          <label className="block">
-            <span className="block text-xs text-muted mb-1">Name</span>
-            <input
-              autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Restaurant lunch"
-              className="w-full rounded-md bg-surface-raised border border-line px-3 py-2.5 text-sm focus:outline-none focus:border-accent"
-            />
-          </label>
+      <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
+        <label className="block">
+          <span className="block text-xs text-muted mb-1">Name</span>
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Restaurant lunch"
+            className="w-full rounded-md bg-surface-raised border border-line px-3 py-2.5 text-sm focus:outline-none focus:border-accent"
+          />
+        </label>
 
-          <p className="text-[11px] tracking-widest uppercase text-muted pt-1">
-            Macros — fill in what you know, calories fill themselves in
-          </p>
-          <div className="grid grid-cols-2 gap-3">
-            <NumberField label="Protein" value={protein} onChange={setProtein} suffix="g" />
-            <NumberField label="Carbs" value={carbs} onChange={setCarbs} suffix="g" />
-            <NumberField label="Fat" value={fat} onChange={setFat} suffix="g" />
-            <NumberField label="Calories" value={calories} onChange={setCalories} suffix="kcal" />
-          </div>
-        </div>
-
-        <div className="p-4 shrink-0">
-          <button
-            onClick={submit}
-            disabled={!canSave || createFood.isPending}
-            className="w-full py-3 rounded-md bg-accent text-base disabled:opacity-40 font-medium"
-            style={{ color: "#0B1210" }}
-          >
-            Add to {MEAL_LABELS[meal]}
-          </button>
+        <p className="text-[11px] tracking-widest uppercase text-muted pt-1">
+          Macros — fill in what you know, calories fill themselves in
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <NumberField label="Protein" value={protein} onChange={setProtein} suffix="g" />
+          <NumberField label="Carbs" value={carbs} onChange={setCarbs} suffix="g" />
+          <NumberField label="Fat" value={fat} onChange={setFat} suffix="g" />
+          <NumberField label="Calories" value={calories} onChange={setCalories} suffix="kcal" />
         </div>
       </div>
-    </div>
+
+      <div className="p-4 shrink-0">
+        <button
+          onClick={submit}
+          disabled={!canSave || createFood.isPending}
+          className="w-full py-3 rounded-md bg-accent text-base disabled:opacity-40 font-medium"
+          style={{ color: "#0B1210" }}
+        >
+          Add
+        </button>
+      </div>
+    </BottomSheet>
   );
 }

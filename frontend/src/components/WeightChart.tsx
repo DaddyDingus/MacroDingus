@@ -2,7 +2,7 @@ import { ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveCo
 import type { TrendPoint } from "../api/weights";
 import { kgToUnit, type WeightUnit } from "../lib/weightUnit";
 
-const ACCENT = "#6BE4C0";
+const ACCENT = "#9085E9";
 const SCALE_DOT = "#8A8F98";
 const GRID = "#33373E";
 const MUTED = "#8A8F98";

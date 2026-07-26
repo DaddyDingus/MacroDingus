@@ -1,12 +1,11 @@
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import type { DayHistory } from "../api/logs";
 
-// Same three colors as the rest of the app (DailyFactsPanel dots, quantity
-// preview) — validated via the dataviz skill's palette validator as an
-// all-pairs colorblind-safe triad. See tailwind.config.js for the full note.
+// Same three colors as the rest of the app (MacroSummaryBar, quantity
+// preview) — see tailwind.config.js for the full validation note.
 const PROTEIN = "#D95926";
-const CARBS = "#3987E5";
-const FAT = "#199E70";
+const CARBS = "#059669";
+const FAT = "#F0B400";
 const GRID = "#33373E";
 const MUTED = "#8A8F98";
 

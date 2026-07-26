@@ -1,10 +1,10 @@
 import { BarChart, Bar, ResponsiveContainer } from "recharts";
 
-// Same all-pairs colorblind-safe triad as MacroHistoryChart/DailyFactsPanel —
-// stacked by calorie contribution, not raw grams, for the same reason.
+// Same triad as MacroHistoryChart/MacroSummaryBar — stacked by calorie
+// contribution, not raw grams, for the same reason.
 const PROTEIN = "#D95926";
-const CARBS = "#3987E5";
-const FAT = "#199E70";
+const CARBS = "#059669";
+const FAT = "#F0B400";
 
 export interface MiniBarPoint {
   proteinKcal: number;
