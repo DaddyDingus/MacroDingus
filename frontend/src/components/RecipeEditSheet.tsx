@@ -16,7 +16,7 @@ export default function RecipeEditSheet({ id, onClose }: { id: string; onClose: 
     <BottomSheet
       onClose={onClose}
       backdropClassName="bg-black/50"
-      panelClassName="max-h-[85vh] bg-surface rounded-t-xl border-t border-line"
+      panelClassName="max-h-[85%] bg-surface rounded-t-xl border-t border-line"
     >
       {detail.isLoading && <p className="p-4 text-sm text-muted">Loading…</p>}
       {detail.data && (

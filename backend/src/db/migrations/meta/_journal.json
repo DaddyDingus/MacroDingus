@@ -50,6 +50,13 @@
       "when": 1785065719000,
       "tag": "0006_open_omega_flight",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1785148811475,
+      "tag": "0007_light_eternals",
+      "breakpoints": true
     }
   ]
 }

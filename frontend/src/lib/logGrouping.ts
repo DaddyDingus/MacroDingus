@@ -1,11 +1,30 @@
 import type { LogEntry } from "../api/types";
 import { minutesBetweenLoggedAt } from "./date";
 
-const GROUP_WINDOW_MINUTES = 30;
+const GROUP_WINDOW_MINUTES = 60;
 
 export interface LogGroup {
   id: string;
   entries: LogEntry[];
+}
+
+export interface GroupTotals {
+  calories: number;
+  protein: number;
+  fat: number;
+  carbs: number;
+}
+
+export function sumGroupTotals(entries: LogEntry[]): GroupTotals {
+  return entries.reduce(
+    (acc, e) => ({
+      calories: acc.calories + e.nutrition.calories,
+      protein: acc.protein + e.nutrition.protein,
+      fat: acc.fat + e.nutrition.fat,
+      carbs: acc.carbs + e.nutrition.carbs,
+    }),
+    { calories: 0, protein: 0, fat: 0, carbs: 0 },
+  );
 }
 
 // A rolling/pairwise window, not a fixed-start bucket: an entry joins the

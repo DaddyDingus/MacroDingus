@@ -41,7 +41,7 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
     <BottomSheet
       onClose={onClose}
       backdropClassName="bg-black/50"
-      panelClassName="max-h-[85vh] bg-surface rounded-t-xl border-t border-line pb-[env(safe-area-inset-bottom)]"
+      panelClassName="max-h-[85%] bg-surface rounded-t-xl border-t border-line pb-[env(safe-area-inset-bottom)]"
     >
         {view === "menu" && (
           <>

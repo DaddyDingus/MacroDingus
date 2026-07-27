@@ -1,17 +1,34 @@
 // OpenFoodFacts reports salt, not sodium, on a lot of products — sodium (mg) is
 // derived from salt (g) via the standard sodium = salt / 2.5 approximation when
 // the more direct sodium_100g field isn't present.
+//
+// Comprehensive vitamin/mineral set (cholesterol included — see
+// schema.ts's comment on why it stays in this opaque blob rather than
+// getting its own column, unlike the fat subtypes below). "vitamin-pp" is
+// OFF's own field name for niacin/B3 (from the French "vitamine PP",
+// historically named for preventing pellagra) — not a typo.
 const MICRO_KEYS = [
   "vitamin-a_100g",
   "vitamin-c_100g",
   "vitamin-d_100g",
   "vitamin-e_100g",
+  "vitamin-k_100g",
+  "vitamin-b1_100g",
+  "vitamin-b2_100g",
+  "vitamin-pp_100g",
+  "vitamin-b6_100g",
+  "vitamin-b9_100g",
   "vitamin-b12_100g",
   "calcium_100g",
   "iron_100g",
   "potassium_100g",
   "magnesium_100g",
   "zinc_100g",
+  "phosphorus_100g",
+  "copper_100g",
+  "manganese_100g",
+  "selenium_100g",
+  "iodine_100g",
   "cholesterol_100g",
 ] as const;
 
@@ -38,6 +55,11 @@ export interface MappedFood {
   sugarPer100g?: number;
   saturatedFatPer100g?: number;
   sodiumMgPer100g?: number;
+  monounsaturatedFatPer100g?: number;
+  polyunsaturatedFatPer100g?: number;
+  omega3Per100g?: number;
+  omega6Per100g?: number;
+  transFatPer100g?: number;
   microsJson?: string;
 }
 
@@ -71,6 +93,11 @@ export function mapOffProduct(barcode: string, product: OffProduct): MappedFood 
     sugarPer100g: n["sugars_100g"],
     saturatedFatPer100g: n["saturated-fat_100g"],
     sodiumMgPer100g,
+    monounsaturatedFatPer100g: n["monounsaturated-fat_100g"],
+    polyunsaturatedFatPer100g: n["polyunsaturated-fat_100g"],
+    omega3Per100g: n["omega-3-fat_100g"],
+    omega6Per100g: n["omega-6-fat_100g"],
+    transFatPer100g: n["trans-fat_100g"],
     microsJson: Object.keys(micros).length > 0 ? JSON.stringify(micros) : undefined,
   };
 }

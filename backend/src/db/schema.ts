@@ -15,7 +15,11 @@ export const users = sqliteTable("users", {
 // query/sum them directly. Rarer micros (vitamins, minerals, cholesterol)
 // go in microsJson as {key: grams-per-100g-equivalent} — OpenFoodFacts (Phase 2)
 // reports wildly inconsistent subsets of these, so a fixed column per nutrient
-// would mean constant migrations for a NULL-heavy schema.
+// would mean constant migrations for a NULL-heavy schema. The fat-subtype
+// columns below are the one deliberate exception to that rule: they're a
+// small, closed set (there's no "more fat subtypes" the way there's always
+// another obscure vitamin), and omega-3/omega-6 specifically were asked for
+// as first-class tracked nutrients rather than buried in the opaque blob.
 export const foods = sqliteTable("foods", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -32,6 +36,11 @@ export const foods = sqliteTable("foods", {
   sugarPer100g: real("sugar_per_100g"),
   saturatedFatPer100g: real("saturated_fat_per_100g"),
   sodiumMgPer100g: real("sodium_mg_per_100g"),
+  monounsaturatedFatPer100g: real("monounsaturated_fat_per_100g"),
+  polyunsaturatedFatPer100g: real("polyunsaturated_fat_per_100g"),
+  omega3Per100g: real("omega_3_per_100g"),
+  omega6Per100g: real("omega_6_per_100g"),
+  transFatPer100g: real("trans_fat_per_100g"),
   microsJson: text("micros_json"),
   createdAt: text("created_at").notNull(),
 }, (table) => ({

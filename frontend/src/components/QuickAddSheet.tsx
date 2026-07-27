@@ -87,7 +87,7 @@ export default function QuickAddSheet({
     <BottomSheet
       onClose={onClose}
       backdropClassName="bg-black/50"
-      panelClassName="max-h-[85vh] bg-surface rounded-t-xl border-t border-line"
+      panelClassName="max-h-[85%] bg-surface rounded-t-xl border-t border-line"
     >
       <div className="px-4 pt-4 pb-2 flex items-center justify-between shrink-0">
         <span className="text-sm font-medium">Quick add</span>

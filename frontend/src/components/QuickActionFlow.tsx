@@ -2,6 +2,9 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { Food } from "../api/types";
 import { useRecipes, useCreateRecipe } from "../api/recipes";
+import { useDayLog } from "../api/logs";
+import { useCheckinHistory } from "../api/coach";
+import { activeCheckinForDate } from "../lib/checkins";
 import { localDateString } from "../lib/date";
 import type { ShortcutId } from "../lib/shortcuts";
 import AddFoodSheet from "./AddFoodSheet";
@@ -25,6 +28,8 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
   const today = localDateString();
   const recipes = useRecipes();
   const createRecipe = useCreateRecipe();
+  const dayLog = useDayLog(today);
+  const checkinHistory = useCheckinHistory();
   const [pickedFood, setPickedFood] = useState<Food | null>(null);
   const [step, setStep] = useState<Step>(() => {
     if (action === "logWeight") return "logWeight";
@@ -47,6 +52,20 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
     setStep("addFood");
   }
 
+  // Same "whichever check-in was active on the viewed date" lookup
+  // TodayScreen uses, so the sheet's header badges match what the Food log
+  // screen itself would show for today.
+  const checkinsAsc = [...(checkinHistory.data ?? [])].sort((a, b) => a.date.localeCompare(b.date));
+  const activeCheckin = activeCheckinForDate(checkinsAsc, today);
+  const targets = activeCheckin
+    ? {
+        calories: activeCheckin.targetCalories,
+        proteinG: activeCheckin.targetProteinG,
+        fatG: activeCheckin.targetFatG,
+        carbsG: activeCheckin.targetCarbsG,
+      }
+    : null;
+
   // Leaf flows that already own a full-screen backdrop+panel.
   if (step === "addFood") {
     return (
@@ -57,6 +76,8 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
         initialStep={action === "scan" ? "scan" : "search"}
         initialFood={pickedFood ?? undefined}
         onClose={onClose}
+        totals={dayLog.data?.totals}
+        targets={targets}
       />
     );
   }
@@ -71,7 +92,7 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
     <BottomSheet
       onClose={onClose}
       backdropClassName="bg-black/50"
-      panelClassName="max-h-[85vh] bg-surface rounded-t-xl border-t border-line pb-[env(safe-area-inset-bottom)]"
+      panelClassName="max-h-[85%] bg-surface rounded-t-xl border-t border-line pb-[env(safe-area-inset-bottom)]"
     >
         {step === "recipesList" && (
           <>

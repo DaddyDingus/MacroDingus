@@ -1,10 +1,11 @@
 import type { LogEntry } from "../api/types";
+import FoodIconAvatar from "./FoodIconAvatar";
 
 function fmt(n: number): string {
   return Math.round(n).toLocaleString();
 }
 
-export default function FoodLogEntryCard({
+export default function FoodItemCard({
   entry,
   onEdit,
   onDelete,
@@ -14,12 +15,16 @@ export default function FoodLogEntryCard({
   onDelete: () => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 bg-dashboardCard rounded-2xl px-4 py-3">
+    <div className="flex items-center gap-2.5 bg-dashboardCard rounded-2xl px-3 py-2">
+      <FoodIconAvatar name={entry.food.name} />
       <button onClick={onEdit} className="flex-1 min-w-0 text-left active:opacity-70">
-        <span className="block text-sm text-white truncate">{entry.food.name}</span>
-        <span className="block text-xs text-muted tabular">{fmt(entry.quantityGrams)} g</span>
+        <span className="block text-sm text-white leading-tight line-clamp-2">{entry.food.name}</span>
+        <span className="block text-xs text-muted tabular leading-tight truncate -mt-0.5">
+          {fmt(entry.quantityGrams)} g · {fmt(entry.nutrition.protein)}P {fmt(entry.nutrition.fat)}F{" "}
+          {fmt(entry.nutrition.carbs)}C
+        </span>
       </button>
-      <span className="flex items-center gap-3 shrink-0">
+      <span className="flex items-center gap-2.5 shrink-0">
         <span className="tabular text-sm text-white">{fmt(entry.nutrition.calories)}</span>
         <button
           type="button"

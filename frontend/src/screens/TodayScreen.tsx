@@ -1,12 +1,14 @@
 import { useState } from "react";
+import { Copy } from "lucide-react";
 import type { LogEntry } from "../api/types";
 import { useDayLog, useDeleteLog } from "../api/logs";
 import { useAuthStatus } from "../api/auth";
-import { useCoachStatus } from "../api/coach";
-import { addDays, formatDayLabel, formatLogTime, localDateString } from "../lib/date";
+import { useCheckinHistory } from "../api/coach";
+import { addDays, formatDayLabel, localDateString } from "../lib/date";
+import { activeCheckinForDate } from "../lib/checkins";
 import { groupLogEntriesByTime } from "../lib/logGrouping";
 import MacroSummaryBar from "../components/MacroSummaryBar";
-import FoodLogEntryCard from "../components/FoodLogEntryCard";
+import TimeBlockGroup from "../components/TimeBlockGroup";
 import AddFoodSheet from "../components/AddFoodSheet";
 import CopyDaySheet from "../components/CopyDaySheet";
 
@@ -15,15 +17,18 @@ const EMPTY_TOTALS = { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, suga
 // Blank-by-default timeline: no Breakfast/Lunch/Dinner/Snacks sections
 // (removed app-wide — see backend/src/db/schema.ts and every route/hook that
 // used to take a `meal`). Entries are grouped purely by how close together in
-// time they were logged (lib/logGrouping.ts), each rendered as its own dark
-// card, with a shared timestamp per group acting as a node on the vertical
-// timeline line down the right edge.
+// time they were logged (lib/logGrouping.ts) into "time blocks" (see
+// components/TimeBlockGroup.tsx) — each block gets one rolled-up macro
+// header sharing a flex baseline with the block's timestamp node, plus its
+// own dark food cards (components/FoodItemCard.tsx) underneath, with a
+// shared timestamp per group acting as a node on the vertical timeline line
+// down the right edge.
 export default function TodayScreen() {
   const [date, setDate] = useState(localDateString());
   const dayLog = useDayLog(date);
   const deleteLog = useDeleteLog(date);
   const authStatus = useAuthStatus();
-  const coachStatus = useCoachStatus();
+  const checkinHistory = useCheckinHistory();
 
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<LogEntry | null>(null);
@@ -45,16 +50,21 @@ export default function TodayScreen() {
   const entries = dayLog.data?.entries ?? [];
   const totals = dayLog.data?.totals ?? EMPTY_TOTALS;
 
-  const checkin = coachStatus.data?.latestCheckin;
-  const targets =
-    date === localDateString() && checkin
-      ? {
-          calories: checkin.targetCalories,
-          proteinG: checkin.targetProteinG,
-          fatG: checkin.targetFatG,
-          carbsG: checkin.targetCarbsG,
-        }
-      : null;
+  // Whichever check-in was active on the viewed date, not just today's latest
+  // — same lookup NutrientDetailScreen/EnergyBalanceChart use, so a past
+  // day's macro bars fill against the target that was actually in effect
+  // then, rather than going target-less (and therefore permanently 0% full)
+  // for every day except today.
+  const checkinsAsc = [...(checkinHistory.data ?? [])].sort((a, b) => a.date.localeCompare(b.date));
+  const activeCheckin = activeCheckinForDate(checkinsAsc, date);
+  const targets = activeCheckin
+    ? {
+        calories: activeCheckin.targetCalories,
+        proteinG: activeCheckin.targetProteinG,
+        fatG: activeCheckin.targetFatG,
+        carbsG: activeCheckin.targetCarbsG,
+      }
+    : null;
 
   const groups = groupLogEntriesByTime(entries);
 
@@ -76,19 +86,23 @@ export default function TodayScreen() {
               )}
               <span className="text-sm font-medium text-white">{formatDayLabel(date)}</span>
             </span>
-            <button
-              onClick={() => setDate((d) => addDays(d, 1))}
-              disabled={date === localDateString()}
-              className="justify-self-end text-white/60 text-xl leading-none px-2 py-1 disabled:opacity-30"
-              aria-label="Next day"
-            >
-              ›
-            </button>
-          </div>
-          <div className="flex justify-end pt-0.5">
-            <button onClick={() => setCopyOpen(true)} className="text-xs text-white/50">
-              Copy a day
-            </button>
+            <div className="justify-self-end flex items-center gap-1">
+              <button
+                onClick={() => setDate((d) => addDays(d, 1))}
+                disabled={date === localDateString()}
+                className="text-white/60 text-xl leading-none px-2 py-1 disabled:opacity-30"
+                aria-label="Next day"
+              >
+                ›
+              </button>
+              <button
+                onClick={() => setCopyOpen(true)}
+                className="text-muted p-1.5 active:text-white/70"
+                aria-label="Copy a day"
+              >
+                <Copy className="w-3.5 h-3.5" strokeWidth={2} />
+              </button>
+            </div>
           </div>
         </header>
 
@@ -102,27 +116,18 @@ export default function TodayScreen() {
           <p className="text-sm text-muted text-center py-16">Nothing logged yet.</p>
         ) : (
           <div className="relative">
-            <div className="absolute top-2 bottom-2 w-px bg-dashboardDivider" style={{ right: "18px" }} />
-            <div className="space-y-4">
+            {/* TimeBlockGroup's dot is w-2 (8px) flush to this container's right edge, so its
+                center sits 4px in from the edge. This 1px-wide line must start 0.5px further
+                out (right: 3.5px) so its own center lands on that same 4px point. */}
+            <div className="absolute top-2 bottom-2 w-px bg-dashboardDivider" style={{ right: "3.5px" }} />
+            <div className="space-y-6">
               {groups.map((group) => (
-                <div key={group.id} className="flex items-start gap-2">
-                  <div className="flex-1 min-w-0 space-y-2">
-                    {group.entries.map((entry) => (
-                      <FoodLogEntryCard
-                        key={entry.id}
-                        entry={entry}
-                        onEdit={() => openEdit(entry)}
-                        onDelete={() => deleteLog.mutate(entry.id)}
-                      />
-                    ))}
-                  </div>
-                  <div className="relative z-10 shrink-0 w-9 flex flex-col items-center pt-2">
-                    <span className="h-2 w-2 rounded-full bg-white/30 ring-4 ring-dashboardBg" />
-                    <span className="text-[9px] text-muted mt-1 text-center leading-tight">
-                      {formatLogTime(group.entries[0].loggedAt)}
-                    </span>
-                  </div>
-                </div>
+                <TimeBlockGroup
+                  key={group.id}
+                  entries={group.entries}
+                  onEdit={openEdit}
+                  onDelete={(entry) => deleteLog.mutate(entry.id)}
+                />
               ))}
             </div>
           </div>
@@ -136,7 +141,14 @@ export default function TodayScreen() {
         </button>
       </main>
 
-      <AddFoodSheet open={sheetOpen} date={date} editingEntry={editingEntry} onClose={closeSheet} />
+      <AddFoodSheet
+        open={sheetOpen}
+        date={date}
+        editingEntry={editingEntry}
+        onClose={closeSheet}
+        totals={totals}
+        targets={targets}
+      />
 
       {copyOpen && <CopyDaySheet targetDate={date} onClose={() => setCopyOpen(false)} />}
     </div>

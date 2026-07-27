@@ -14,6 +14,11 @@ export interface Food {
   sugarPer100g: number | null;
   saturatedFatPer100g: number | null;
   sodiumMgPer100g: number | null;
+  monounsaturatedFatPer100g: number | null;
+  polyunsaturatedFatPer100g: number | null;
+  omega3Per100g: number | null;
+  omega6Per100g: number | null;
+  transFatPer100g: number | null;
   microsJson: string | null;
   createdAt: string;
 }
@@ -57,6 +62,14 @@ export interface CreateFoodInput {
   sugarPer100g?: number;
   saturatedFatPer100g?: number;
   sodiumMgPer100g?: number;
+  monounsaturatedFatPer100g?: number;
+  polyunsaturatedFatPer100g?: number;
+  omega3Per100g?: number;
+  omega6Per100g?: number;
+  transFatPer100g?: number;
+  // Same shape/keys as OpenFoodFacts imports (see backend's MICRO_KEYS) —
+  // the backend serializes this straight into the foods.microsJson column.
+  micros?: Record<string, number>;
 }
 
 export interface CreateRecipeInput {

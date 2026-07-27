@@ -1,4 +1,5 @@
-import { useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
+import { useVisualViewportMetrics } from "../lib/useVisualViewportMetrics";
 
 // Swipe-down-to-dismiss past this distance, or past this velocity even if
 // short — the standard "flick it away" escape hatch native sheets have.
@@ -19,7 +20,7 @@ const DISMISS_VELOCITY_PX_MS = 0.5;
 export default function BottomSheet({
   onClose,
   children,
-  panelClassName = "max-h-[85vh] bg-dashboardBg rounded-t-xl border-t border-white/10 pb-[env(safe-area-inset-bottom)]",
+  panelClassName = "max-h-[85%] bg-dashboardBg rounded-t-xl border-t border-white/10 pb-[env(safe-area-inset-bottom)]",
   backdropClassName = "bg-black/60",
   showGrabber = true,
 }: {
@@ -32,6 +33,17 @@ export default function BottomSheet({
   const [dragY, setDragY] = useState(0);
   const [dragging, setDragging] = useState(false);
   const dragStart = useRef<{ y: number; time: number } | null>(null);
+  const { height: viewportHeight, offsetTop: viewportOffsetTop } = useVisualViewportMetrics();
+
+  // The page behind a sheet must not scroll while it's open — without this,
+  // dragging on the dimmed backdrop scrolls whatever screen is underneath.
+  useEffect(() => {
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, []);
 
   function handlePointerDown(e: ReactPointerEvent<HTMLDivElement>) {
     dragStart.current = { y: e.clientY, time: Date.now() };
@@ -59,10 +71,19 @@ export default function BottomSheet({
   }
 
   return (
-    <div className="fixed inset-0 z-50">
+    // Positioned/sized against the tracked visual viewport, not a plain
+    // `fixed inset-0` — iOS Safari pans the visual viewport independently of
+    // the layout viewport once the on-screen keyboard opens, which silently
+    // pushes a plain `fixed` element (and anything sized in `vh`, which
+    // doesn't reliably shrink for the keyboard either) outside what's
+    // actually visible. Sizing this wrapper in real px against
+    // window.visualViewport keeps it matching the true visible area, and
+    // panelClassName heights below are expressed as `%` of *this* wrapper
+    // rather than viewport units so they inherit that same correctness.
+    <div className="fixed inset-x-0 z-50" style={{ top: viewportOffsetTop, height: viewportHeight }}>
       <div className={`absolute inset-0 ${backdropClassName}`} onClick={onClose} />
       <div
-        className={`absolute inset-x-0 bottom-0 flex flex-col ${panelClassName}`}
+        className={`absolute inset-x-0 bottom-0 flex flex-col pointer-events-auto ${panelClassName}`}
         style={{ transform: `translateY(${dragY}px)`, transition: dragging ? "none" : "transform 200ms ease-out" }}
       >
         {showGrabber && (

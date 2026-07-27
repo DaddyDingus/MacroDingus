@@ -20,7 +20,23 @@ const foodInput = z.object({
   sugarPer100g: z.number().nonnegative().optional(),
   saturatedFatPer100g: z.number().nonnegative().optional(),
   sodiumMgPer100g: z.number().nonnegative().optional(),
+  monounsaturatedFatPer100g: z.number().nonnegative().optional(),
+  polyunsaturatedFatPer100g: z.number().nonnegative().optional(),
+  omega3Per100g: z.number().nonnegative().optional(),
+  omega6Per100g: z.number().nonnegative().optional(),
+  transFatPer100g: z.number().nonnegative().optional(),
+  // Vitamins/minerals a custom food is entered with — same shape/keys as
+  // OpenFoodFacts imports produce (see openfoodfacts.ts's MICRO_KEYS), just
+  // serialized into the same microsJson column server-side rather than
+  // getting their own columns (schema.ts explains why: an open-ended,
+  // NULL-heavy set isn't worth a column each).
+  micros: z.record(z.string(), z.number().nonnegative()).optional(),
 });
+
+function microsJsonFromInput(micros: Record<string, number> | undefined): string | null | undefined {
+  if (micros === undefined) return undefined;
+  return Object.keys(micros).length > 0 ? JSON.stringify(micros) : null;
+}
 
 export function registerFoodRoutes(app: FastifyInstance) {
   app.get("/api/foods", async (req) => {
@@ -110,11 +126,13 @@ export function registerFoodRoutes(app: FastifyInstance) {
 
     const id = randomUUID();
     const now = new Date().toISOString();
+    const { micros, ...rest } = parsed.data;
     await db.insert(foods).values({
       id,
       source: "custom",
       createdAt: now,
-      ...parsed.data,
+      ...rest,
+      microsJson: microsJsonFromInput(micros),
     });
     const [food] = await db.select().from(foods).where(eq(foods.id, id));
     reply.code(201);
@@ -126,7 +144,12 @@ export function registerFoodRoutes(app: FastifyInstance) {
     const parsed = foodInput.partial().safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
 
-    await db.update(foods).set(parsed.data).where(eq(foods.id, id));
+    const { micros, ...rest } = parsed.data;
+    const microsJson = microsJsonFromInput(micros);
+    await db
+      .update(foods)
+      .set(microsJson === undefined ? rest : { ...rest, microsJson })
+      .where(eq(foods.id, id));
     const [food] = await db.select().from(foods).where(eq(foods.id, id));
     if (!food) return reply.code(404).send({ error: "not found" });
     return food;
