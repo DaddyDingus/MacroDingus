@@ -1,4 +1,5 @@
 import type { Nutrition } from "../api/types";
+import { useEnergyUnit, kcalToUnit } from "../lib/energyUnit";
 
 export interface MacroTargets {
   calories: number;
@@ -20,10 +21,10 @@ function pct(value: number, target: number): number {
 // carbs) — kept as raw hex here rather than a Tailwind class since the fill
 // color is set via inline style, same pattern DashboardTileSections uses.
 const METRICS: { key: "calories" | "protein" | "fat" | "carbs"; label: string; color: string }[] = [
-  { key: "calories", label: "Calories", color: "#3987E5" },
-  { key: "protein", label: "Protein", color: "#D95926" },
-  { key: "fat", label: "Fat", color: "#F0B400" },
-  { key: "carbs", label: "Carbs", color: "#059669" },
+  { key: "calories", label: "Calories", color: "#749EF4" },
+  { key: "protein", label: "Protein", color: "#EF8D6A" },
+  { key: "fat", label: "Fat", color: "#F7D372" },
+  { key: "carbs", label: "Carbs", color: "#5ABC80" },
 ];
 
 // Deliberately not built on TargetProgressBar — that component's target tick
@@ -31,12 +32,17 @@ const METRICS: { key: "calories" | "protein" | "fat" | "carbs"; label: string; c
 // macro row exactly (h-1 track, no tick, fully rounded ends) so the Home
 // Dashboard and Food Log headers read as the same visual system.
 export default function MacroSummaryBar({ totals, targets }: { totals: Nutrition; targets: MacroTargets | null }) {
+  const { unit: energyUnit } = useEnergyUnit();
   return (
     <div className="grid grid-cols-4 gap-3">
       {METRICS.map((m) => {
         const value = totals[m.key];
         const target = targets ? (m.key === "calories" ? targets.calories : targets[`${m.key}G` as "proteinG" | "fatG" | "carbsG"]) : 0;
         const decimals = m.key === "calories" ? 0 : 1;
+        // pct() is a ratio, so it's unit-invariant — only the two displayed
+        // numbers below the bar need to convert for calories.
+        const displayValue = m.key === "calories" ? kcalToUnit(value, energyUnit) : value;
+        const displayTarget = m.key === "calories" ? kcalToUnit(target, energyUnit) : target;
         return (
           <div key={m.key} className="min-w-0 flex flex-col items-center text-center">
             <p className="text-[11px] tracking-widest uppercase text-muted truncate">{m.label}</p>
@@ -47,8 +53,8 @@ export default function MacroSummaryBar({ totals, targets }: { totals: Nutrition
               />
             </span>
             <p className="tabular mt-1 truncate">
-              <span className="text-[11px] font-medium text-white">{fmt(value, decimals)}</span>
-              {targets && <span className="text-[9px] text-muted">/{fmt(target, decimals)}</span>}
+              <span className="text-[11px] font-medium text-white">{fmt(displayValue, decimals)}</span>
+              {targets && <span className="text-[9px] text-muted">/{fmt(displayTarget, decimals)}</span>}
             </p>
           </div>
         );

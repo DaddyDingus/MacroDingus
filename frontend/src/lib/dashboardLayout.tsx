@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
+import { useSyncedSetting } from "./useSyncedSetting";
 
 export type Category = "insights" | "habits" | "nutrition" | "bodyMetrics";
 
@@ -7,6 +8,7 @@ export type TileId =
   | "expenditure"
   | "energyBalance"
   | "goalProgress"
+  | "coachNarrative"
   | "weighInConsistency"
   | "loggingConsistency"
   | "macros"
@@ -30,6 +32,7 @@ export const TILE_CATALOG: { id: TileId; category: Category; label: string }[] =
   { id: "expenditure", category: "insights", label: "Expenditure" },
   { id: "energyBalance", category: "insights", label: "Energy balance" },
   { id: "goalProgress", category: "insights", label: "Goal progress" },
+  { id: "coachNarrative", category: "insights", label: "Weekly update" },
   { id: "weighInConsistency", category: "habits", label: "Weigh-ins" },
   { id: "loggingConsistency", category: "habits", label: "Food logging" },
   { id: "macros", category: "nutrition", label: "Macros" },
@@ -45,7 +48,7 @@ export const TILE_CATALOG: { id: TileId; category: Category; label: string }[] =
 // ON — this is a config migration for people already using the app, and
 // nothing already visible should silently disappear on upgrade.
 const DEFAULT_ORDER: Record<Category, TileId[]> = {
-  insights: ["trendWeight", "expenditure", "energyBalance", "goalProgress"],
+  insights: ["trendWeight", "expenditure", "energyBalance", "goalProgress", "coachNarrative"],
   habits: ["weighInConsistency", "loggingConsistency"],
   nutrition: ["macros", "calories", "protein", "carbs", "fat"],
   bodyMetrics: ["scaleWeight", "progressPhotos"],
@@ -68,28 +71,35 @@ function isTileId(v: unknown): v is TileId {
   return typeof v === "string" && TILE_CATALOG.some((t) => t.id === v);
 }
 
-function load(): LayoutState {
+// Shared by localStorage parsing and the account-settings sync path. Trusts
+// the stored array as-is (filtered for validity) — no attempt to back-fill
+// tiles missing from it. An earlier version of this tried to auto-append any
+// catalog tile absent from storage, reasoning it might be new to the
+// catalog; in practice that's indistinguishable from a tile the user
+// deliberately turned off, so it silently undid every toggle-off on next
+// load. Same trade-off shortcuts.tsx already makes: a tile added to the
+// catalog in a future version won't appear for existing users until they
+// open the editor, which is fine. Returns null (not partial defaults) when
+// `parsed` isn't even an object, so the sync path can tell "nothing saved
+// yet" apart from "saved, just empty."
+function sanitizeLayout(parsed: unknown): LayoutState | null {
+  if (typeof parsed !== "object" || parsed === null) return null;
   const result = defaultLayout();
+  for (const cat of CATEGORIES.map((c) => c.id)) {
+    const stored = (parsed as Record<string, unknown>)[cat];
+    if (!Array.isArray(stored)) continue;
+    result[cat] = stored.filter(isTileId).filter((id) => TILE_CATALOG.find((t) => t.id === id)?.category === cat);
+  }
+  return result;
+}
+
+function load(): LayoutState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return result;
-    const parsed = JSON.parse(raw);
-    // Trust the stored array as-is (filtered for validity) — no attempt to
-    // back-fill tiles missing from it. An earlier version of this tried to
-    // auto-append any catalog tile absent from storage, reasoning it might be
-    // new to the catalog; in practice that's indistinguishable from a tile
-    // the user deliberately turned off, so it silently undid every toggle-off
-    // on next load. Same trade-off shortcuts.tsx already makes: a tile added
-    // to the catalog in a future version won't appear for existing users
-    // until they open the editor, which is fine.
-    for (const cat of CATEGORIES.map((c) => c.id)) {
-      const stored = parsed?.[cat];
-      if (!Array.isArray(stored)) continue;
-      result[cat] = stored.filter(isTileId).filter((id) => TILE_CATALOG.find((t) => t.id === id)?.category === cat);
-    }
-    return result;
+    if (!raw) return defaultLayout();
+    return sanitizeLayout(JSON.parse(raw)) ?? defaultLayout();
   } catch {
-    return result;
+    return defaultLayout();
   }
 }
 
@@ -102,12 +112,14 @@ interface DashboardLayoutContextValue {
 const DashboardLayoutContext = createContext<DashboardLayoutContextValue | null>(null);
 
 export function DashboardLayoutProvider({ children }: { children: ReactNode }) {
-  const [layout, setLayout] = useState<LayoutState>(load);
+  const [layout, setLayoutState] = useState<LayoutState>(load);
 
-  function persist(next: LayoutState) {
-    setLayout(next);
+  function applyLayout(next: LayoutState) {
+    setLayoutState(next);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   }
+
+  const persist = useSyncedSetting("dashboardLayout", layout, applyLayout, sanitizeLayout);
 
   function toggle(category: Category, id: TileId) {
     const current = layout[category];

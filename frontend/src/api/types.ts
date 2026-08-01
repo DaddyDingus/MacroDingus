@@ -3,7 +3,7 @@ export interface Food {
   name: string;
   brand: string | null;
   barcode: string | null;
-  source: "custom" | "openfoodfacts" | "recipe";
+  source: "custom" | "openfoodfacts" | "recipe" | "ai_estimate";
   servingSizeGrams: number | null;
   servingName: string | null;
   caloriesPer100g: number;
@@ -20,6 +20,12 @@ export interface Food {
   omega6Per100g: number | null;
   transFatPer100g: number | null;
   microsJson: string | null;
+  icon: string | null;
+  // Non-null means this food is "deleted" (or an ai_estimate Describe row) —
+  // kept alive server-side only to back existing log entries; the backend
+  // already excludes hidden foods from every search/browse/favorites
+  // response, so the frontend never needs to check this field itself.
+  hiddenAt: string | null;
   createdAt: string;
 }
 
@@ -54,6 +60,7 @@ export interface CreateFoodInput {
   barcode?: string;
   servingSizeGrams?: number;
   servingName?: string;
+  icon?: string | null;
   caloriesPer100g: number;
   proteinPer100g: number;
   carbsPer100g: number;
@@ -72,8 +79,40 @@ export interface CreateFoodInput {
   micros?: Record<string, number>;
 }
 
+// Response shape of POST /api/foods/scan-label (backend/src/engine/labelScan.ts).
+// Every field is nullable: the model returns null for anything it can't read
+// off the label rather than guess, so CreateFoodForm only overwrites the
+// fields that came back non-null and leaves the rest exactly as the user had
+// them (blank, or already hand-typed).
+export interface LabelScanResult {
+  name: string | null;
+  brand: string | null;
+  servingSizeGrams: number | null;
+  servingName: string | null;
+  caloriesPer100g: number | null;
+  proteinPer100g: number | null;
+  carbsPer100g: number | null;
+  fatPer100g: number | null;
+  fiberPer100g: number | null;
+  sugarPer100g: number | null;
+  saturatedFatPer100g: number | null;
+  sodiumMgPer100g: number | null;
+}
+
+// Response shape of POST /api/foods/describe-meal (backend/src/engine/describeMeal.ts).
+// Each `food` is already a real, persisted row by the time this comes back —
+// either an existing library match reused as-is, or a freshly created
+// `source: 'ai_estimate'` food — so the frontend can stage it straight onto
+// the plate exactly like a search result, no separate "materialize" step.
+export interface DescribedMealItem {
+  food: Food;
+  quantityGrams: number;
+  servingDescription: string | null;
+}
+
 export interface CreateRecipeInput {
   name: string;
+  icon?: string | null;
   servings: number;
   totalWeightGrams?: number;
   ingredients: { foodId: string; quantityGrams: number }[];

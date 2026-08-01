@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useCreateFood } from "../api/foods";
 import { useAddLog } from "../api/logs";
+import { useEnergyUnit, kcalToUnit, unitToKcal, energyUnitLabel } from "../lib/energyUnit";
 import BottomSheet from "./BottomSheet";
 
 function NumberField({
@@ -8,21 +9,25 @@ function NumberField({
   value,
   onChange,
   suffix,
+  onEnter,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
-  suffix?: string;
+  suffix?: ReactNode;
+  onEnter?: () => void;
 }) {
   return (
     <label className="block">
       <span className="block text-xs text-muted mb-1">{label}</span>
       <div className="flex items-center rounded-md bg-surface-raised border border-line px-3 focus-within:border-accent">
         <input
-          type="number"
+          type="search"
           inputMode="decimal"
+          autoComplete="off"
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onKeyDown={onEnter ? (e) => { if (e.key === "Enter") onEnter(); } : undefined}
           className="tabular w-full bg-transparent py-2.5 text-sm focus:outline-none"
         />
         {suffix && <span className="text-xs text-muted">{suffix}</span>}
@@ -49,6 +54,7 @@ export default function QuickAddSheet({
   const [carbs, setCarbs] = useState("");
   const [fat, setFat] = useState("");
   const [calories, setCalories] = useState("");
+  const { unit: energyUnit, setUnit: setEnergyUnit } = useEnergyUnit();
 
   const createFood = useCreateFood();
   const addLog = useAddLog(date);
@@ -58,10 +64,22 @@ export default function QuickAddSheet({
     const p = Number(protein) || 0;
     const c = Number(carbs) || 0;
     const f = Number(fat) || 0;
-    setCalories(String(Math.round(p * 4 + c * 4 + f * 9)));
-  }, [protein, carbs, fat]);
+    setCalories(String(Math.round(kcalToUnit(p * 4 + c * 4 + f * 9, energyUnit))));
+  }, [protein, carbs, fat, energyUnit]);
 
   const canSave = name.trim() !== "" && calories.trim() !== "";
+
+  // Same in-place conversion pattern as CreateFoodForm's toggle — whatever's
+  // currently shown (typed directly or auto-filled from macros) converts to
+  // the new unit before the shared global preference actually flips.
+  function toggleEnergyUnit() {
+    const next = energyUnit === "kcal" ? "kj" : "kcal";
+    if (calories.trim() !== "" && !isNaN(Number(calories))) {
+      const kcal = unitToKcal(Number(calories), energyUnit);
+      setCalories(String(Math.round(kcalToUnit(kcal, next))));
+    }
+    setEnergyUnit(next);
+  }
 
   function submit() {
     if (!canSave) return;
@@ -69,7 +87,7 @@ export default function QuickAddSheet({
       {
         name: name.trim(),
         servingSizeGrams: 100,
-        caloriesPer100g: Number(calories) || 0,
+        caloriesPer100g: unitToKcal(Number(calories) || 0, energyUnit),
         proteinPer100g: Number(protein) || 0,
         carbsPer100g: Number(carbs) || 0,
         fatPer100g: Number(fat) || 0,
@@ -89,20 +107,36 @@ export default function QuickAddSheet({
       backdropClassName="bg-black/50"
       panelClassName="max-h-[85%] bg-surface rounded-t-xl border-t border-line"
     >
-      <div className="px-4 pt-4 pb-2 flex items-center justify-between shrink-0">
+      {(dragHandlers) => (
+        <>
+      {/* No Close button — swipe-down (the grabber, or this header) or a tap
+          on the backdrop dismiss the sheet, so a redundant × isn't needed. */}
+      <div {...dragHandlers} className="px-4 pt-1 pb-2 flex items-center shrink-0 touch-none">
         <span className="text-sm font-medium">Quick add</span>
-        <button onClick={onClose} className="text-muted text-xl leading-none px-1">
-          ×
-        </button>
       </div>
 
+      {/* Enter submits via onKeyDown on each field, not a wrapping <form> —
+          a <form> element turned out to be what triggers Chrome's full
+          autofill accessory strip (passwords/payment/addresses icons) on
+          Android, regardless of autocomplete="off" or a distinct name
+          attribute on the fields inside it. See AddFoodSheet's own Quick Add
+          tab for the fuller story — same fields, same fix. */}
       <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
         <label className="block">
           <span className="block text-xs text-muted mb-1">Name</span>
           <input
+            type="search"
+            // Removing the <form> wasn't enough on its own — turns out
+            // type="search" (which the app's other search boxes already use
+            // and never triggered this) is the more reliable signal to
+            // Chromium's Android autofill integration than autocomplete/name
+            // ever were on a bare type="text" field. See AddFoodSheet's own
+            // Quick Add tab for the fuller story.
             autoFocus
+            autoComplete="off"
             value={name}
             onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
             placeholder="e.g. Restaurant lunch"
             className="w-full rounded-md bg-surface-raised border border-line px-3 py-2.5 text-sm focus:outline-none focus:border-accent"
           />
@@ -112,10 +146,20 @@ export default function QuickAddSheet({
           Macros — fill in what you know, calories fill themselves in
         </p>
         <div className="grid grid-cols-2 gap-3">
-          <NumberField label="Protein" value={protein} onChange={setProtein} suffix="g" />
-          <NumberField label="Carbs" value={carbs} onChange={setCarbs} suffix="g" />
-          <NumberField label="Fat" value={fat} onChange={setFat} suffix="g" />
-          <NumberField label="Calories" value={calories} onChange={setCalories} suffix="kcal" />
+          <NumberField label="Protein" value={protein} onChange={setProtein} suffix="g" onEnter={submit} />
+          <NumberField label="Carbs" value={carbs} onChange={setCarbs} suffix="g" onEnter={submit} />
+          <NumberField label="Fat" value={fat} onChange={setFat} suffix="g" onEnter={submit} />
+          <NumberField
+            label="Calories"
+            value={calories}
+            onChange={setCalories}
+            onEnter={submit}
+            suffix={
+              <button type="button" onClick={toggleEnergyUnit} className="text-xs text-accent font-medium active:opacity-70">
+                {energyUnitLabel(energyUnit)}
+              </button>
+            }
+          />
         </div>
       </div>
 
@@ -129,6 +173,8 @@ export default function QuickAddSheet({
           Add
         </button>
       </div>
+        </>
+      )}
     </BottomSheet>
   );
 }

@@ -1,0 +1,16 @@
+{
+  "TCP": {
+    "443": {
+      "HTTPS": true
+    }
+  },
+  "Web": {
+    "macrotrack.tail984e80.ts.net:443": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://macrotrack:3000"
+        }
+      }
+    }
+  }
+}

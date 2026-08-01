@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { SHORTCUT_CATALOG, SHORTCUT_COLOR_CATALOG, useDashboardShortcuts, type ShortcutId } from "../lib/shortcuts";
 import useHideOnScroll from "../lib/useHideOnScroll";
+import useBottomNavHeight from "../lib/useBottomNavHeight";
 import QuickActionFlow from "./QuickActionFlow";
 
 // Floats above BottomNav on the Dashboard only — the FAB already offers the
@@ -11,17 +12,7 @@ export default function ShortcutsBar() {
   const { shortcuts, colors } = useDashboardShortcuts();
   const [runningAction, setRunningAction] = useState<ShortcutId | null>(null);
   const visible = useHideOnScroll();
-  const [navHeight, setNavHeight] = useState(0);
-
-  useEffect(() => {
-    const nav = document.getElementById("app-bottom-nav");
-    if (!nav) return;
-    const update = () => setNavHeight(nav.offsetHeight);
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(nav);
-    return () => observer.disconnect();
-  }, []);
+  const navHeight = useBottomNavHeight();
 
   return (
     <>
@@ -45,11 +36,13 @@ export default function ShortcutsBar() {
                 aria-label={s.label}
                 className="flex-1 py-2.5 flex items-center justify-center active:brightness-110 transition"
               >
-                <span
-                  className="h-10 w-16 rounded-full flex items-center justify-center"
-                  style={{ backgroundColor: color.hex }}
-                >
-                  <Icon size={18} strokeWidth={2} className={color.icon === "black" ? "text-black" : "text-white"} />
+                <span className="h-10 w-16 rounded-full bg-dashboardChip flex items-center justify-center">
+                  <Icon
+                    size={18}
+                    strokeWidth={2}
+                    style={colorId !== "default" ? { color: color.hex } : undefined}
+                    className={colorId === "default" ? "text-white" : ""}
+                  />
                 </span>
               </button>
             );

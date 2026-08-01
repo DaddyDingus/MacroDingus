@@ -74,7 +74,7 @@ export default function DashboardCustomizeScreen() {
     <div className="min-h-dvh pb-24 bg-dashboardBg">
       <header className="px-4 pt-5 pb-3 flex items-center justify-between">
         <h1 className="text-lg font-medium text-white">Customise dashboard</h1>
-        <button onClick={() => navigate("/")} className="text-sm font-bold text-white">
+        <button onClick={() => navigate("/")} className="text-sm font-bold text-accent">
           Done
         </button>
       </header>

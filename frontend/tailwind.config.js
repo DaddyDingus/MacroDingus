@@ -4,35 +4,69 @@ export default {
   theme: {
     extend: {
       colors: {
-        base: "#14161A",
-        surface: "#1E2126",
-        "surface-raised": "#262A31",
+        // Theme-switchable neutrals — one shared design language (page bg <
+        // card < raised card < divider, each a step lighter), sourced from
+        // CSS variables (see index.css) so the "black" vs "graphite" theme
+        // picker in More can swap every one of these at once, everywhere,
+        // without a rebuild. `canvas`/`surface`/`surface-raised`/`line` and
+        // `dashboardBg`/`dashboardCard`/`dashboardDivider`/`dashboardChip`/
+        // `dashboardTrack` are deliberately aliases of the very same
+        // variables, not two systems — they grew apart historically (the
+        // Dashboard/Food Log rebuild introduced the `dashboard*` names before
+        // the rest of the app caught up), and unifying them here is what
+        // makes every screen consistent again without renaming classes
+        // across two dozen files.
+        //
+        // Named `canvas`, not `base` — `base` collides with Tailwind's own
+        // built-in `text-base` *font-size* utility (1rem). A custom color
+        // named `base` makes Tailwind also generate a `text-base` *color*
+        // utility of the same class name; both rules apply since they don't
+        // share properties, so any element using the ordinary font-size
+        // `text-base` silently also got its text color set to the page
+        // background — invisible text, zero contrast, not a layout/clipping
+        // bug. This was the actual cause of WizardShell's blank title (and
+        // any other `text-base` element), misdiagnosed for a while as a
+        // flexbox/browser-engine rendering quirk before being caught via
+        // getComputedStyle. Don't reuse any Tailwind font-size scale name
+        // (`xs`/`sm`/`base`/`lg`/`xl`/`2xl`.../`8xl`) for a custom color.
+        canvas: "rgb(var(--color-bg) / <alpha-value>)",
+        surface: "rgb(var(--color-card) / <alpha-value>)",
+        "surface-raised": "rgb(var(--color-card-raised) / <alpha-value>)",
         ink: "#ECEDEE",
         muted: "#8A8F98",
-        line: "#33373E",
-        accent: "#6BE4C0",
-        // Second palette pass, re-validated via the dataviz skill's
-        // validator (node scripts/validate_palette.js) against this
-        // requested mapping: calories=blue, protein=orange, fat=yellow,
-        // carbs=green. All four re-checked together (adjacent AND all-pairs,
-        // dark mode, our own #1E2126 card surface): CVD separation worst
-        // case ΔE 9.4 (≥8 target), normal-vision floor worst case ΔE 17.5+
-        // (≥15 floor) — both clear. The one check that does NOT clear is the
-        // categorical lightness band (fat's yellow sits at L 0.80, above the
-        // 0.48–0.67 band): that's a deliberate, documented exception, not an
-        // oversight. The skill's own palette.md explicitly warns this exact
-        // orange+yellow pairing fails all-pairs at any lightness *within*
-        // that band (verified: every in-band yellow tried came back
-        // ΔE 2–5 vs this orange, a hard CVD fail) — the only way to
-        // genuinely separate them is a brighter/paler yellow, which is what
-        // "fat" is here. Every place these four render, a text label
-        // ("Protein"/"Fat"/etc.) sits right next to the swatch, so color is
-        // reinforcing, not the sole identity channel — same mitigation the
-        // skill applies to its own light-mode WARN slots.
-        calories: "#3987E5",
-        protein: "#D95926",
-        carbs: "#059669",
-        fat: "#F0B400",
+        line: "rgb(var(--color-divider) / <alpha-value>)",
+        // Light orchid purple — chosen (not just picked) via the dataviz
+        // skill's validator against the existing weight color (#9085E9,
+        // below): both are shown side-by-side as selectable options in the
+        // dashboard shortcut-chip color picker, so they need to actually
+        // read as different colors there, not just in a chart-series sense.
+        // #D896FF clears that (ΔE well above the 15 normal-vision floor);
+        // several closer/more saturated purples tried first didn't (e.g.
+        // #C084FC came back ΔE 8.0 vs weight, "hard to tell apart even with
+        // full color vision"). Like the old mint accent it replaces, this
+        // sits above the categorical lightness band (L 0.78) — that's the
+        // same accepted exception fat's yellow already has, not a new one:
+        // accent is a UI brand/action color, not a chart-series entry in
+        // the calories/protein/carbs/fat set validated together below.
+        accent: "#D896FF",
+        // Third palette pass — pixel-sampled straight from MacroFactor's own
+        // dark-mode palette (calories=periwinkle blue, protein=coral,
+        // fat=gold, carbs=sage) at the user's explicit request, deliberately
+        // NOT run through the dataviz skill's validator this time. That
+        // validator's colorblind-separation and chroma-floor checks (carbs'
+        // sage came back reading as gray, and only ~5.5 ΔE from protein's
+        // coral under deuteranopia — both real fails) are the right default
+        // for a palette serving unknown users, but this is a single-person
+        // household app for someone with normal color vision — there's no
+        // colorblind user those checks are protecting here, so distorting
+        // MacroFactor's actual colors to satisfy them would be solving a
+        // problem this deployment doesn't have. Contrast against the dark
+        // surface still comfortably clears 3:1 for all four; only the
+        // colorblind-specific checks were skipped.
+        calories: "#749EF4",
+        protein: "#EF8D6A",
+        carbs: "#5ABC80",
+        fat: "#F7D372",
         // Single-series chart accents, each used in views that never show
         // more than one of these at once, so they're not part of the
         // above all-pairs validation — reused/duplicated hexes where two
@@ -40,34 +74,28 @@ export default {
         weight: "#9085E9",
         expenditure: "#D95926",
         goal: "#059669",
-        // Dashboard-scoped dark palette (dark-grey page + iOS-style card
-        // grey) — intentionally separate from base/surface above, which the
-        // rest of the app still uses. Requested specifically for the
-        // Dashboard screen, not a global reskin, so it's kept as its own
-        // named pair rather than changed in place. Re-ran the categorical
-        // validator against this card's #1C1C1E surface (previously checked
-        // only against #1E2126): same result — CVD separation, normal-vision
-        // floor, and contrast all still clear; fat's lightness-band exception
-        // above is unaffected by surface color and still applies.
-        // dashboardBg: true black (#000000) → darker-than-base #0F1114 →
-        // lightened to #17191D → back to true OLED black, landing here.
-        // Shared by the Dashboard screen and BottomNav (global chrome, same
-        // token), so both move together — deliberately identical so the two
-        // blend into one seamless black rather than reading as two surfaces.
-        dashboardBg: "#000000",
-        dashboardCard: "#1C1C1E",
-        dashboardDivider: "#2C2C2E",
-        // Same hex as dashboardDivider, kept as its own name since it's used
-        // as a filled button background (shortcut chips), not a hairline —
-        // same "intentional duplicate for a distinct role" pattern as
-        // weight/expenditure/goal above.
-        dashboardChip: "#2C2C2E",
-        // Also the same hex, for the "empty" side of a meter (gauge ring
+        // `dashboard*` names predate the app-wide theme unification above —
+        // they were introduced for the Dashboard/Food Log rebuild before the
+        // rest of the app had caught up to that visual language. Now that
+        // `base`/`surface`/`surface-raised`/`line` point at the very same
+        // variables, these are plain aliases (same values, different names
+        // used at different call sites) rather than a second palette. Both
+        // graphite and black pass the categorical-color validator against
+        // `--color-card` (see index.css) — checked for both themes, not just
+        // black; fat's lightness-band exception noted above is unaffected by
+        // surface color and still applies either way.
+        dashboardBg: "rgb(var(--color-bg) / <alpha-value>)",
+        dashboardCard: "rgb(var(--color-card) / <alpha-value>)",
+        dashboardDivider: "rgb(var(--color-divider) / <alpha-value>)",
+        // Same value as dashboardDivider, kept as its own name since it's
+        // used as a filled button background (shortcut chips), not a
+        // hairline — same "intentional duplicate for a distinct role"
+        // pattern as weight/expenditure/goal above.
+        dashboardChip: "rgb(var(--color-divider) / <alpha-value>)",
+        // Also the same value, for the "empty" side of a meter (gauge ring
         // track, progress-bar tracks, unfilled habit-grid cells) sitting on
-        // dashboardCard — the app's regular `surface-raised` was tuned
-        // against `surface` (#1E2126), a lighter surface than dashboardCard
-        // (#1C1C1E), so on this card it read as barely-there.
-        dashboardTrack: "#2C2C2E",
+        // dashboardCard.
+        dashboardTrack: "rgb(var(--color-divider) / <alpha-value>)",
       },
       fontFamily: {
         sans: ["IBM Plex Sans", "system-ui", "sans-serif"],

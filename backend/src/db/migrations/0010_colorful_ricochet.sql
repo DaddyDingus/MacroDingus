@@ -1,0 +1,1 @@
+ALTER TABLE `checkins` ADD `tdee_flux_kcal` real;

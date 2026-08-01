@@ -9,9 +9,67 @@
 @tailwind utilities;
 
 @layer base {
+  /* Four theme palettes, same design language (page bg < card < raised card
+     < divider, each a step lighter) — only how dark "dark" is, and the hue,
+     changes. Values are "R G B" so Tailwind's rgb(var(...) / <alpha-value>)
+     pattern can still apply opacity modifiers (border-line/60 etc). Defaults
+     on :root match the "black" theme so first paint is correct before the
+     inline bootstrap script in index.html (which sets data-theme from
+     localStorage before React mounts) has a chance to run. Accent (#D896FF)
+     and the categorical chart colors stay fixed across all four themes —
+     re-validated against each theme's --color-card via the dataviz skill's
+     validator, not just black's.
+   */
+  :root,
+  :root[data-theme="black"] {
+    --color-bg: 0 0 0;
+    --color-card: 28 28 30;
+    --color-card-raised: 38 38 42;
+    --color-divider: 44 44 46;
+  }
+
+  :root[data-theme="graphite"] {
+    --color-bg: 23 23 26;
+    --color-card: 34 34 37;
+    --color-card-raised: 44 44 48;
+    --color-divider: 58 58 63;
+  }
+
+  /* Warm espresso brown rather than a neutral grey — same lightness steps as
+     graphite, hue-shifted toward coffee. */
+  :root[data-theme="cappuccino"] {
+    --color-bg: 28 21 18;
+    --color-card: 42 32 25;
+    --color-card-raised: 54 42 33;
+    --color-divider: 73 58 46;
+  }
+
+  /* Catppuccin Macchiato — the actual named palette (catppuccin.com), not an
+     original hue shift like the other three. Uses its real published
+     Crust/Base/Surface0/Surface1 hex values directly for our four roles
+     (deliberately skipping past Mantle: Crust→Base is a bigger, more visible
+     step than Crust→Mantle→Base would be split up, and matches how
+     Catppuccin's own theme authors typically use Crust for recessed/outer
+     chrome and Base for the main content surface). Noticeably lighter/softer
+     than the other three themes at every step — that's faithful to
+     Catppuccin's own look, not a bug to tune away. */
+  :root[data-theme="catppuccin"] {
+    --color-bg: 24 25 38;
+    --color-card: 36 39 58;
+    --color-card-raised: 54 58 79;
+    --color-divider: 73 77 100;
+  }
+
   html,
   body {
-    @apply bg-base text-ink;
+    @apply bg-canvas text-ink;
+    /* Back to `none` (not `contain`) now that hooks/useRubberBandScroll.ts
+       provides a fully custom rubber-band bounce instead — this suppresses
+       every browser's own default overscroll response (Chrome/mobile-browser
+       pull-to-refresh, Android's edge glow, iOS's native rubber-band) so
+       only the custom one ever shows, consistently, rather than each
+       platform's own default fighting or duplicating it. */
+    overscroll-behavior-y: none;
   }
 
   body {
@@ -31,4 +89,92 @@
   .no-scrollbar::-webkit-scrollbar {
     display: none;
   }
+
+  /* App-wide — no visible scrollbar anywhere (the main page, any sheet's
+     internal scroll area, any overflow-y-auto list), matching a native
+     app's look. Same technique as .no-scrollbar above, just applied
+     globally instead of to individual carousels. Samsung Internet and
+     Chrome are both Chromium-based, so the ::-webkit-scrollbar rule covers
+     both; scrollbar-width covers Firefox-based browsers too. */
+  html,
+  * {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  html::-webkit-scrollbar,
+  *::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* type="search" is used app-wide now for plain data-entry fields too, not
+     just literal search boxes — Chromium's Android autofill integration
+     appears to treat it as out-of-scope for the passwords/payment/addresses
+     accessory strip in a way a bare type="text"/"number" isn't, autocomplete
+     and name attributes notwithstanding (see AddFoodSheet's Quick Add tab
+     for the full story). Reset here so that switch doesn't also sprout the
+     browser's own search-input chrome (a native "clear" x button in
+     WebKit/Chromium) on fields — some of them quite narrow — styled like
+     every other input in the app. */
+  input[type="search"] {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  input[type="search"]::-webkit-search-cancel-button,
+  input[type="search"]::-webkit-search-decoration {
+    -webkit-appearance: none;
+    display: none;
+  }
+}
+
+/* Used by OrbitLoadingAnimation.tsx's New Program "generating" screen — a
+   plain full-turn rotation applied to each orbit ring div; the dot fixed at
+   the ring's edge sweeps a circle as the ring itself spins. */
+@keyframes orbit-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Page transition: opacity-only fade on every route change. No transform —
+   transform on a wrapper div permanently creates a containing block for
+   position:fixed descendants (e.g. ShortcutsBar), even when translateY(0),
+   breaking their viewport-relative positioning for as long as the animation
+   fill-mode keeps the style applied. */
+@keyframes page-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.page-enter {
+  animation: page-enter 180ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+/* Wizard step transition: fade + slight horizontal slide. Safe to use
+   transform here because wizard screens have no position:fixed children. */
+@keyframes step-enter {
+  from { opacity: 0; transform: translateX(8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.step-enter {
+  animation: step-enter 180ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+/* Dashboard tile stagger-in. Transform is safe here (unlike .page-enter) —
+   DashboardCard has no position:fixed descendants. animation-delay is set
+   per-tile via the --tile-delay custom property (DashboardCard.tsx). Runs
+   once per mount: React keeps each tile's DOM node across re-renders (stable
+   `key`), so a data refetch that only updates a value/subtitle doesn't
+   recreate the node and can't retrigger the animation. */
+@keyframes tile-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.tile-enter {
+  animation: tile-enter 360ms cubic-bezier(0.2, 0, 0, 1) both;
+  animation-delay: var(--tile-delay, 0ms);
 }

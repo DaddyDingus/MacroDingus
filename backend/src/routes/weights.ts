@@ -4,11 +4,12 @@ import { eq, and, gte } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "../db/index.js";
 import { weights } from "../db/schema.js";
-import { computeTrend, addDaysToDateString } from "../engine/trendWeight.js";
+import { computeDenseTrend, addDaysToDateString } from "../engine/trendWeight.js";
 
 const weightInput = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   weightKg: z.number().positive().max(500),
+  bodyFatPercent: z.number().min(3).max(70).nullable().optional(),
 });
 
 export function registerWeightRoutes(app: FastifyInstance) {
@@ -26,7 +27,15 @@ export function registerWeightRoutes(app: FastifyInstance) {
       .where(and(eq(weights.userId, userId), eq(weights.date, parsed.data.date)));
 
     if (existing) {
-      await db.update(weights).set({ weightKg: parsed.data.weightKg }).where(eq(weights.id, existing.id));
+      await db
+        .update(weights)
+        .set({
+          weightKg: parsed.data.weightKg,
+          // omitted (undefined) leaves the existing value alone; explicit
+          // null clears it — only overwrite when the field was sent at all.
+          ...(parsed.data.bodyFatPercent !== undefined ? { bodyFatPercent: parsed.data.bodyFatPercent } : {}),
+        })
+        .where(eq(weights.id, existing.id));
       const [updated] = await db.select().from(weights).where(eq(weights.id, existing.id));
       return updated;
     }
@@ -37,6 +46,7 @@ export function registerWeightRoutes(app: FastifyInstance) {
       userId,
       date: parsed.data.date,
       weightKg: parsed.data.weightKg,
+      bodyFatPercent: parsed.data.bodyFatPercent ?? null,
       createdAt: new Date().toISOString(),
     });
     const [created] = await db.select().from(weights).where(eq(weights.id, id));
@@ -61,13 +71,19 @@ export function registerWeightRoutes(app: FastifyInstance) {
   // requested window — otherwise the EWMA would restart cold at the window
   // boundary and understate how settled the trend actually is. Only the
   // response is sliced to the requested range.
+  //
+  // Dense (one row per calendar day, not just weigh-in days) — the Weight
+  // Trend chart plots a trend value for every day, matching MacroFactor's
+  // own "recalculated daily" look. `weightKg` is null on implied days (see
+  // computeDenseTrend's doc comment); every other consumer of this route
+  // only ever reads `trendKg`, so the density change is transparent to them.
   app.get("/api/weights/trend", async (req) => {
     const { days } = req.query as { days?: string };
     const userId = req.userId!;
     const take = Math.min(Number(days) || 90, 3650);
 
     const all = await db.select().from(weights).where(eq(weights.userId, userId)).orderBy(weights.date);
-    const trend = computeTrend(all.map((w) => ({ date: w.date, weightKg: w.weightKg })));
+    const trend = computeDenseTrend(all.map((w) => ({ date: w.date, weightKg: w.weightKg })));
 
     const since = addDaysToDateString(new Date().toISOString().slice(0, 10), -take);
     return trend.filter((t) => t.date >= since);

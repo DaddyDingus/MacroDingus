@@ -47,6 +47,8 @@ function LoginForm() {
       <input
         autoFocus
         type="password"
+        name="password"
+        autoComplete="current-password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         placeholder="Password"
@@ -87,6 +89,8 @@ function SignupForm() {
     <form onSubmit={submit} className="space-y-3">
       <input
         autoFocus
+        name="name"
+        autoComplete="off"
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder="Your name"
@@ -94,6 +98,8 @@ function SignupForm() {
       />
       <input
         type="password"
+        name="new-password"
+        autoComplete="new-password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         placeholder="Password (min. 8 characters)"
@@ -101,6 +107,8 @@ function SignupForm() {
       />
       <input
         type="password"
+        name="confirm-password"
+        autoComplete="new-password"
         value={confirm}
         onChange={(e) => setConfirm(e.target.value)}
         placeholder="Confirm password"

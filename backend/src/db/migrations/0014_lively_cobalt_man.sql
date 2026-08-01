@@ -1,0 +1,1 @@
+ALTER TABLE `programs` ADD `shifted_high_days` text;

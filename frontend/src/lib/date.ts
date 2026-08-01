@@ -47,6 +47,21 @@ export function formatLogTime(loggedAt: string): string {
   return `${hour}:${minute} ${suffix}`;
 }
 
+// Raw "HH:MM" out of a loggedAt string, for prefilling a time picker or
+// reusing an entry's original time-of-day when copying/moving it elsewhere —
+// same fake-UTC-is-actually-local reasoning as formatLogTime above, just
+// without the 12-hour formatting.
+export function loggedAtTimeString(loggedAt: string): string {
+  const match = loggedAt.match(/T(\d{2}):(\d{2})/);
+  return match ? `${match[1]}:${match[2]}` : "00:00";
+}
+
+// Inverse of loggedAtTimeString — builds a loggedAt string from a plain date
+// + "HH:MM", in the same fake-UTC-but-really-local shape localIsoNoTz produces.
+export function buildLoggedAt(dateStr: string, time: string): string {
+  return `${dateStr}T${time}:00.000Z`;
+}
+
 function minutesSinceMidnight(loggedAt: string): number {
   const match = loggedAt.match(/T(\d{2}):(\d{2})/);
   if (!match) return 0;
@@ -55,6 +70,29 @@ function minutesSinceMidnight(loggedAt: string): number {
 
 export function minutesBetweenLoggedAt(a: string, b: string): number {
   return Math.abs(minutesSinceMidnight(b) - minutesSinceMidnight(a));
+}
+
+// Same fake-UTC-is-actually-local regex extraction as the helpers above —
+// for bucketing a day's log entries by hour of day (Nutrient Timing chart).
+// Must not go through `new Date(loggedAt).getHours()`, which would apply a
+// real UTC-to-local conversion and shift every bucket by the browser's
+// timezone offset.
+export function hourFromLoggedAt(loggedAt: string): number {
+  const match = loggedAt.match(/T(\d{2}):(\d{2})/);
+  return match ? Number(match[1]) : 0;
+}
+
+// Numeric day-index (days since the epoch), for charts that need a real
+// linear/time-scaled X axis instead of Recharts' default categorical
+// index-spacing — required once a series can have gap days (a categorical
+// axis would space a gap day's neighbors as if they were adjacent). Inverse
+// is just addDays(EPOCH, index).
+const EPOCH = "1970-01-01";
+export function dayIndex(dateStr: string): number {
+  return daysBetween(EPOCH, dateStr);
+}
+export function dateFromDayIndex(index: number): string {
+  return addDays(EPOCH, index);
 }
 
 export function formatDayLabel(dateStr: string): string {

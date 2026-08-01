@@ -3,9 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#14161A" />
+    <meta name="theme-color" content="#000000" />
     <title>macrotrack</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <script>
+      // Set data-theme before first paint so reopening on a non-black theme
+      // doesn't flash black — ThemeProvider (src/lib/theme.tsx) takes over
+      // from here and keeps this in sync with the meta theme-color tag on
+      // every change. Keep this list in sync with THEME_IDS in theme.tsx.
+      (function () {
+        var t = localStorage.getItem("macrotrack-theme");
+        var valid = ["black", "graphite", "cappuccino", "catppuccin"];
+        document.documentElement.dataset.theme = valid.indexOf(t) !== -1 ? t : "black";
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

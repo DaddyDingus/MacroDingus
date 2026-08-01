@@ -1,121 +1,268 @@
-import { useState } from "react";
-import { useParams } from "react-router-dom";
+import { useMemo, useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import { ChevronDown } from "lucide-react";
 import { useDayLog, useLogsHistory } from "../api/logs";
-import { useCoachStatus, useCheckinHistory } from "../api/coach";
-import { localDateString, formatDayLabel } from "../lib/date";
+import { useCheckinHistory } from "../api/coach";
+import { usePrograms } from "../api/programs";
+import { localDateString, formatDayLabel, dayIndex } from "../lib/date";
 import { activeCheckinForDate } from "../lib/checkins";
+import { targetsForDate, type DayTargets } from "../lib/programTargets";
 import { topContributors } from "../lib/nutrientContributors";
-import RangeToggle from "../components/RangeToggle";
-import NutrientHistoryChart from "../components/NutrientHistoryChart";
+import { useEnergyUnit, kcalToUnit, energyUnitLabel } from "../lib/energyUnit";
+import { useChartGesture } from "../hooks/useChartGesture";
+import { RANGE_PRESETS } from "../lib/chartLayout";
+import ChartCard from "../components/ChartCard";
+import NutrientHistoryChart, { NutrientHistoryChartLegend, type NutrientChartPoint } from "../components/NutrientHistoryChart";
+import { staggerStyle } from "../lib/stagger";
 
-const METRIC_CONFIG = {
-  calories: { label: "Calories", unit: "kcal", color: "#3987E5", targetKey: "targetCalories" as const, decimals: 0 },
-  protein: { label: "Protein", unit: "g", color: "#D95926", targetKey: "targetProteinG" as const, decimals: 1 },
-  carbs: { label: "Carbs", unit: "g", color: "#059669", targetKey: "targetCarbsG" as const, decimals: 1 },
-  fat: { label: "Fat", unit: "g", color: "#F0B400", targetKey: "targetFatG" as const, decimals: 1 },
+// Exported so NutrientDayDetailScreen (the per-day drill-in reached by
+// tapping a history row below) can share the exact same label/color/target
+// mapping instead of a second copy that could drift.
+export const METRIC_CONFIG = {
+  calories: {
+    label: "Calories",
+    unit: "kcal",
+    color: "#749EF4",
+    targetKey: "calories" as const,
+    decimals: 0,
+    about:
+      "Calories are a measure of the energy your body gets from food and drink. Your body uses that energy for everything from basic survival — breathing, circulation, cell repair — to digestion, movement, and exercise.",
+  },
+  protein: {
+    label: "Protein",
+    unit: "g",
+    color: "#EF8D6A",
+    targetKey: "proteinG" as const,
+    decimals: 1,
+    about:
+      "Protein is one of the three macronutrients. It's made of amino acids your body uses to build and repair muscle, skin, and enzymes. Unlike fat, your body can't store much extra protein for later, so getting enough of it regularly matters.",
+  },
+  carbs: {
+    label: "Carbs",
+    unit: "g",
+    color: "#5ABC80",
+    targetKey: "carbsG" as const,
+    decimals: 1,
+    about:
+      "Carbohydrates are one of the three macronutrients. They're your body's preferred, most readily available source of energy, broken down into glucose to fuel your brain, muscles, and daily activity. Fiber, a type of carbohydrate your body can't fully digest, also supports gut health.",
+  },
+  fat: {
+    label: "Fat",
+    unit: "g",
+    color: "#F7D372",
+    targetKey: "fatG" as const,
+    decimals: 1,
+    about:
+      "Fat is one of the three macronutrients. It's a concentrated source of energy, helps your body absorb fat-soluble vitamins (A, D, E, and K), and supplies essential fatty acids your body can't produce on its own.",
+  },
 };
-type MetricId = keyof typeof METRIC_CONFIG;
+export type MetricId = keyof typeof METRIC_CONFIG;
 
-const RANGE_PRESETS = [
-  { label: "7d", days: 7 },
-  { label: "30d", days: 30 },
-  { label: "90d", days: 90 },
-  { label: "1y", days: 365 },
-];
+function formatRangeDate(dateStr: string, withYear: boolean): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "long",
+    year: withYear ? "numeric" : undefined,
+  });
+}
+
+function formatRangeLabel(startDate: string, endDate: string): string {
+  if (startDate === endDate) return formatRangeDate(endDate, true);
+  return `${formatRangeDate(startDate, false)} – ${formatRangeDate(endDate, true)}`;
+}
 
 export default function NutrientDetailScreen() {
+  const navigate = useNavigate();
   const { metric } = useParams<{ metric: string }>();
   const metricId: MetricId = metric && metric in METRIC_CONFIG ? (metric as MetricId) : "calories";
   const config = METRIC_CONFIG[metricId];
 
-  const [days, setDays] = useState(30);
+  const [showAllContributors, setShowAllContributors] = useState(false);
+  const { unit: energyUnit } = useEnergyUnit();
   const today = localDateString();
   const dayLog = useDayLog(today);
-  const history = useLogsHistory(days);
+  // One dense fetch (same pattern as EnergyBalanceDetailScreen) — the chart
+  // slices its own window off this, the daily history list uses the whole
+  // thing filtered to actually-logged days, no separate round trips.
+  const fullHistory = useLogsHistory(3650);
   const checkinHistory = useCheckinHistory();
-  const coachStatus = useCoachStatus();
+  const programs = usePrograms();
 
   const checkinsAsc = [...(checkinHistory.data ?? [])].sort((a, b) => a.date.localeCompare(b.date));
-  const todayCheckin = coachStatus.data?.latestCheckin ?? null;
+  const programList = programs.data ?? [];
 
   const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: config.decimals, minimumFractionDigits: config.decimals });
+  // Only "calories" has a second unit to switch between — protein/carbs/fat
+  // stay in grams regardless of the energy-unit preference, so `convert` is
+  // the identity for those three and only calories routes through kcalToUnit.
+  const convert = (n: number) => (metricId === "calories" ? kcalToUnit(n, energyUnit) : n);
+  const unitLabel = metricId === "calories" ? energyUnitLabel(energyUnit) : config.unit;
 
+  const contributors = topContributors(dayLog.data?.entries ?? [], metricId, showAllContributors ? 999 : 3);
   const consumedToday = dayLog.data?.totals[metricId] ?? 0;
-  const targetToday = todayCheckin ? todayCheckin[config.targetKey] : null;
-  const remainingToday = targetToday !== null ? targetToday - consumedToday : null;
+  const targetsToday = targetsForDate(programList, today);
+  const targetToday = targetsToday ? targetsToday[config.targetKey] : null;
+  const pctToday = targetToday ? Math.min(100, Math.round((consumedToday / targetToday) * 100)) : null;
 
-  const contributors = topContributors(dayLog.data?.entries ?? [], metricId, 3);
-  const chartData = (history.data ?? []).map((d) => ({ date: d.date, value: d[metricId] }));
-
-  const dailyList = [...(history.data ?? [])].reverse().map((d) => {
+  const allPoints: NutrientChartPoint[] = (fullHistory.data ?? []).map((d) => {
+    const dayTargets = targetsForDate(programList, d.date);
     const active = activeCheckinForDate(checkinsAsc, d.date);
-    const target = active ? active[config.targetKey] : null;
+    return {
+      date: d.date,
+      value: convert(d[metricId]),
+      target: dayTargets ? convert(dayTargets[config.targetKey]) : null,
+      flux: metricId === "calories" && active?.tdeeFluxKcal != null ? convert(active.tdeeFluxKcal) : null,
+    };
+  });
+
+  const loggedDays = (fullHistory.data ?? []).filter((d) => d.calories > 0);
+  const hasData = loggedDays.length > 0;
+
+  const earliestTs = useMemo(
+    () => (loggedDays.length ? dayIndex(loggedDays[0].date) : dayIndex(today)),
+    [loggedDays, today]
+  );
+  const gesture = useChartGesture({ earliestTs, initialDays: 30 });
+
+  const chartPoints = useMemo(
+    () => allPoints.filter((p) => dayIndex(p.date) >= gesture.view.start && dayIndex(p.date) <= gesture.view.end),
+    [allPoints, gesture.view]
+  );
+
+  const rangeAvg = chartPoints.length ? chartPoints.reduce((s, p) => s + p.value, 0) / chartPoints.length : null;
+  const rangeLabel = chartPoints.length ? formatRangeLabel(chartPoints[0].date, chartPoints[chartPoints.length - 1].date) : null;
+
+  const monthGroups = new Map<string, { label: string; entries: { date: string; actual: number; target: number | null; pct: number | null }[] }>();
+  [...loggedDays].forEach((d) => {
+    const dayTargets = targetsForDate(programList, d.date);
+    const target = dayTargets ? dayTargets[config.targetKey] : null;
     const actual = d[metricId];
     const pct = target ? Math.round((actual / target) * 100) : null;
-    return { date: d.date, actual, target, pct };
+    const key = d.date.slice(0, 7);
+    if (!monthGroups.has(key)) {
+      const [y, m] = key.split("-").map(Number);
+      monthGroups.set(key, {
+        label: new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" }),
+        entries: [],
+      });
+    }
+    monthGroups.get(key)!.entries.push({ date: d.date, actual, target, pct });
   });
+  const monthGroupsDesc = [...monthGroups.entries()]
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([key, g]) => ({ key, label: g.label, entries: [...g.entries].reverse() }));
+
+  let block = 0;
 
   return (
     <div className="min-h-dvh pb-24">
       <header className="px-4 pt-5 pb-3">
-        <h1 className="text-lg font-medium">{config.label}</h1>
+        <h1 className="text-lg font-medium text-center">{config.label}</h1>
       </header>
 
       <main className="px-4 space-y-3 max-w-md mx-auto">
-        <RangeToggle presets={RANGE_PRESETS} value={days} onChange={setDays} />
-
-        <div className="border border-line bg-surface rounded-md p-4">
-          <p className="text-[11px] tracking-widest uppercase text-muted mb-1">{config.label} over time</p>
-          <NutrientHistoryChart data={chartData} color={config.color} unit={config.unit} />
+        <div className="tile-enter border border-line bg-surface rounded-2xl p-4" style={staggerStyle(block++, 60, 5)}>
+          <p className="text-[11px] tracking-widest uppercase text-muted">Average</p>
+          <p className="tabular text-2xl font-medium tracking-tight whitespace-nowrap">
+            {rangeAvg !== null ? fmt(rangeAvg) : "—"} <span className="text-sm font-normal text-muted">{unitLabel}</span>
+          </p>
+          {rangeLabel && <p className="text-xs text-muted mt-2">{rangeLabel}</p>}
         </div>
 
-        <div className="border border-line bg-surface rounded-md p-4">
-          <p className="text-[11px] tracking-widest uppercase text-muted">{config.label} today</p>
-          <p className="tabular text-3xl font-medium tracking-tight">
-            {fmt(consumedToday)} {config.unit}
-          </p>
-          {remainingToday !== null && (
-            <p className="tabular text-xs text-muted mt-1">
-              {fmt(Math.abs(remainingToday))} {config.unit} {remainingToday >= 0 ? "remaining" : "over"}
-            </p>
-          )}
+        <div className="tile-enter" style={staggerStyle(block++, 60, 5)}>
+          <ChartCard
+            gesture={gesture}
+            presets={RANGE_PRESETS}
+            legend={<NutrientHistoryChartLegend data={chartPoints} color={config.color} />}
+          >
+            {(windowStart, windowEnd, height) => (
+              <NutrientHistoryChart
+                data={chartPoints}
+                hasData={hasData}
+                color={config.color}
+                unit={unitLabel}
+                windowStart={windowStart}
+                windowEnd={windowEnd}
+                height={height}
+              />
+            )}
+          </ChartCard>
+        </div>
+
+        <div className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
+          <div className="px-4 py-3">
+            <p className="text-sm font-semibold mb-2">About {config.label}</p>
+            <p className="text-xs text-muted leading-relaxed">{config.about}</p>
+          </div>
+        </div>
+
+        <div className="tile-enter border border-line bg-surface rounded-2xl p-4" style={staggerStyle(block++, 60, 5)}>
+          <p className="text-sm font-semibold mb-2">{config.label} Today</p>
+          <div className="flex items-center justify-between text-sm">
+            <span>{config.label}</span>
+            <span className="tabular">
+              {fmt(convert(consumedToday))}
+              {targetToday !== null ? ` / ${fmt(convert(targetToday))}` : ""} {unitLabel}
+              {pctToday !== null && <span className="text-muted ml-2">{pctToday}%</span>}
+            </span>
+          </div>
+          <div className="h-1.5 bg-surface-raised rounded-full mt-2 overflow-hidden">
+            <div className="h-full rounded-full" style={{ width: `${pctToday ?? 0}%`, background: config.color }} />
+          </div>
         </div>
 
         {contributors.length > 0 && (
-          <div className="border border-line bg-surface rounded-md overflow-hidden">
-            <div className="px-4 py-2.5 border-b border-line">
-              <span className="text-[11px] tracking-widest uppercase text-muted">Top contributors today</span>
-            </div>
+          <div className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
+            <button
+              onClick={() => setShowAllContributors((v) => !v)}
+              className="w-full px-4 py-2.5 flex items-center justify-between border-b border-line text-left"
+            >
+              <span className="text-[11px] tracking-widest uppercase text-muted">
+                {showAllContributors ? "All contributors today" : "Top 3 contributors today"}
+              </span>
+              <ChevronDown className={`w-4 h-4 text-muted transition-transform ${showAllContributors ? "rotate-180" : ""}`} strokeWidth={2} />
+            </button>
             {contributors.map((c) => (
-              <div
-                key={c.foodId}
-                className="flex items-center justify-between px-4 py-2.5 border-b border-line/60 last:border-b-0"
-              >
+              <div key={c.foodId} className="flex items-center justify-between px-4 py-2.5 border-b border-line/60 last:border-b-0">
                 <span className="text-sm truncate pr-2">{c.name}</span>
                 <span className="tabular text-sm shrink-0">
-                  {fmt(c.amount)} {config.unit}
+                  {fmt(convert(c.amount))} {unitLabel}
                 </span>
               </div>
             ))}
           </div>
         )}
 
-        {dailyList.length > 0 && (
-          <div className="border border-line bg-surface rounded-md overflow-hidden">
-            <div className="px-4 py-2.5 border-b border-line">
-              <span className="text-[11px] tracking-widest uppercase text-muted">Daily history</span>
-            </div>
-            {dailyList.map((d) => (
-              <div
-                key={d.date}
-                className="flex items-center justify-between px-4 py-2 border-b border-line/60 last:border-b-0 text-sm gap-2"
-              >
-                <span className="text-muted shrink-0">{formatDayLabel(d.date)}</span>
-                <span className="tabular truncate">
-                  {fmt(d.actual)}
-                  {d.target !== null ? ` / ${fmt(d.target)}` : ""} {config.unit}
-                </span>
-                {d.pct !== null && <span className="tabular text-muted w-12 text-right shrink-0">{d.pct}%</span>}
+        {monthGroupsDesc.length > 0 && (
+          <div className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
+            {monthGroupsDesc.map((g) => (
+              <div key={g.key}>
+                <div className="px-4 py-2 border-t border-line bg-surface-raised first:border-t-0">
+                  <span className="text-xs text-muted">{g.label}</span>
+                </div>
+                {g.entries.map((d) => (
+                  <button
+                    key={d.date}
+                    onClick={() => navigate(`/nutrition/${metricId}/${d.date}`)}
+                    className="w-full text-left px-4 py-2.5 border-t border-line/60 active:bg-surface-raised"
+                  >
+                    <div className="flex items-center justify-between text-sm gap-2">
+                      <span className="text-muted shrink-0">{formatDayLabel(d.date)}</span>
+                      <span className="tabular truncate">
+                        {fmt(convert(d.actual))}
+                        {d.target !== null ? ` / ${fmt(convert(d.target))}` : ""} {unitLabel}
+                        {d.pct !== null && <span className="text-muted ml-2">{d.pct}%</span>}
+                      </span>
+                    </div>
+                    <div className="h-1.5 bg-surface-raised rounded-full mt-1.5 overflow-hidden">
+                      <div
+                        className="h-full rounded-full"
+                        style={{ width: `${Math.min(100, d.pct ?? 0)}%`, background: config.color }}
+                      />
+                    </div>
+                  </button>
+                ))}
               </div>
             ))}
           </div>

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
+import { staggerStyle } from "../lib/stagger";
 
 // The one tile shape for every Dashboard bento card: bold title, a muted
 // subtitle naming the window ("Last 7 days", "42 days", "avg g/day, 7d"),
@@ -14,6 +15,7 @@ export default function DashboardCard({
   value,
   unit,
   onClick,
+  staggerIndex,
   children,
 }: {
   title: string;
@@ -21,18 +23,27 @@ export default function DashboardCard({
   value: ReactNode;
   unit?: string;
   onClick: () => void;
+  staggerIndex?: number;
   children?: ReactNode;
 }) {
+  const style = staggerIndex !== undefined ? staggerStyle(staggerIndex) : undefined;
   return (
     <button
       onClick={onClick}
-      className="aspect-square bg-dashboardCard rounded-2xl p-4 text-left flex flex-col gap-3 transition active:brightness-110"
+      style={style}
+      className="aspect-square bg-dashboardCard rounded-2xl p-4 text-left flex flex-col gap-3 transition active:brightness-110 tile-enter"
     >
       <div>
         <p className="text-sm font-semibold text-ink truncate">{title}</p>
         <p className="text-[11px] text-muted mt-0.5">{subtitle}</p>
       </div>
-      <div className="flex-1 min-h-0 py-1">{children}</div>
+      {/* overflow-hidden, not just min-h-0 — min-h-0 alone lets this flex
+          item shrink below its content's natural height, but without a
+          clip, taller-than-expected content (e.g. a text tile whose
+          line-clamp still wants more vertical room than a square tile has)
+          just paints straight through its own shrunk box and overlaps the
+          divider/footer below rather than being cut off cleanly. */}
+      <div className="flex-1 min-h-0 py-1 overflow-hidden">{children}</div>
       <div className="h-px bg-dashboardDivider -mx-4" />
       <div className="flex items-center justify-between">
         <p className="tabular leading-none">

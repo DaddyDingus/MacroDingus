@@ -35,26 +35,34 @@ export function useLogsHistory(days: number) {
 }
 
 // Full-history distinct logged dates, for the Habits logging-consistency
-// calendar — deliberately not `useLogsHistory`, which is dense/zero-filled
-// and capped at a year; this is sparse and unbounded.
-export function useLoggedDates() {
+// calendar and CalendarJumpSheet's date dots — deliberately not
+// `useLogsHistory`, which is dense/zero-filled and capped at a year; this is
+// sparse and unbounded. `enabled` defaults to true but TodayScreen (an eager,
+// hot-path screen) passes false until its CalendarJumpSheet actually opens,
+// so this doesn't add a request to every Food Log load.
+export function useLoggedDates(enabled = true) {
   return useQuery({
     queryKey: ["logs", "logged-dates"],
     queryFn: () => apiFetch<{ dates: string[] }>("/logs/logged-dates"),
+    enabled,
   });
 }
 
 export function useAddLog(date: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { food: Food; quantityGrams: number }) =>
+    // loggedAt override lets a caller log this under a specific time instead
+    // of "now" — used by the Food Log's per-group "+" button so an item
+    // added there joins that group's own time instead of always landing at
+    // the moment the sheet happened to be opened.
+    mutationFn: (input: { food: Food; quantityGrams: number; loggedAt?: string }) =>
       apiFetch<LogEntry>("/logs", {
         method: "POST",
         body: JSON.stringify({
           date,
           foodId: input.food.id,
           quantityGrams: input.quantityGrams,
-          loggedAt: localIsoNoTz(),
+          loggedAt: input.loggedAt ?? localIsoNoTz(),
         }),
       }),
     onMutate: async (input) => {
@@ -64,7 +72,7 @@ export function useAddLog(date: string) {
       const optimistic: LogEntry = {
         id: tempId,
         quantityGrams: input.quantityGrams,
-        loggedAt: localIsoNoTz(),
+        loggedAt: input.loggedAt ?? localIsoNoTz(),
         food: input.food,
         nutrition: scaleNutrition(input.food, input.quantityGrams),
       };
@@ -121,11 +129,16 @@ export function useUpdateLogQuantity(date: string) {
 export function useBulkAddLog(date: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { entries: { food: Food; quantityGrams: number }[] }) =>
+    // Same loggedAt override as useAddLog above, applied to every entry in
+    // the batch — the Food Log's "+" button stages/commits through this
+    // path (the plate's normal multi-item commit), so it needs the override
+    // too, not just the single-item useAddLog.
+    mutationFn: (input: { entries: { food: Food; quantityGrams: number }[]; loggedAt?: string }) =>
       apiFetch<{ entries: LogEntry[] }>("/logs/bulk", {
         method: "POST",
         body: JSON.stringify({
           date,
+          loggedAt: input.loggedAt,
           entries: input.entries.map((e) => ({
             foodId: e.food.id,
             quantityGrams: e.quantityGrams,
@@ -138,7 +151,7 @@ export function useBulkAddLog(date: string) {
       const optimisticEntries: LogEntry[] = input.entries.map((e) => ({
         id: `temp-${crypto.randomUUID()}`,
         quantityGrams: e.quantityGrams,
-        loggedAt: localIsoNoTz(),
+        loggedAt: input.loggedAt ?? localIsoNoTz(),
         food: e.food,
         nutrition: scaleNutrition(e.food, e.quantityGrams),
       }));
@@ -182,6 +195,40 @@ export function useCopyDay(targetDate: string) {
         body: JSON.stringify({ sourceDate: input.sourceDate, targetDate }),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["logs", targetDate] }),
+  });
+}
+
+// Copies existing entries to a new date/time by recreating them via
+// /logs/bulk (the frontend already has each entry's foodId/quantityGrams in
+// hand from the selection, so there's no need for a separate "copy by id"
+// endpoint) — backs the Food Log's per-entry/per-group "copy to…" actions.
+// Not tied to one fixed target date the way useCopyDay is, since the target
+// varies per tap (now/today/tomorrow/a custom date+time).
+export function useCopyLogEntries() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { date: string; loggedAt: string; items: { foodId: string; quantityGrams: number }[] }) =>
+      apiFetch<{ entries: LogEntry[] }>("/logs/bulk", {
+        method: "POST",
+        body: JSON.stringify({ date: input.date, loggedAt: input.loggedAt, entries: input.items }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "logs" }),
+  });
+}
+
+// Moves existing entries in place (date and/or loggedAt) — backs "move to…"
+// and "modify timestamp" (which omits `date`, leaving the entry on the same
+// day). Invalidates every logs-prefixed query rather than just the source or
+// target date, since either (or both) may not be the currently viewed day.
+export function useMoveLogEntries() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { ids: string[]; date?: string; loggedAt: string }) =>
+      apiFetch<{ entries: LogEntry[] }>("/logs/bulk-move", {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "logs" }),
   });
 }
 

@@ -1,0 +1,1 @@
+ALTER TABLE `foods` ADD `hidden_at` text;

@@ -1,4 +1,5 @@
 import ModeToggle from "./ModeToggle";
+import { useEnergyUnit, kcalToUnit, energyUnitLabel } from "../lib/energyUnit";
 
 export interface DashboardTotals {
   calories: number;
@@ -65,6 +66,7 @@ export default function DashboardTotalsArcCard({
   mode: "total" | "remaining";
   onModeChange: (mode: "total" | "remaining") => void;
 }) {
+  const { unit: energyUnit } = useEnergyUnit();
   const remaining = targets ? targets.calories - totals.calories : null;
   const ringValue = mode === "remaining" && remaining !== null ? remaining : totals.calories;
   const ringPct = targets ? pct(ringValue, targets.calories) : 0;
@@ -90,7 +92,7 @@ export default function DashboardTotalsArcCard({
           <div className="flex flex-col items-center justify-center text-center gap-0.5">
             <span className="text-[11px] tracking-widest uppercase text-muted">{leftLabel}</span>
             <span className="tabular text-xl font-medium tracking-tight">
-              {leftValue === null ? "–" : fmt(Math.abs(leftValue))}
+              {leftValue === null ? "–" : fmt(kcalToUnit(Math.abs(leftValue), energyUnit))}
             </span>
           </div>
 
@@ -112,15 +114,19 @@ export default function DashboardTotalsArcCard({
               />
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5">
-              <span className="tabular text-3xl font-semibold tracking-tight leading-none">{fmt(centerValue)}</span>
+              <span className="tabular text-3xl font-semibold tracking-tight leading-none">
+                {fmt(kcalToUnit(centerValue, energyUnit))}
+              </span>
               <span className="text-[10px] tracking-widest uppercase text-muted leading-none mt-1">{centerLabel}</span>
-              <span className="text-[10px] text-muted leading-none">kcal</span>
+              <span className="text-[10px] text-muted leading-none">{energyUnitLabel(energyUnit)}</span>
             </div>
           </div>
 
           <div className="flex flex-col items-center justify-center text-center gap-0.5">
             <span className="text-[11px] tracking-widest uppercase text-muted">Target</span>
-            <span className="tabular text-xl font-medium tracking-tight">{targets ? fmt(targets.calories) : "–"}</span>
+            <span className="tabular text-xl font-medium tracking-tight">
+              {targets ? fmt(kcalToUnit(targets.calories, energyUnit)) : "–"}
+            </span>
           </div>
         </div>
 

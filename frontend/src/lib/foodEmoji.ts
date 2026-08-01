@@ -34,12 +34,28 @@ const FOOD_EMOJI_MAP: Array<{ keywords: string[]; emoji: string }> = [
   { keywords: ["shake", "smoothie"], emoji: "🥤" },
 ];
 
+// The full curated set offered by IconPickerModal's grid — a superset of
+// FOOD_EMOJI_MAP's own values (keyword-matched emoji should also be pickable
+// by hand) plus a handful of generic ones (plate, shaker, supplement pill…)
+// that no keyword maps to but are common enough to want on custom entries.
+export const CURATED_FOOD_ICONS: string[] = [
+  "🍗", "🥩", "🥓", "🐟", "🍤", "🥚", "🧀", "🥛", "🥣",
+  "🍞", "🥐", "🥯", "🍚", "🍝", "🌮", "🍕", "🍲", "🥗",
+  "🥦", "🥕", "🥔", "🍅", "🧅", "🧄", "🍄", "🫘", "🥑",
+  "🍎", "🍌", "🍊", "🍓", "🍇", "🍉", "🍑", "🥝", "🍍",
+  "🥜", "🍫", "🍪", "🍩", "🍰", "🍮", "🍯", "🧁",
+  "☕", "🍵", "🥤", "🧃", "🍷", "🍺", "💧", "🧊",
+  "🍽️", "🥘", "🧂", "💊",
+];
+
 export type FoodIcon = { kind: "emoji"; value: string } | { kind: "letter"; value: string };
 
-// Emoji match first; when nothing in FOOD_EMOJI_MAP fits (e.g. "Protein
-// Powder"), fall back to the food's first letter as an avatar rather than a
-// generic plate emoji that carries no information about the food at all.
-export function getFoodIcon(name: string): FoodIcon {
+// `icon` is a user-picked override (foods.icon — see schema.ts) that always
+// wins when present; only falls through to the keyword guess below when a
+// food has never had one explicitly chosen (custom foods created before this
+// existed, and every OpenFoodFacts import, which never sets it).
+export function getFoodIcon(name: string, icon?: string | null): FoodIcon {
+  if (icon) return { kind: "emoji", value: icon };
   const lower = name.toLowerCase();
   for (const { keywords, emoji } of FOOD_EMOJI_MAP) {
     if (keywords.some((k) => lower.includes(k))) return { kind: "emoji", value: emoji };

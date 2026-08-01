@@ -28,10 +28,13 @@ const PRODUCT_BARCODE_FORMATS = [
 interface ExtendedCapabilities extends MediaTrackCapabilities {
   focusMode?: string[];
   focusDistance?: { min: number; max: number; step: number };
+  zoom?: { min: number; max: number; step: number };
 }
 type ExtendedConstraints = MediaTrackConstraints & { advanced?: Array<Record<string, unknown>> };
 
 const MAX_USEFUL_FOCUS_METERS = 1; // capability "max" is often a meaningless huge sentinel value
+
+const LENS_STORAGE_KEY = "macrotrack.barcodeCameraDeviceId";
 
 // Maps a tap's on-screen (client) coordinates to a normalized [0,1] point in the
 // video *frame's* own coordinate space, accounting for object-fit: cover cropping
@@ -71,10 +74,12 @@ export default function BarcodeScanner({
   const [focusRange, setFocusRange] = useState<{ min: number; max: number; step: number } | null>(null);
   const [focusDistance, setFocusDistance] = useState(0.1);
   const [tapMarker, setTapMarker] = useState<{ x: number; y: number } | null>(null);
+  const [deviceId, setDeviceId] = useState<string | null>(() => localStorage.getItem(LENS_STORAGE_KEY));
+  const [lensOptions, setLensOptions] = useState<MediaDeviceInfo[]>([]);
 
-  // Deps intentionally empty: this starts the camera exactly once on mount and
-  // tears it down on unmount. Reading onScan through a ref avoids restarting
-  // the camera stream every time the parent re-renders with a new callback.
+  // Deps: [deviceId]. Re-runs (tearing down and restarting the stream) when the
+  // user cycles lenses via handleSwitchLens. Reading onScan through a ref avoids
+  // restarting the camera stream every time the parent re-renders with a new callback.
   useEffect(() => {
     const hints = new Map();
     hints.set(DecodeHintType.POSSIBLE_FORMATS, PRODUCT_BARCODE_FORMATS);
@@ -84,7 +89,15 @@ export default function BarcodeScanner({
     let cancelled = false;
     let stopped = false;
 
-    const videoConstraints: ExtendedConstraints = { facingMode: "environment" };
+    setFocusRange(null);
+
+    // A saved deviceId (from a manual lens switch) pins the exact physical camera.
+    // Otherwise leave lens choice to the browser/OS — on multi-lens phones this
+    // frequently lands on the ultra-wide, which the zoom heuristic below tries to
+    // correct for on this first, undirected attempt only.
+    const videoConstraints: ExtendedConstraints = deviceId
+      ? { deviceId: { exact: deviceId } }
+      : { facingMode: "environment" };
 
     reader
       .decodeFromConstraints({ video: videoConstraints }, videoRef.current!, (result) => {
@@ -94,7 +107,7 @@ export default function BarcodeScanner({
           onScanRef.current(result.getText());
         }
       })
-      .then((c) => {
+      .then(async (c) => {
         controls = c;
         if (cancelled) {
           controls.stop();
@@ -110,12 +123,13 @@ export default function BarcodeScanner({
         try {
           caps = track.getCapabilities() as ExtendedCapabilities;
         } catch {
-          return;
+          caps = {} as ExtendedCapabilities;
         }
 
+        const advanced: Array<Record<string, unknown>> = [];
+
         if (caps.focusMode?.includes("continuous")) {
-          const constraints: ExtendedConstraints = { advanced: [{ focusMode: "continuous" }] };
-          track.applyConstraints(constraints as MediaTrackConstraints).catch(() => {});
+          advanced.push({ focusMode: "continuous" });
         } else if (caps.focusMode?.includes("manual") && caps.focusDistance) {
           const range = {
             min: caps.focusDistance.min,
@@ -125,10 +139,31 @@ export default function BarcodeScanner({
           const initial = Math.min(Math.max(0.1, range.min), range.max);
           setFocusRange(range);
           setFocusDistance(initial);
-          const constraints: ExtendedConstraints = {
-            advanced: [{ focusMode: "manual", focusDistance: initial }],
-          };
-          track.applyConstraints(constraints as MediaTrackConstraints).catch(() => {});
+          advanced.push({ focusMode: "manual", focusDistance: initial });
+        }
+
+        // Samsung's fused multi-camera "environment" stream reports a zoom
+        // capability starting below 1x when the ultra-wide is in the blend
+        // (only meaningful pre-fix, i.e. no deviceId pin yet). Nudging zoom up
+        // to 1x tends to hand the stream to the main lens instead, which has
+        // real autofocus for close-range barcode reading.
+        if (!deviceId && caps.zoom && caps.zoom.min < 1) {
+          const zoomTarget = Math.min(Math.max(1, caps.zoom.min), caps.zoom.max);
+          advanced.push({ zoom: zoomTarget });
+        }
+
+        if (advanced.length > 0) {
+          track.applyConstraints({ advanced } as MediaTrackConstraints).catch(() => {});
+        }
+
+        if (cancelled) return;
+        try {
+          const all = await navigator.mediaDevices.enumerateDevices();
+          const videoInputs = all.filter((d) => d.kind === "videoinput");
+          const backish = videoInputs.filter((d) => /back|rear/i.test(d.label));
+          setLensOptions(backish.length > 1 ? backish : videoInputs);
+        } catch {
+          // enumerateDevices failing just means no manual switch button — non-fatal.
         }
       })
       .catch(() => {
@@ -139,7 +174,16 @@ export default function BarcodeScanner({
       cancelled = true;
       controls?.stop();
     };
-  }, []);
+  }, [deviceId]);
+
+  function handleSwitchLens() {
+    if (lensOptions.length < 2) return;
+    const currentId = trackRef.current?.getSettings().deviceId ?? deviceId;
+    const idx = lensOptions.findIndex((d) => d.deviceId === currentId);
+    const next = lensOptions[(idx + 1) % lensOptions.length];
+    localStorage.setItem(LENS_STORAGE_KEY, next.deviceId);
+    setDeviceId(next.deviceId);
+  }
 
   function handleFocusChange(value: number) {
     setFocusDistance(value);
@@ -175,9 +219,16 @@ export default function BarcodeScanner({
     <div className="fixed inset-0 z-[60] bg-black flex flex-col">
       <div className="flex items-center justify-between px-4 py-4 shrink-0">
         <span className="text-sm font-medium text-ink">Scan barcode</span>
-        <button onClick={onClose} className="text-muted text-xl leading-none px-1">
-          ×
-        </button>
+        <div className="flex items-center gap-4">
+          {lensOptions.length > 1 && (
+            <button onClick={handleSwitchLens} className="text-muted text-sm leading-none px-1">
+              Switch lens
+            </button>
+          )}
+          <button onClick={onClose} className="text-muted text-xl leading-none px-1">
+            ×
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 relative overflow-hidden" onClick={handleTap}>

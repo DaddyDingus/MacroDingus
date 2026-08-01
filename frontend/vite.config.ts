@@ -12,8 +12,12 @@ export default defineConfig({
         name: "macrotrack",
         short_name: "macrotrack",
         description: "Personal nutrition and coaching tracker",
-        theme_color: "#14161A",
-        background_color: "#14161A",
+        // Static — the manifest can't follow the in-app theme picker, so
+        // this matches "black" (the default theme in lib/theme.tsx). Only
+        // affects the OS splash screen/task switcher before the app itself
+        // has painted with the user's actual chosen theme.
+        theme_color: "#000000",
+        background_color: "#000000",
         display: "standalone",
         start_url: "/",
         icons: [
@@ -38,7 +42,7 @@ export default defineConfig({
   ],
   server: {
     proxy: {
-      "/api": { target: "http://localhost:3000", changeOrigin: true },
+      "/api": { target: "http://localhost:3099", changeOrigin: true },
     },
   },
 });

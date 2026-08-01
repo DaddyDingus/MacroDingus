@@ -5,19 +5,29 @@ export interface WeighIn {
   id: string;
   date: string;
   weightKg: number;
+  bodyFatPercent: number | null;
   createdAt: string;
 }
 
 export interface TrendPoint {
   date: string;
-  weightKg: number;
+  // null on a day with no real weigh-in — the trend line is dense (one row
+  // per calendar day, via the backend's computeDenseTrend), but the raw
+  // scale reading only ever exists on days you actually weighed in.
+  weightKg: number | null;
   trendKg: number;
 }
 
-export function useWeights(days: number) {
+// `enabled` defaults to true; LogWeightInline passes false until its own
+// CalendarJumpSheet (which wants the full history's dates for its dots)
+// actually opens, since that component mounts wherever "log today's
+// weight" appears — including the quick-actions sheet — and shouldn't fire
+// a 3650-day fetch just for showing up.
+export function useWeights(days: number, enabled = true) {
   return useQuery({
     queryKey: ["weights", days],
     queryFn: () => apiFetch<WeighIn[]>(`/weights?days=${days}`),
+    enabled,
   });
 }
 
@@ -38,7 +48,7 @@ export function useWeightTrend(days: number) {
 export function useLogWeight() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { date: string; weightKg: number }) =>
+    mutationFn: (input: { date: string; weightKg: number; bodyFatPercent?: number | null }) =>
       apiFetch<WeighIn>("/weights", { method: "POST", body: JSON.stringify(input) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["weights"] });

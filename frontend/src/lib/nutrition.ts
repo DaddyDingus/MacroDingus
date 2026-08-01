@@ -31,6 +31,23 @@ export function sumNutrition(list: Nutrition[]): Nutrition {
   );
 }
 
+// Un-counts an entry's own nutrition from a running total — used when editing
+// an already-logged entry through FoodDetailScreen, whose "Impact on
+// Targets" rings need the budget as it stood *before* this entry, not the
+// day total that already includes its current (about-to-change) quantity.
+export function subtractNutrition(base: Nutrition, minus: Nutrition): Nutrition {
+  return {
+    calories: Math.max(0, round(base.calories - minus.calories)),
+    protein: Math.max(0, round(base.protein - minus.protein)),
+    carbs: Math.max(0, round(base.carbs - minus.carbs)),
+    fat: Math.max(0, round(base.fat - minus.fat)),
+    fiber: Math.max(0, round(base.fiber - minus.fiber)),
+    sugar: Math.max(0, round(base.sugar - minus.sugar)),
+    saturatedFat: Math.max(0, round(base.saturatedFat - minus.saturatedFat)),
+    sodiumMg: Math.max(0, round(base.sodiumMg - minus.sodiumMg)),
+  };
+}
+
 export function scaleNutrition(food: Food, quantityGrams: number): Nutrition {
   const factor = quantityGrams / 100;
   return {

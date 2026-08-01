@@ -1,0 +1,1 @@
+ALTER TABLE `checkins` ADD `used_adaptive_tdee` integer;

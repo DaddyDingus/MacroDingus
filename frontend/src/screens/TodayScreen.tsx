@@ -1,16 +1,20 @@
 import { useState } from "react";
 import { Copy } from "lucide-react";
 import type { LogEntry } from "../api/types";
-import { useDayLog, useDeleteLog } from "../api/logs";
+import { useDayLog, useDeleteLog, useMoveLogEntries, useLoggedDates } from "../api/logs";
 import { useAuthStatus } from "../api/auth";
-import { useCheckinHistory } from "../api/coach";
+import { usePrograms } from "../api/programs";
 import { addDays, formatDayLabel, localDateString } from "../lib/date";
-import { activeCheckinForDate } from "../lib/checkins";
+import { targetsForDate } from "../lib/programTargets";
 import { groupLogEntriesByTime } from "../lib/logGrouping";
 import MacroSummaryBar from "../components/MacroSummaryBar";
 import TimeBlockGroup from "../components/TimeBlockGroup";
 import AddFoodSheet from "../components/AddFoodSheet";
 import CopyDaySheet from "../components/CopyDaySheet";
+import CalendarJumpSheet from "../components/CalendarJumpSheet";
+import LogActionBar, { type LogSelection } from "../components/LogActionBar";
+import ConfirmDeleteSheet from "../components/ConfirmDeleteSheet";
+import { staggerStyle } from "../lib/stagger";
 
 const EMPTY_TOTALS = { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0, saturatedFat: 0, sodiumMg: 0 };
 
@@ -27,43 +31,78 @@ export default function TodayScreen() {
   const [date, setDate] = useState(localDateString());
   const dayLog = useDayLog(date);
   const deleteLog = useDeleteLog(date);
+  const moveEntries = useMoveLogEntries();
   const authStatus = useAuthStatus();
-  const checkinHistory = useCheckinHistory();
+  const programs = usePrograms();
 
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<LogEntry | null>(null);
+  // Set when a group's own "+" button opens the sheet — forces whatever gets
+  // logged there onto that group's exact loggedAt instead of "now", so it
+  // joins/extends that same time-group. null for the normal "+ Log food"
+  // button and for editing, both of which want the usual "now" default.
+  const [quickAddLoggedAt, setQuickAddLoggedAt] = useState<string | null>(null);
   const [copyOpen, setCopyOpen] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [pendingDeleteEntry, setPendingDeleteEntry] = useState<LogEntry | null>(null);
+  const loggedDates = useLoggedDates(calendarOpen);
+  const [selection, setSelection] = useState<LogSelection | null>(null);
 
   function openAdd() {
     setEditingEntry(null);
+    setQuickAddLoggedAt(null);
     setSheetOpen(true);
   }
   function openEdit(entry: LogEntry) {
     setEditingEntry(entry);
+    setQuickAddLoggedAt(null);
+    setSheetOpen(true);
+  }
+  function openQuickAddToGroup(groupEntries: LogEntry[]) {
+    setEditingEntry(null);
+    setQuickAddLoggedAt(groupEntries[0].loggedAt);
     setSheetOpen(true);
   }
   function closeSheet() {
     setSheetOpen(false);
     setEditingEntry(null);
+    setQuickAddLoggedAt(null);
+  }
+
+  // Tapping a food row selects it (showing LogActionBar's Edit/Copy/Move/
+  // Modify-timestamp shortcuts) rather than jumping straight to editing —
+  // tapping the same entry again deselects. Tapping a group's shared
+  // timestamp selects the whole group instead (Copy/Move/Modify
+  // timestamp/Create recipe, no Edit — see LogActionBar).
+  function selectEntry(entry: LogEntry) {
+    setSelection((prev) => (prev?.kind === "entry" && prev.entry.id === entry.id ? null : { kind: "entry", entry }));
+  }
+  function selectGroup(groupEntries: LogEntry[]) {
+    setSelection((prev) =>
+      prev?.kind === "group" && prev.entries[0]?.id === groupEntries[0]?.id ? null : { kind: "group", entries: groupEntries }
+    );
+  }
+
+  // Tapping another group's arrow while a group is selected — moves the
+  // selected group's own entries onto the target group's shared timestamp,
+  // merging them into one group.
+  function mergeSelectedGroupInto(targetGroupEntries: LogEntry[]) {
+    if (selection?.kind !== "group") return;
+    moveEntries.mutate({ ids: selection.entries.map((e) => e.id), loggedAt: targetGroupEntries[0].loggedAt });
+    setSelection(null);
   }
 
   const entries = dayLog.data?.entries ?? [];
   const totals = dayLog.data?.totals ?? EMPTY_TOTALS;
 
-  // Whichever check-in was active on the viewed date, not just today's latest
+  // Whichever program was active on the viewed date, not just today's latest
   // — same lookup NutrientDetailScreen/EnergyBalanceChart use, so a past
   // day's macro bars fill against the target that was actually in effect
   // then, rather than going target-less (and therefore permanently 0% full)
   // for every day except today.
-  const checkinsAsc = [...(checkinHistory.data ?? [])].sort((a, b) => a.date.localeCompare(b.date));
-  const activeCheckin = activeCheckinForDate(checkinsAsc, date);
-  const targets = activeCheckin
-    ? {
-        calories: activeCheckin.targetCalories,
-        proteinG: activeCheckin.targetProteinG,
-        fatG: activeCheckin.targetFatG,
-        carbsG: activeCheckin.targetCarbsG,
-      }
+  const dayTargets = targetsForDate(programs.data ?? [], date);
+  const targets = dayTargets
+    ? { calories: dayTargets.calories, proteinG: dayTargets.proteinG, fatG: dayTargets.fatG, carbsG: dayTargets.carbsG }
     : null;
 
   const groups = groupLogEntriesByTime(entries);
@@ -80,12 +119,12 @@ export default function TodayScreen() {
             >
               ‹
             </button>
-            <span className="flex flex-col items-center leading-tight">
+            <button onClick={() => setCalendarOpen(true)} className="flex flex-col items-center leading-tight active:opacity-70">
               {authStatus.data?.user?.name && (
                 <span className="text-[10px] tracking-widest uppercase text-muted">{authStatus.data.user.name}</span>
               )}
               <span className="text-sm font-medium text-white">{formatDayLabel(date)}</span>
-            </span>
+            </button>
             <div className="justify-self-end flex items-center gap-1">
               <button
                 onClick={() => setDate((d) => addDays(d, 1))}
@@ -121,13 +160,20 @@ export default function TodayScreen() {
                 out (right: 3.5px) so its own center lands on that same 4px point. */}
             <div className="absolute top-2 bottom-2 w-px bg-dashboardDivider" style={{ right: "3.5px" }} />
             <div className="space-y-6">
-              {groups.map((group) => (
-                <TimeBlockGroup
-                  key={group.id}
-                  entries={group.entries}
-                  onEdit={openEdit}
-                  onDelete={(entry) => deleteLog.mutate(entry.id)}
-                />
+              {groups.map((group, i) => (
+                <div key={group.id} className="tile-enter" style={staggerStyle(i, 60, 5)}>
+                  <TimeBlockGroup
+                    entries={group.entries}
+                    selectedEntryId={selection?.kind === "entry" ? selection.entry.id : null}
+                    groupSelected={selection?.kind === "group" && selection.entries[0]?.id === group.entries[0]?.id}
+                    anyGroupSelected={selection?.kind === "group"}
+                    onSelectEntry={selectEntry}
+                    onSelectGroup={selectGroup}
+                    onQuickAdd={openQuickAddToGroup}
+                    onMergeInto={mergeSelectedGroupInto}
+                    onDelete={(entry) => setPendingDeleteEntry(entry)}
+                  />
+                </div>
               ))}
             </div>
           </div>
@@ -145,12 +191,42 @@ export default function TodayScreen() {
         open={sheetOpen}
         date={date}
         editingEntry={editingEntry}
+        forcedLoggedAt={quickAddLoggedAt ?? undefined}
         onClose={closeSheet}
         totals={totals}
         targets={targets}
       />
 
       {copyOpen && <CopyDaySheet targetDate={date} onClose={() => setCopyOpen(false)} />}
+
+      {calendarOpen && (
+        <CalendarJumpSheet
+          selectedDate={date}
+          markedDates={loggedDates.data?.dates ?? []}
+          onSelect={setDate}
+          onClose={() => setCalendarOpen(false)}
+        />
+      )}
+
+      {selection && (
+        <LogActionBar
+          selection={selection}
+          sourceDate={date}
+          onClose={() => setSelection(null)}
+          onEdit={openEdit}
+        />
+      )}
+
+      {pendingDeleteEntry && (
+        <ConfirmDeleteSheet
+          title="Delete Food"
+          message={`Remove ${pendingDeleteEntry.food.name} from this day's log? This can't be undone.`}
+          confirmLabel="Delete Food"
+          onConfirm={() => deleteLog.mutate(pendingDeleteEntry.id, { onSuccess: () => setPendingDeleteEntry(null) })}
+          onClose={() => setPendingDeleteEntry(null)}
+          isPending={deleteLog.isPending}
+        />
+      )}
     </div>
   );
 }

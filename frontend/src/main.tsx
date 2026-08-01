@@ -7,6 +7,18 @@ import { get, set, del } from "idb-keyval";
 import App from "./App";
 import "./index.css";
 
+// Without this, the browser's own native scroll restoration on back/forward
+// navigation runs *in addition to* (and racing against) the app's own
+// explicit window.scrollTo calls (see App.tsx's AppRoutes and
+// lib/dashboardScroll.ts) — whichever one wins depends on paint/effect
+// timing that varies by device and load, which is exactly what read as
+// "sometimes the scroll position is right, sometimes it isn't." Setting this
+// once, before the app ever navigates, hands scroll position entirely to
+// our own code.
+if ("scrollRestoration" in history) {
+  history.scrollRestoration = "manual";
+}
+
 const persister = createAsyncStoragePersister({
   storage: {
     getItem: async (key) => (await get(key)) ?? null,

@@ -8,6 +8,9 @@ import { scaleNutrition, sumNutrition } from "../engine/nutrition.js";
 
 const recipeInput = z.object({
   name: z.string().min(1),
+  // A user-picked emoji override for the recipe's materialized food row —
+  // same column/convention as a plain custom food's `icon` (see foods.ts).
+  icon: z.string().nullable().optional(),
   servings: z.number().positive(),
   // Defaults to the ingredient weight sum — override when cooking changes the
   // total weight (water loss/gain) without changing total calories, so
@@ -99,7 +102,7 @@ export function registerRecipeRoutes(app: FastifyInstance) {
     const parsed = recipeInput.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
 
-    const { name, servings, ingredients } = parsed.data;
+    const { name, icon, servings, ingredients } = parsed.data;
     const ingredientSumGrams = ingredients.reduce((sum, i) => sum + i.quantityGrams, 0);
     const totalWeightGrams = parsed.data.totalWeightGrams ?? ingredientSumGrams;
 
@@ -111,6 +114,7 @@ export function registerRecipeRoutes(app: FastifyInstance) {
     await db.insert(foods).values({
       id: foodId,
       name,
+      icon,
       source: "recipe",
       servingSizeGrams: totalWeightGrams / servings,
       servingName: "1 serving",
@@ -158,7 +162,7 @@ export function registerRecipeRoutes(app: FastifyInstance) {
       .where(and(eq(recipes.id, id), eq(recipes.userId, req.userId!)));
     if (!recipe) return reply.code(404).send({ error: "not found" });
 
-    const { name, servings, ingredients } = parsed.data;
+    const { name, icon, servings, ingredients } = parsed.data;
     const ingredientSumGrams = ingredients.reduce((sum, i) => sum + i.quantityGrams, 0);
     const totalWeightGrams = parsed.data.totalWeightGrams ?? ingredientSumGrams;
 
@@ -169,6 +173,7 @@ export function registerRecipeRoutes(app: FastifyInstance) {
       .update(foods)
       .set({
         name,
+        ...(icon !== undefined ? { icon } : {}),
         servingSizeGrams: totalWeightGrams / servings,
         ...nutrition,
       })
@@ -206,7 +211,12 @@ export function registerRecipeRoutes(app: FastifyInstance) {
     try {
       await db.delete(foods).where(eq(foods.id, recipe.foodId));
     } catch {
-      // still referenced by a log entry — keep the food, just drop the recipe
+      // Still referenced by a log entry — can't hard-delete without breaking
+      // that history, so hide it instead of leaving it silently searchable:
+      // gone from Library/search/Favorites, but existing logs and copy-day
+      // still resolve it normally (see foods route's DELETE for the same
+      // pattern on plain custom foods).
+      await db.update(foods).set({ hiddenAt: new Date().toISOString() }).where(eq(foods.id, recipe.foodId));
     }
 
     reply.code(204);

@@ -1,22 +1,55 @@
 import { useEffect, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
+import { createPortal } from "react-dom";
 import { useVisualViewportMetrics } from "../lib/useVisualViewportMetrics";
+import { useBackDismiss } from "../lib/useBackDismiss";
 
 // Swipe-down-to-dismiss past this distance, or past this velocity even if
 // short — the standard "flick it away" escape hatch native sheets have.
 const DISMISS_DISTANCE_PX = 100;
 const DISMISS_VELOCITY_PX_MS = 0.5;
+// Matches the transform transition's own duration below — the real onClose
+// (which unmounts this component from the caller's side) fires only after
+// this elapses, so the slide-down actually gets to play instead of being cut
+// off by an instant unmount.
+const CLOSE_ANIMATION_MS = 320;
 
-// The one bottom-sheet shell for this app: backdrop, rounded black panel,
-// grabber notch, and swipe-to-dismiss all live here so every sheet gets the
-// same gesture for free instead of each one hand-rolling its own
+// How far a pointer has to move before a press over the grabber (or over any
+// extra surface a caller spreads these handlers onto — a header row, an icon
+// grid) commits to being a drag. Below this it's left alone as a plain tap —
+// same threshold/reasoning as DraggableSnapSheet.tsx's own commit gate,
+// which is what lets a real button (Close ×, a shortcut icon) share space
+// with the drag surface without losing its click.
+const DRAG_COMMIT_THRESHOLD_PX = 8;
+
+export interface SheetDragHandlers {
+  onPointerDown: (e: ReactPointerEvent<HTMLDivElement>) => void;
+  onPointerMove: (e: ReactPointerEvent<HTMLDivElement>) => void;
+  onPointerUp: (e: ReactPointerEvent<HTMLDivElement>) => void;
+  onPointerCancel: (e: ReactPointerEvent<HTMLDivElement>) => void;
+}
+
+// The one bottom-sheet shell for this app: backdrop, rounded panel, grabber
+// notch, and swipe-to-dismiss all live here so every sheet gets the same
+// gesture for free instead of each one hand-rolling its own
 // fixed/backdrop/panel boilerplate (which is what every sheet in this app
 // did before this component existed). New sheets should build on this
 // rather than copying the old three-div pattern.
 //
-// The drag gesture is only wired to the grabber notch, not the whole panel —
-// attaching it to the full sheet would fight with scrollable content inside
-// (e.g. a search results list), so the notch is the one deliberate
-// drag-to-dismiss target, same as most native sheets.
+// The grabber notch used to be the sheet's whole visible/draggable top — a
+// full h-11 (44px) empty strip just to give the small pill a comfortably
+// large hit box. That reads as a big blank "forehead" (and, symmetrically, a
+// "chin" of dead space below the pill before the header starts) purely for
+// touch-target reasons, not visual ones. `children` is now a render prop —
+// `(dragHandlers) => ReactNode` — so a caller can spread the same gesture
+// onto its own header row (or any other prominent, mostly-non-scrolling
+// surface, e.g. QuickActionsSheet's pinned-shortcut icon grid) in addition
+// to the grabber. That's what lets the grabber itself shrink down to a slim,
+// mostly-visual notch without losing an easy-to-hit drag target — every
+// sheet's already-present header picks up the slack instead. Same
+// commit-threshold trick DraggableSnapSheet/AddFoodSheet already use for
+// their tab row: a plain tap on a real button sharing the surface still
+// fires normally; only sustained movement past the threshold commits to a
+// drag.
 export default function BottomSheet({
   onClose,
   children,
@@ -25,15 +58,49 @@ export default function BottomSheet({
   showGrabber = true,
 }: {
   onClose: () => void;
-  children: ReactNode;
+  children: ReactNode | ((dragHandlers: SheetDragHandlers, close: () => void) => ReactNode);
   panelClassName?: string;
   backdropClassName?: string;
   showGrabber?: boolean;
 }) {
   const [dragY, setDragY] = useState(0);
   const [dragging, setDragging] = useState(false);
-  const dragStart = useRef<{ y: number; time: number } | null>(null);
+  const [mounted, setMounted] = useState(false);
+  // Distinct from `mounted` (entrance) — set once anything decides to
+  // dismiss, and drives an animated slide-down before the real `onClose`
+  // (which unmounts this component from the caller's side) ever fires. Every
+  // dismissal path in this file, and every consumer's own Cancel/Done/
+  // pick-an-option button, needs to go through `close()` below rather than
+  // calling `onClose` straight away, or it skips this animation entirely —
+  // that gap (every close was instant, unconditionally, everywhere in the
+  // app) is exactly what this state exists to fix.
+  const [closing, setClosing] = useState(false);
+  const dragStart = useRef<{ y: number; time: number; captured: boolean } | null>(null);
   const { height: viewportHeight, offsetTop: viewportOffsetTop } = useVisualViewportMetrics();
+
+  function close() {
+    if (closing) return; // already animating out — ignore a repeat trigger
+    setClosing(true);
+    setTimeout(onClose, CLOSE_ANIMATION_MS);
+  }
+
+  // Every consumer of this shell only ever mounts it while conceptually
+  // "open" (conditionally rendered by the caller, e.g. `{open && <...Sheet
+  // .../>}`), so `active` is unconditionally true for as long as this
+  // component exists — back closes the sheet instead of falling through to
+  // whatever's underneath. Routed through `close()`, not `onClose` directly,
+  // so a back-button dismissal animates the same as every other kind.
+  useBackDismiss(true, close);
+
+  // Entrance animation: mount at translateY(100%), then on the next paint
+  // flip `mounted` so the panel slides up. rAF ensures the browser has
+  // painted the initial off-screen position before the transition starts —
+  // without it, React may batch the state update into the same paint as the
+  // mount, making the transition invisible.
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
 
   // The page behind a sheet must not scroll while it's open — without this,
   // dragging on the dimmed backdrop scrolls whatever screen is underneath.
@@ -45,32 +112,65 @@ export default function BottomSheet({
     };
   }, []);
 
+  // Doesn't capture or commit to anything yet — just remembers where/when
+  // the press started, same two-phase recognition DraggableSnapSheet uses so
+  // a tap on a real button sharing this surface (Close ×, a shortcut icon)
+  // still reaches its own onClick untouched.
   function handlePointerDown(e: ReactPointerEvent<HTMLDivElement>) {
-    dragStart.current = { y: e.clientY, time: Date.now() };
-    setDragging(true);
-    e.currentTarget.setPointerCapture(e.pointerId);
+    if (closing) return; // already animating away — don't restart a drag mid-close
+    dragStart.current = { y: e.clientY, time: Date.now(), captured: false };
   }
 
   function handlePointerMove(e: ReactPointerEvent<HTMLDivElement>) {
     if (!dragStart.current) return;
-    setDragY(Math.max(0, e.clientY - dragStart.current.y));
+    const distance = e.clientY - dragStart.current.y;
+    if (!dragStart.current.captured && Math.abs(distance) > DRAG_COMMIT_THRESHOLD_PX) {
+      dragStart.current.captured = true;
+      e.currentTarget.setPointerCapture(e.pointerId);
+      setDragging(true);
+    }
+    if (dragStart.current.captured) setDragY(Math.max(0, distance));
   }
 
   function endDrag(e: ReactPointerEvent<HTMLDivElement>) {
     if (!dragStart.current) return;
-    const distance = e.clientY - dragStart.current.y;
-    const elapsed = Date.now() - dragStart.current.time;
+    const { y, time, captured } = dragStart.current;
+    const distance = e.clientY - y;
+    const elapsed = Date.now() - time;
     const velocity = distance / Math.max(elapsed, 1);
     dragStart.current = null;
     setDragging(false);
+    // Never crossed the commit threshold — a plain tap — nothing was
+    // captured or prevented, so its own onClick already fired normally.
+    if (!captured) return;
     if (distance > DISMISS_DISTANCE_PX || velocity > DISMISS_VELOCITY_PX_MS) {
-      onClose();
+      close();
     } else {
       setDragY(0);
     }
   }
 
-  return (
+  const dragHandlers: SheetDragHandlers = {
+    onPointerDown: handlePointerDown,
+    onPointerMove: handlePointerMove,
+    onPointerUp: endDrag,
+    onPointerCancel: endDrag,
+  };
+
+  // Portaled straight to <body> rather than rendered in place. This sheet's
+  // own panel below always carries an active `transform` (translateY, even
+  // at 0px while at rest) — the same "transform on an ancestor permanently
+  // creates a containing block for position:fixed descendants" gotcha noted
+  // on the page-transition wrapper elsewhere in this app. Without the
+  // portal, a sheet opened from *inside* another sheet (e.g. LogWeightInline's
+  // CalendarJumpSheet, when LogWeightInline is itself rendered inside
+  // QuickActionFlow's sheet) would have its own "fixed inset-0" scoped to
+  // that ancestor panel's box instead of the real viewport — clipped by the
+  // ancestor's bounds/overflow instead of appearing full-screen. Portaling
+  // to body sidesteps the containing-block chain entirely, regardless of how
+  // deeply nested the call site is; React's synthetic event bubbling and
+  // context still work normally across the portal boundary.
+  return createPortal(
     // Positioned/sized against the tracked visual viewport, not a plain
     // `fixed inset-0` — iOS Safari pans the visual viewport independently of
     // the layout viewport once the on-screen keyboard opens, which silently
@@ -81,25 +181,36 @@ export default function BottomSheet({
     // panelClassName heights below are expressed as `%` of *this* wrapper
     // rather than viewport units so they inherit that same correctness.
     <div className="fixed inset-x-0 z-50" style={{ top: viewportOffsetTop, height: viewportHeight }}>
-      <div className={`absolute inset-0 ${backdropClassName}`} onClick={onClose} />
+      <div
+        className={`absolute inset-0 ${backdropClassName}`}
+        onClick={close}
+        style={{
+          opacity: mounted && !closing ? 1 : 0,
+          transition: `opacity ${CLOSE_ANIMATION_MS}ms ease-out`,
+        }}
+      />
       <div
         className={`absolute inset-x-0 bottom-0 flex flex-col pointer-events-auto ${panelClassName}`}
-        style={{ transform: `translateY(${dragY}px)`, transition: dragging ? "none" : "transform 200ms ease-out" }}
+        style={{
+          transform: !mounted ? "translateY(100%)" : closing ? "translateY(100%)" : `translateY(${dragY}px)`,
+          transition: !mounted || dragging ? "none" : `transform ${CLOSE_ANIMATION_MS}ms cubic-bezier(0.2, 0, 0, 1)`,
+        }}
       >
         {showGrabber && (
+          // Slim, mostly-visual notch now — the header a caller renders just
+          // below shares this same drag gesture (spread via the render-prop
+          // below) and provides the real, generously-sized touch target.
           <div
+            {...dragHandlers}
             data-bottom-sheet-handle
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={endDrag}
-            onPointerCancel={endDrag}
-            className="flex justify-center pt-2 pb-1 shrink-0 touch-none cursor-grab active:cursor-grabbing"
+            className="flex items-center justify-center h-6 shrink-0 touch-none cursor-grab active:cursor-grabbing"
           >
-            <span className="h-1 w-10 rounded-full bg-white/20" />
+            <span className="h-1 w-9 rounded-full bg-white/20" />
           </div>
         )}
-        {children}
+        {typeof children === "function" ? children(dragHandlers, close) : children}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

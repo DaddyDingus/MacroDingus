@@ -9,10 +9,57 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - DATA_DIR=/app/data
+      # Powers the "Scan nutrition label" camera flow in Create Custom Food
+      # (backend/src/engine/labelScan.ts) — a vision call to Claude Haiku 4.5
+      # that reads a label photo and prefills the form. Optional: if this is
+      # blank, POST /api/foods/scan-label just returns 503 and the rest of
+      # the app is unaffected. Get a key from console.anthropic.com and set
+      # it in stacks/macrotrack/.env (gitignored) as ANTHROPIC_API_KEY=...
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       # Accounts are self-service (login screen has a "Create an account" link) —
       # nothing to configure here. Passwords are bcrypt-hashed in the database,
       # so a forgotten one can't be looked up; reset it from the host with:
       #   docker exec -it macrotrack node dist/scripts/reset-password.js "Name" "new-password"
+    networks:
+      - proxy
+
+  # Gives macrotrack its own Tailscale node identity/hostname
+  # (macrotrack.tail984e80.ts.net) distinct from daddysserver's — needed
+  # because Chrome/Android was treating the shared-hostname :6200 route as
+  # belonging to the already-installed dingus-dashboard PWA (same host,
+  # different port), so it never offered to install macrotrack as its own
+  # app. Caddy can't do this alone: it mints certs off the host's single
+  # tailscaled socket (see stacks/caddy/compose.yaml), so a second identity
+  # needs its own tailscaled. `tailscale serve` terminates HTTPS directly
+  # (cert auto-provisioned the same way daddysserver's is) and reverse-proxies
+  # straight to the app container over the shared `proxy` network — no Caddy
+  # involved in this path. The existing :6200 Caddy route is untouched and
+  # still works.
+  macrotrack-tailscale:
+    image: tailscale/tailscale:stable
+    container_name: macrotrack-tailscale
+    restart: unless-stopped
+    # No `hostname:` here — that's a Docker container hostname, registered
+    # in Docker's embedded DNS on the `proxy` network same as any service
+    # name. Setting it to "macrotrack" collided with the actual macrotrack
+    # app service's own DNS entry, so this container resolved "macrotrack"
+    # to itself instead of the app (serve proxy got a 502 dialing its own
+    # IP). TS_HOSTNAME below is the only thing that needs to say "macrotrack"
+    # — that's the Tailscale *node* name, unrelated to Docker DNS.
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_HOSTNAME=macrotrack
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_SERVE_CONFIG=/config/serve.json
+      - TS_USERSPACE=false
+    volumes:
+      - ./tailscale-state:/var/lib/tailscale
+      - ./tailscale-serve.json:/config/serve.json:ro
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun:/dev/net/tun
     networks:
       - proxy
 

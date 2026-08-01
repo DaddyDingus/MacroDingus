@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
+import { useSyncedSetting } from "./useSyncedSetting";
 
 export type WeightUnit = "kg" | "lb";
 
@@ -18,10 +19,12 @@ export function WeightUnitProvider({ children }: { children: ReactNode }) {
     return stored === "lb" ? "lb" : "kg";
   });
 
-  function setUnit(u: WeightUnit) {
+  function applyUnit(u: WeightUnit) {
     setUnitState(u);
     localStorage.setItem(STORAGE_KEY, u);
   }
+
+  const setUnit = useSyncedSetting("weightUnit", unit, applyUnit, (v) => (v === "kg" || v === "lb" ? v : null));
 
   return <WeightUnitContext.Provider value={{ unit, setUnit }}>{children}</WeightUnitContext.Provider>;
 }

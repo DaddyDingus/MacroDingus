@@ -21,9 +21,11 @@ export default function AddTilesSheet({
 
   return (
     <BottomSheet onClose={onClose}>
-      <div className="px-4 pt-1 pb-2 flex items-center justify-between shrink-0">
+      {(dragHandlers, close) => (
+        <>
+      <div {...dragHandlers} className="px-4 pt-1 pb-2 flex items-center justify-between shrink-0 touch-none">
         <span className="text-sm font-medium text-white">Add to {categoryLabel}</span>
-        <button onClick={onClose} className="text-xs font-bold text-white">
+        <button onClick={close} className="text-xs font-bold text-white">
           Done
         </button>
       </div>
@@ -51,6 +53,8 @@ export default function AddTilesSheet({
           })}
         </div>
       </div>
+        </>
+      )}
     </BottomSheet>
   );
 }

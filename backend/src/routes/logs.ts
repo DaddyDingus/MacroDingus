@@ -83,6 +83,11 @@ export function registerLogRoutes(app: FastifyInstance) {
   app.post("/api/logs/bulk", async (req, reply) => {
     const schema = z.object({
       date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      // Overrides the default "now" timestamp on every inserted row — used by
+      // the Food Log's per-entry/per-group "copy to…" actions, which need
+      // entries created under a specific target date/time rather than the
+      // moment the request happened to fire.
+      loggedAt: z.string().optional(),
       entries: z
         .array(
           z.object({
@@ -102,13 +107,14 @@ export function registerLogRoutes(app: FastifyInstance) {
     if (foundFoods.length !== foodIds.length) return reply.code(400).send({ error: "unknown foodId" });
 
     const now = new Date().toISOString();
+    const loggedAt = parsed.data.loggedAt ?? now;
     const rows = parsed.data.entries.map((e) => ({
       id: randomUUID(),
       userId: req.userId!,
       date: parsed.data.date,
       foodId: e.foodId,
       quantityGrams: e.quantityGrams,
-      loggedAt: now,
+      loggedAt,
       createdAt: now,
     }));
     await db.insert(logs).values(rows);
@@ -168,7 +174,12 @@ export function registerLogRoutes(app: FastifyInstance) {
   // which is neutral information, not an error state.
   app.get("/api/logs/history", async (req) => {
     const { days } = req.query as { days?: string };
-    const take = Math.min(Number(days) || 30, 365);
+    // Was capped at 365; raised to match the same large-N "All" pattern the
+    // weight/checkin endpoints already use, once the Energy Balance screen's
+    // own "All" range preset needed real multi-year depth rather than a
+    // second option that silently behaved identically to "1Y". Still
+    // trivial at personal-diary scale — same reasoning as GET /api/weights.
+    const take = Math.min(Number(days) || 30, 3650);
     const userId = req.userId!;
     const today = new Date().toISOString().slice(0, 10);
     const since = addDaysToDateString(today, -(take - 1));
@@ -252,6 +263,45 @@ export function registerLogRoutes(app: FastifyInstance) {
     const entry = await entryWithNutrition(id, req.userId!);
     if (!entry) return reply.code(404).send({ error: "not found" });
     return entry;
+  });
+
+  // Moves one or more existing entries to a new date/time in place (as
+  // opposed to /logs/bulk, which creates copies) — backs the Food Log's
+  // per-entry/per-group "move to…" actions and "modify timestamp" (which
+  // passes only loggedAt, leaving date untouched so the entry stays on the
+  // same day). One codepath for both a single entry and a whole time-group.
+  app.patch("/api/logs/bulk-move", async (req, reply) => {
+    const schema = z.object({
+      ids: z.array(z.string()).min(1).max(50),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      loggedAt: z.string(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+
+    const { ids, date, loggedAt } = parsed.data;
+    const userId = req.userId!;
+
+    await db
+      .update(logs)
+      .set(date ? { date, loggedAt } : { loggedAt })
+      .where(and(inArray(logs.id, ids), eq(logs.userId, userId)));
+
+    const rows = await db
+      .select({ log: logs, food: foods })
+      .from(logs)
+      .innerJoin(foods, eq(logs.foodId, foods.id))
+      .where(and(inArray(logs.id, ids), eq(logs.userId, userId)));
+
+    return {
+      entries: rows.map(({ log, food }) => ({
+        id: log.id,
+        quantityGrams: log.quantityGrams,
+        loggedAt: log.loggedAt,
+        food,
+        nutrition: scaleNutrition(food, log.quantityGrams),
+      })),
+    };
   });
 
   app.delete("/api/logs/:id", async (req, reply) => {

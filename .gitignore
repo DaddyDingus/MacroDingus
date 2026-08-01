@@ -8,3 +8,4 @@ data/.cookie-secret
 data/photos/*
 !data/photos/.gitkeep
 .env
+tailscale-state/
