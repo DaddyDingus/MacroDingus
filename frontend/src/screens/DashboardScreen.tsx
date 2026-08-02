@@ -12,6 +12,7 @@ import ShortcutsBar from "../components/ShortcutsBar";
 import DashboardTotalsArcCard from "../components/DashboardTotalsArcCard";
 import CheckInResultSheet from "../components/CheckInResultSheet";
 import WizardIllustration from "../components/WizardIllustration";
+import LogWeightFirstSheet from "../components/LogWeightFirstSheet";
 
 // The only piece of the dashboard that pulls in recharts — kept out of this
 // screen's own (eager) bundle. See DashboardTileSections.tsx for why.
@@ -32,6 +33,7 @@ export default function DashboardScreen() {
   const navigate = useNavigate();
   const [refreshing, setRefreshing] = useState(false);
   const [checkInResult, setCheckInResult] = useState<{ checkin: NonNullable<ReturnType<typeof useCoachStatus>["data"]>["latestCheckin"]; usedAdaptiveTdee: boolean } | null>(null);
+  const [weightPromptOpen, setWeightPromptOpen] = useState(false);
 
   // Restoring the scroll position on the way back in is handled centrally in
   // App.tsx's AppRoutes (it needs to run on every navigation, not just ones
@@ -87,6 +89,12 @@ export default function DashboardScreen() {
   const isCheckinDue = nextCheckinDueDate !== null && nextCheckinDueDate <= today;
   const daysOverdue = isCheckinDue ? daysBetween(nextCheckinDueDate!, today) : 0;
   const hasActiveGoal = status.data?.activeGoal != null;
+  const hasWeightHistory = status.data?.trendWeightKg != null;
+
+  function goToNewGoal() {
+    if (hasWeightHistory) navigate("/strategy/new-goal");
+    else setWeightPromptOpen(true);
+  }
 
   return (
     <div className="min-h-dvh pb-40 bg-dashboardBg">
@@ -136,7 +144,7 @@ export default function DashboardScreen() {
                 Choose a target weight and rate of change, and we'll build a calorie and macro plan around it.
               </p>
               <button
-                onClick={() => navigate("/strategy/new-goal")}
+                onClick={goToNewGoal}
                 className="w-full mt-3 py-2.5 rounded-full text-sm font-semibold"
                 style={{ background: "#ECEDEE", color: "#0B1210" }}
               >
@@ -144,6 +152,13 @@ export default function DashboardScreen() {
               </button>
             </div>
           </div>
+        )}
+
+        {weightPromptOpen && (
+          <LogWeightFirstSheet
+            onClose={() => setWeightPromptOpen(false)}
+            onContinue={() => navigate("/strategy/new-goal")}
+          />
         )}
 
         {isCheckinDue && (

@@ -18,6 +18,10 @@ export interface Profile {
   weeklyExerciseHours: number | null;
   createdAt: string;
   updatedAt: string;
+  // Set once, on the account's first-ever goal creation — see App.tsx's
+  // onboarding gate, which reads this instead of deriving "done" from live
+  // weight/goal state.
+  onboardingCompletedAt: string | null;
 }
 
 // A check-in is purely a TDEE-estimate snapshot now — targets moved to
@@ -64,6 +68,16 @@ export function useCoachStatus() {
   return useQuery({
     queryKey: ["coach", "status"],
     queryFn: () => apiFetch<CoachStatus>("/coach/status"),
+  });
+}
+
+// Backs OnboardingFlow's "Skip for now" on the weight step — finishes
+// onboarding without requiring a goal (see backend routes/coach.ts).
+export function useCompleteOnboarding() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiFetch<{ profile: Profile }>("/profile/complete-onboarding", { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["coach"] }),
   });
 }
 

@@ -1,0 +1,1 @@
+ALTER TABLE `programs` ADD `initial_tdee_override_kcal` real;

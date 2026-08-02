@@ -10,6 +10,19 @@ export function useFoodSearch(query: string) {
   });
 }
 
+// Backs FoodDetailScreen's quantity prefill when logging a food fresh (not
+// editing an already-logged entry, which seeds from that entry directly).
+// `enabled` should be false while editing — there's nothing useful to do
+// with a food's log history when the specific entry being edited already
+// has its own known quantity.
+export function useLastLoggedQuantity(foodId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["foods", foodId, "last-quantity"],
+    queryFn: () => apiFetch<{ quantityGrams: number | null }>(`/foods/${foodId}/last-quantity`),
+    enabled,
+  });
+}
+
 // Backs the Add Food sheet's Library tab "Foods" view — every manually
 // created custom food (not an OpenFoodFacts cache or a recipe's own
 // materialized food), shared across the household like the rest of `foods`.

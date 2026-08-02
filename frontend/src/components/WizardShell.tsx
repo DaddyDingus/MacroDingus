@@ -1,5 +1,6 @@
 import { ChevronLeft } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useVisualViewportMetrics } from "../lib/useVisualViewportMetrics";
 
 // The stepper chrome shared by every multi-step flow in the Strategy
 // redesign (New Goal, Edit Goal, New Program) — top progress bar, back
@@ -33,15 +34,19 @@ export default function WizardShell({
     return () => cancelAnimationFrame(id);
   }, []);
 
+  // Sized off the *visual* viewport, not `h-dvh` — Chrome's default
+  // `interactive-widget` behavior (`resizes-visual`, no override set in
+  // index.html) shrinks the visual viewport when the on-screen keyboard
+  // opens but leaves the layout viewport (and therefore `dvh`) untouched, so
+  // a `fixed`/`h-dvh` footer stayed put behind the keyboard instead of
+  // riding above it — the weight step's autofocused input plus its "Skip
+  // for now" footer button was how this got noticed, but it'd hit any step
+  // with an autofocused field. Same `useVisualViewportMetrics` +
+  // `fixed inset-x-0` technique BottomSheet/AddFoodSheet already use.
+  const { height: viewportHeight, offsetTop: viewportOffsetTop } = useVisualViewportMetrics();
+
   return (
-    // h-dvh, not min-h-dvh — min-height lets a tall step's content grow the
-    // whole flex column past the viewport, which made the footer button
-    // scroll away with everything else (the outer page became the scroll
-    // container instead of `main`). A fixed h-dvh forces `main`'s own
-    // flex-1 + overflow-y-auto to actually contain any overflow, so the
-    // header and footer stay pinned regardless of how tall a step's content
-    // gets.
-    <div className="h-dvh flex flex-col">
+    <div className="fixed inset-x-0 flex flex-col" style={{ top: viewportOffsetTop, height: viewportHeight }}>
       <header className="px-4 pt-5 pb-3 shrink-0">
         {/* Grid, not flex — three fix attempts on a `flex-1 + text-center`
             title (min-w-0, line-clamp-2, dropping overflow entirely) all

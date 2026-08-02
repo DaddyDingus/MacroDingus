@@ -6,8 +6,8 @@ import { useRecipes } from "../api/recipes";
 import { useDayLog } from "../api/logs";
 import { usePrograms } from "../api/programs";
 import { targetsForDate } from "../lib/programTargets";
-import { localDateString } from "../lib/date";
 import { useEnergyUnit, kcalToUnit, energyUnitLabel } from "../lib/energyUnit";
+import { useEffectiveLogDate } from "../lib/viewedDate";
 import type { ShortcutId } from "../lib/shortcuts";
 import AddFoodSheet from "./AddFoodSheet";
 import QuickAddSheet from "./QuickAddSheet";
@@ -18,8 +18,12 @@ import FoodIconAvatar from "./FoodIconAvatar";
 
 type Step = "recipesList" | "logWeight" | "copyDay" | "quickAdd" | "addFood";
 
-// Runs a single quick action to completion (today's date always — date
-// navigation stays on the Food log screen). Shared by the FAB's quick-actions
+// Runs a single quick action to completion, against whichever date is
+// currently "effective" (lib/viewedDate.tsx) — real today everywhere except
+// while TodayScreen's own ‹/› date nav is showing a different day, in which
+// case a quick action fired from its pinned shortcuts *or* the global FAB
+// (mounted outside TodayScreen entirely, in App.tsx) lands on that same day
+// instead of always defaulting to today. Shared by the FAB's quick-actions
 // menu and the Dashboard's pinned shortcut buttons, since a pinned shortcut
 // is just a shortcut into this same flow, skipping the menu step. No meal
 // selection anywhere in here — logging no longer tracks a meal at all (see
@@ -27,9 +31,9 @@ type Step = "recipesList" | "logWeight" | "copyDay" | "quickAdd" | "addFood";
 // actually logged.
 export default function QuickActionFlow({ action, onClose }: { action: ShortcutId; onClose: () => void }) {
   const navigate = useNavigate();
-  const today = localDateString();
+  const date = useEffectiveLogDate();
   const recipes = useRecipes();
-  const dayLog = useDayLog(today);
+  const dayLog = useDayLog(date);
   const programs = usePrograms();
   const { unit: energyUnit } = useEnergyUnit();
   const [pickedFood, setPickedFood] = useState<Food | null>(null);
@@ -70,8 +74,8 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
 
   // Same "whichever program was active on the viewed date" lookup
   // TodayScreen uses, so the sheet's header badges match what the Food log
-  // screen itself would show for today.
-  const dayTargets = targetsForDate(programs.data ?? [], today);
+  // screen itself would show for this date.
+  const dayTargets = targetsForDate(programs.data ?? [], date);
   const targets = dayTargets
     ? { calories: dayTargets.calories, proteinG: dayTargets.proteinG, fatG: dayTargets.fatG, carbsG: dayTargets.carbsG }
     : null;
@@ -81,7 +85,7 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
     return (
       <AddFoodSheet
         open
-        date={today}
+        date={date}
         editingEntry={null}
         initialStep={
           action === "scan"
@@ -102,10 +106,10 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
     );
   }
   if (step === "quickAdd") {
-    return <QuickAddSheet date={today} onClose={onClose} />;
+    return <QuickAddSheet date={date} onClose={onClose} />;
   }
   if (step === "copyDay") {
-    return <CopyDaySheet targetDate={today} onClose={onClose} />;
+    return <CopyDaySheet targetDate={date} onClose={onClose} />;
   }
 
   return (

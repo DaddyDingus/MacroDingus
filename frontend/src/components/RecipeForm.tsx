@@ -6,9 +6,14 @@ import { localDateString } from "../lib/date";
 import FoodIconAvatar from "./FoodIconAvatar";
 import IconPickerModal from "./IconPickerModal";
 import AddFoodSheet from "./AddFoodSheet";
+import FoodDetailScreen from "./FoodDetailScreen";
+import CreateFoodForm from "./CreateFoodForm";
+import DiscardWarningSheet from "./DiscardWarningSheet";
 import { getFoodIcon } from "../lib/foodEmoji";
 import type { SheetDragHandlers } from "./BottomSheet";
 import { useEnergyUnit, kcalToUnit, energyUnitLabel } from "../lib/energyUnit";
+import { useFavorites, useAddFavorite, useRemoveFavorite } from "../api/favorites";
+import { useCreateFood } from "../api/foods";
 
 interface Ingredient {
   food: Food;
@@ -51,7 +56,36 @@ export default function RecipeForm({
       : ""
   );
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Which totals the nutrition card at the bottom shows — same Plate/Day
+  // segmented-pill pattern AddFoodSheet's own StagedPlateSection uses for an
+  // analogous "which totals" toggle, reused here rather than a second
+  // convention for the same kind of choice.
+  const [nutritionView, setNutritionView] = useState<"serving" | "recipe">("serving");
+  // Gate for the header's own back/close button — only a brand-new recipe
+  // (no `initial`) with at least one ingredient already added risks losing
+  // real work by leaving, so an already-saved recipe being edited (`initial`
+  // set) skips this even if it happens to have ingredients too.
+  const [showDiscardWarning, setShowDiscardWarning] = useState(false);
+  // Tapping an already-added ingredient's row opens the same FoodDetailScreen
+  // the picker itself uses (see the "Add ingredient" button's own comment
+  // below) — an index into `ingredients`, not the food itself, since saving
+  // needs to know which row to update. customFromIndex is a distinct,
+  // separate step ("+ To custom" from within that detail view) rather than
+  // reusing detailIndex, since the two screens are mounted at the same time
+  // for one frame during the handoff (detail closes, create-food opens).
+  const [detailIndex, setDetailIndex] = useState<number | null>(null);
+  const [customFromIndex, setCustomFromIndex] = useState<number | null>(null);
   const { unit: energyUnit } = useEnergyUnit();
+  const favorites = useFavorites();
+  const addFavorite = useAddFavorite();
+  const removeFavorite = useRemoveFavorite();
+  const createFood = useCreateFood();
+  const favoriteFoodIds = new Set(favorites.data?.map((f) => f.id));
+
+  function toggleFavorite(food: Food) {
+    if (favoriteFoodIds.has(food.id)) removeFavorite.mutate(food.id);
+    else addFavorite.mutate(food.id);
+  }
 
   const ingredientSumGrams = ingredients.reduce((sum, i) => sum + i.quantityGrams, 0);
   const totalWeightGrams = weightOverride.trim() ? Number(weightOverride) : ingredientSumGrams;
@@ -66,11 +100,20 @@ export default function RecipeForm({
           fat: totals.fat / servingsNum,
         }
       : null;
+  // What the nutrition card actually renders — per-serving figures, or the
+  // whole recipe's totals, per nutritionView above. Falls back to totals
+  // even while "serving" is selected if perServing can't be computed
+  // (servings left blank/zero) — the card still has something real to show
+  // rather than going blank over an unrelated field.
+  const displayedNutrition = nutritionView === "serving" && perServing ? perServing : totals;
   // Same "% of macro calories" pill FoodDetailScreen's summary row uses —
   // reused here so a recipe's own macro balance reads the same way a single
   // food's does, rather than inventing a second convention for the same
-  // number.
-  const macroCalories = perServing ? perServing.protein * 4 + perServing.fat * 9 + perServing.carbs * 4 : 0;
+  // number. Ratios are identical whether computed per-serving or for the
+  // whole recipe (scaling every macro by the same factor doesn't change
+  // their relative share), so this doesn't need its own toggle — it's
+  // always sourced from whatever's currently displayed.
+  const macroCalories = displayedNutrition.protein * 4 + displayedNutrition.fat * 9 + displayedNutrition.carbs * 4;
   const caloricRatio = (cal: number) => (macroCalories > 0 ? Math.round((cal / macroCalories) * 100) : 0);
 
   const canSave = name.trim() !== "" && ingredients.length > 0 && servingsNum > 0 && totalWeightGrams > 0;
@@ -78,9 +121,20 @@ export default function RecipeForm({
   // current override, live as the name is typed.
   const autoIcon = getFoodIcon(name.trim() || "?");
 
+  // AddFoodSheet's own commit — the whole staged batch arrives here in one
+  // call once "Add Ingredients" is actually tapped (see its onPickItems);
+  // nothing lands here just from picking foods in the sheet, so closing that
+  // sheet without committing (X, back, swipe-down) leaves this untouched.
   function addIngredients(items: { food: Food; quantityGrams: number }[]) {
     setIngredients((prev) => [...prev, ...items]);
-    setPickerOpen(false);
+  }
+
+  function requestCancel() {
+    if (!initial && ingredients.length > 0) {
+      setShowDiscardWarning(true);
+    } else {
+      onCancel();
+    }
   }
 
   function updateQuantity(index: number, quantityGrams: number) {
@@ -106,7 +160,7 @@ export default function RecipeForm({
     <>
       <div {...dragHandlers} className="px-2.5 pt-1 pb-1 flex items-center gap-1 shrink-0 touch-none">
         <button
-          onClick={onCancel}
+          onClick={requestCancel}
           aria-label={initial ? "Close" : "Back"}
           className="h-9 w-9 shrink-0 flex items-center justify-center rounded-full text-white active:bg-white/10"
         >
@@ -163,10 +217,12 @@ export default function RecipeForm({
         <div>
           <span className="block text-xs text-muted mb-1.5">Ingredients</span>
           {/* Opens the same Search/Scan/Quick Add/Library sheet the Food Log
-              uses, in "pick" mode (see AddFoodSheet's onPickItems) — tapping
-              a result there opens Food Detail to set the serving size, same
-              as logging a food, just handed back here as an ingredient
-              instead of posted to today's log. */}
+              uses, in "pick" mode (see AddFoodSheet's onPickItems) — picks
+              stage onto that sheet's own plate exactly like logging does
+              (shown as icons in its header instead of macro bars, which
+              wouldn't mean anything for a recipe), and only land here once
+              "Add Ingredients" is actually tapped. Swiping the sheet away
+              without tapping it discards whatever was staged. */}
           <button
             type="button"
             onClick={() => setPickerOpen(true)}
@@ -181,8 +237,14 @@ export default function RecipeForm({
           <div className="rounded-2xl bg-dashboardCard overflow-hidden divide-y divide-dashboardDivider">
             {ingredients.map((ing, i) => (
               <div key={i} className="flex items-center gap-3 pl-4 pr-2.5 py-2">
-                <FoodIconAvatar name={ing.food.name} icon={ing.food.icon} className="w-8 h-8" />
-                <span className="text-sm text-white truncate min-w-0 flex-1">{ing.food.name}</span>
+                <button
+                  type="button"
+                  onClick={() => setDetailIndex(i)}
+                  className="flex items-center gap-3 min-w-0 flex-1 text-left active:opacity-70"
+                >
+                  <FoodIconAvatar name={ing.food.name} icon={ing.food.icon} className="w-8 h-8" />
+                  <span className="text-sm text-white truncate min-w-0">{ing.food.name}</span>
+                </button>
                 <div className="flex items-center gap-1.5 shrink-0">
                   <input
                     type="search"
@@ -264,17 +326,52 @@ export default function RecipeForm({
           nutrition per gram does.
         </p>
 
-        {perServing && (
+        {ingredients.length > 0 && (
           <div className="rounded-2xl bg-dashboardCard px-4 pt-3.5 pb-3">
+            <div className="flex items-center justify-between mb-2.5">
+              <p className="text-[11px] tracking-widest uppercase text-muted">Nutrition</p>
+              {/* One button spanning both labels, same pattern as
+                  AddFoodSheet's StagedPlateSection Plate/Day toggle — "tap
+                  the one you want" and "tap anywhere to flip to the other"
+                  are the same action. Disabled (not hidden) while perServing
+                  can't be computed, so the control doesn't jump around as
+                  servings is typed. */}
+              <button
+                type="button"
+                onClick={() => setNutritionView((v) => (v === "serving" ? "recipe" : "serving"))}
+                disabled={!perServing}
+                className="flex rounded-full bg-dashboardChip p-0.5 text-[11px] disabled:opacity-40"
+              >
+                <span
+                  className={`px-3 py-1 rounded-full transition-colors ${
+                    nutritionView === "serving" && perServing ? "bg-white text-black font-medium" : "text-muted"
+                  }`}
+                >
+                  Serving
+                </span>
+                <span
+                  className={`px-3 py-1 rounded-full transition-colors ${
+                    nutritionView === "recipe" || !perServing ? "bg-white text-black font-medium" : "text-muted"
+                  }`}
+                >
+                  Recipe
+                </span>
+              </button>
+            </div>
             <div className="grid grid-cols-4 gap-2 items-end">
               <div className="text-center col-span-1">
                 <p className="tabular text-xl font-bold text-calories leading-none">
-                  {Math.round(kcalToUnit(perServing.calories, energyUnit))}
+                  {Math.round(kcalToUnit(displayedNutrition.calories, energyUnit))}
                 </p>
                 <p className="text-[10px] text-muted mt-1.5">{energyUnitLabel(energyUnit)}</p>
               </div>
               {(["protein", "carbs", "fat"] as const).map((key) => {
-                const cal = key === "protein" ? perServing.protein * 4 : key === "fat" ? perServing.fat * 9 : perServing.carbs * 4;
+                const cal =
+                  key === "protein"
+                    ? displayedNutrition.protein * 4
+                    : key === "fat"
+                      ? displayedNutrition.fat * 9
+                      : displayedNutrition.carbs * 4;
                 // Full literal class strings per branch, not a template-built
                 // `bg-${key}/15` — Tailwind's JIT only picks up classes it
                 // can find as complete strings in the source.
@@ -290,14 +387,16 @@ export default function RecipeForm({
                       {caloricRatio(cal)}%
                     </span>
                     <p className="tabular text-base font-semibold text-white leading-none mt-1.5">
-                      {perServing[key].toFixed(1)}
+                      {displayedNutrition[key].toFixed(1)}
                     </p>
                     <p className="text-[10px] text-muted mt-0.5 capitalize">{key}</p>
                   </div>
                 );
               })}
             </div>
-            <p className="text-center text-[11px] text-muted pt-2 mt-2 border-t border-dashboardDivider">per serving</p>
+            <p className="text-center text-[11px] text-muted pt-2 mt-2 border-t border-dashboardDivider">
+              {nutritionView === "serving" && perServing ? "per serving" : `whole recipe${servingsNum > 0 ? ` · ${servingsNum} serving${servingsNum === 1 ? "" : "s"}` : ""}`}
+            </p>
           </div>
         )}
       </div>
@@ -328,8 +427,81 @@ export default function RecipeForm({
         editingEntry={null}
         onClose={() => setPickerOpen(false)}
         onPickItems={addIngredients}
-        commitLabel="Add to Recipe"
+        commitLabel="Add Ingredients"
       />
+
+      {/* absolute inset-0, not fixed — RecipeForm is a Fragment with no DOM
+          node of its own, hosted either inside AddFoodSheet's own fixed
+          full-screen container (the "recipe" step) or inside a BottomSheet
+          panel (RecipeEditSheet/CreateRecipeFromGroupSheet). BottomSheet's
+          panel keeps a live `transform: translateY(...)` even at rest (never
+          `none`), which makes it the containing block for any `fixed`
+          descendant per the CSS spec — a `fixed` overlay here would end up
+          boxed to the sheet's own panel instead of the real viewport in that
+          context. `absolute inset-0` instead just fills whichever positioned
+          ancestor is actually hosting this component, correctly either way. */}
+      {detailIndex !== null && ingredients[detailIndex] && (
+        <div className="absolute inset-0 z-10 bg-dashboardBg flex flex-col">
+          <FoodDetailScreen
+            food={ingredients[detailIndex].food}
+            initialQuantityGrams={ingredients[detailIndex].quantityGrams}
+            backLabel="Close"
+            onBack={() => setDetailIndex(null)}
+            // Unused: `editing` below swaps the footer to Delete/Save, so
+            // Add/Log Foods's own handlers are never invoked in this mode
+            // (see FoodDetailScreen's own prop doc).
+            onAdd={() => {}}
+            onLogFoods={() => {}}
+            onSaveAsCustom={() => setCustomFromIndex(detailIndex)}
+            hideTargetsUi
+            isFavorite={favoriteFoodIds.has(ingredients[detailIndex].food.id)}
+            onToggleFavorite={toggleFavorite}
+            editing={{
+              onSave: (quantityGrams) => {
+                updateQuantity(detailIndex, quantityGrams);
+                setDetailIndex(null);
+              },
+              onDelete: () => {
+                removeIngredient(detailIndex);
+                setDetailIndex(null);
+              },
+            }}
+          />
+        </div>
+      )}
+
+      {showDiscardWarning && (
+        <DiscardWarningSheet
+          title={`${ingredients.length} ingredient${ingredients.length === 1 ? "" : "s"} added`}
+          message="This recipe hasn't been saved yet — leaving now will discard it."
+          confirmLabel="Discard"
+          onCancel={() => setShowDiscardWarning(false)}
+          onConfirm={() => {
+            setShowDiscardWarning(false);
+            onCancel();
+          }}
+        />
+      )}
+
+      {customFromIndex !== null && ingredients[customFromIndex] && (
+        <div className="absolute inset-0 z-20 bg-dashboardBg flex flex-col">
+          <CreateFoodForm
+            initialName={ingredients[customFromIndex].food.name}
+            prefillFood={ingredients[customFromIndex].food}
+            onCancel={() => setCustomFromIndex(null)}
+            onCreated={(food) => {
+              const index = customFromIndex;
+              createFood.mutate(food, {
+                onSuccess: (created) => {
+                  setIngredients((prev) => prev.map((ing, i) => (i === index ? { ...ing, food: created } : ing)));
+                },
+              });
+              setCustomFromIndex(null);
+              setDetailIndex(null);
+            }}
+          />
+        </div>
+      )}
     </>
   );
 }

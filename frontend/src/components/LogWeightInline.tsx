@@ -42,7 +42,20 @@ export default function LogWeightInline({ onLogged, autoFocus }: { onLogged?: ()
   }
 
   return (
-    <div className="flex flex-col gap-2">
+    // Wrapping in a real <form autoComplete="off">, not just per-input
+    // autoComplete="off" — Chrome's keyboard accessory bar kept showing a
+    // "Passwords" autofill chip over the (type=number, autoComplete=off)
+    // weight input regardless of the data-*ignore attributes above; Chrome's
+    // form-boundary/credential-field heuristic operates at the form-scope
+    // level and appears to give a stray, form-less input less benefit of the
+    // doubt than one explicitly scoped inside a non-login form. Not
+    // guaranteed to fully suppress it either — this is a known, filed
+    // Chromium bug (issues.chromium.org/issues/40856139) the browser side
+    // doesn't consider fully controllable by page authors — but it's the
+    // most legitimate remaining lever. onSubmit/type="button" below exist
+    // only to stop the form's native submit (page reload) from firing
+    // alongside the manual submit() calls now that a real <form> exists.
+    <form className="flex flex-col gap-2" autoComplete="off" onSubmit={(e) => e.preventDefault()}>
       <button
         type="button"
         onClick={(e) => {
@@ -65,7 +78,19 @@ export default function LogWeightInline({ onLogged, autoFocus }: { onLogged?: ()
         <input
           type="number"
           inputMode="decimal"
+          name="weight-value"
           autoComplete="off"
+          // Chrome's keyboard accessory bar shows a "Passwords" autofill chip
+          // over this field despite autoComplete="off" — a known Chrome
+          // heuristic misfire on bare numeric inputs, not specific to this
+          // input's content. These data-* attributes are the standard
+          // cross-password-manager suppression combo (Chrome/Bitwarden/
+          // 1Password/LastPass each key off a different one); none are part
+          // of the HTML spec, they're just conventions those tools honor.
+          data-lpignore="true"
+          data-1p-ignore=""
+          data-bwignore="true"
+          data-form-type="other"
           autoFocus={autoFocus}
           value={weightInput}
           onChange={(e) => setWeightInput(e.target.value)}
@@ -77,6 +102,7 @@ export default function LogWeightInline({ onLogged, autoFocus }: { onLogged?: ()
         />
         <span className="text-xs text-muted shrink-0">{unit}</span>
         <button
+          type="button"
           onClick={submit}
           disabled={!weightInput || logWeight.isPending}
           className="shrink-0 px-3 py-1.5 rounded-md bg-accent text-sm font-medium disabled:opacity-40"
@@ -91,7 +117,12 @@ export default function LogWeightInline({ onLogged, autoFocus }: { onLogged?: ()
             ref={bodyFatRef}
             type="number"
             inputMode="decimal"
+            name="body-fat-value"
             autoComplete="off"
+            data-lpignore="true"
+            data-1p-ignore=""
+            data-bwignore="true"
+            data-form-type="other"
             value={bodyFatInput}
             onChange={(e) => setBodyFatInput(e.target.value)}
             onKeyDown={(e) => {
@@ -120,6 +151,6 @@ export default function LogWeightInline({ onLogged, autoFocus }: { onLogged?: ()
           onClose={() => setCalendarOpen(false)}
         />
       )}
-    </div>
+    </form>
   );
 }

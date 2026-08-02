@@ -102,6 +102,10 @@ export async function performCheckin(userId: string) {
         targetRateKgPerWeek: activeGoal.targetRateKgPerWeek,
         dietType: activeProgram.dietType as DietType,
         proteinLevel: activeProgram.proteinLevel as ProteinLevel,
+        // Same lookup as programs.ts's own regenerate — re-derives from what
+        // was resolved at creation time, not re-asked here.
+        customProteinPerKg: activeProgram.proteinLevel === "custom" ? (activeProgram.proteinPerKgUsed ?? undefined) : undefined,
+        initialTdeeOverrideKcal: activeProgram.initialTdeeOverrideKcal,
         calorieFloorKcal: activeProgram.calorieFloorKcal!,
         distributionMode: activeProgram.distributionMode as "even" | "shifted",
         shiftedHighDays: parseShiftedHighDays(activeProgram.shiftedHighDays),
@@ -195,6 +199,27 @@ export function registerCoachRoutes(app: FastifyInstance) {
     }
 
     const [profile] = await db.select().from(profiles).where(eq(profiles.userId, userId));
+    return { profile };
+  });
+
+  // Lets OnboardingFlow's "Skip for now" on the weight step finish onboarding
+  // without a goal — the app is fully safe with activeGoal === null
+  // (Dashboard's own "Set a goal" card is the permanent reminder), so
+  // there's no reason to force the Goal wizard on someone who has no weight
+  // yet to build a real goal/program around. Same guarded stamp as
+  // POST /api/goals (routes/goals.ts) — whichever happens first wins, the
+  // other is a no-op.
+  app.post("/api/profile/complete-onboarding", async (req, reply) => {
+    const userId = req.userId!;
+    const now = new Date().toISOString();
+
+    await db
+      .update(profiles)
+      .set({ onboardingCompletedAt: now })
+      .where(and(eq(profiles.userId, userId), isNull(profiles.onboardingCompletedAt)));
+
+    const [profile] = await db.select().from(profiles).where(eq(profiles.userId, userId));
+    if (!profile) return reply.code(404).send({ error: "Profile not found" });
     return { profile };
   });
 

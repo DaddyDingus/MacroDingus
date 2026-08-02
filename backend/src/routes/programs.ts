@@ -6,6 +6,7 @@ import { db } from "../db/index.js";
 import { programs, programDays, profiles, goals } from "../db/schema.js";
 import { gatherAdaptiveTdeeInputs, mostRecentBodyFatPercent, shiftedHighDaysJson, serializeProgram } from "./shared.js";
 import { generateCoachedProgramDays, type ProteinLevel, type DietType } from "../engine/program.js";
+import { KCAL_PER_KG } from "../engine/trendWeight.js";
 
 const dayValuesInput = z.object({
   dayOfWeek: z.number().int().min(0).max(6),
@@ -20,7 +21,16 @@ const coachedProgramInput = z.object({
   style: z.literal("coached"),
   dietType: z.enum(["balanced", "low_fat", "low_carb", "keto"]),
   calorieFloorKcal: z.number().min(0).max(5000),
-  proteinLevel: z.enum(["low", "moderate", "high", "extra_high"]),
+  proteinLevel: z.enum(["low", "moderate", "high", "extra_high", "custom"]),
+  // Required (checked below, same reason as shiftedHighDays below — not a
+  // .refine(), which would break z.discriminatedUnion's introspection) when
+  // proteinLevel is 'custom': the user's own g/kg pick from the wizard slider.
+  customProteinPerKg: z.number().positive().max(4).optional(),
+  // Optional "starting Calories" from the wizard's Calories step — back-
+  // solved into an implied TDEE below and stored as initialTdeeOverrideKcal,
+  // rather than stored as raw calories, so it composes correctly with
+  // whatever the goal's rate/diet/protein/floor/distribution end up being.
+  startingCalories: z.number().positive().max(10000).optional(),
   distributionMode: z.enum(["even", "shifted"]),
   // Required (checked below, not via a zod .refine() — wrapping this object
   // in .refine() would turn it into a ZodEffects that z.discriminatedUnion
@@ -78,6 +88,9 @@ export function registerProgramRoutes(app: FastifyInstance) {
     if (parsed.data.style === "coached" && parsed.data.distributionMode === "shifted" && !parsed.data.shiftedHighDays) {
       return reply.code(400).send({ error: "Select which days should have higher Calorie targets" });
     }
+    if (parsed.data.style === "coached" && parsed.data.proteinLevel === "custom" && parsed.data.customProteinPerKg === undefined) {
+      return reply.code(400).send({ error: "Set a custom protein target" });
+    }
     const userId = req.userId!;
     const now = new Date().toISOString();
 
@@ -92,6 +105,7 @@ export function registerProgramRoutes(app: FastifyInstance) {
       proteinLevel: string | null;
       proteinPerKgUsed: number | null;
       proteinBasis: string;
+      initialTdeeOverrideKcal: number | null;
       distributionMode: string;
       shiftedHighDays: string | null;
     };
@@ -105,6 +119,15 @@ export function registerProgramRoutes(app: FastifyInstance) {
 
       const age = new Date().getFullYear() - profile.birthYear;
       const bodyFatPercent = await mostRecentBodyFatPercent(userId);
+      // Back-solve an implied TDEE from the user's own "starting Calories"
+      // pick, the same relationship generateCoachedProgramDays uses in
+      // reverse (flatTargetCalories = tdee + rate*KCAL_PER_KG/7) — so it
+      // composes correctly with this goal's actual rate rather than being a
+      // frozen calorie number.
+      const initialTdeeOverrideKcal =
+        parsed.data.startingCalories !== undefined
+          ? parsed.data.startingCalories - (goal.targetRateKgPerWeek * KCAL_PER_KG) / 7
+          : null;
       const result = generateCoachedProgramDays({
         weighIns,
         dailyCalories,
@@ -115,6 +138,8 @@ export function registerProgramRoutes(app: FastifyInstance) {
         targetRateKgPerWeek: goal.targetRateKgPerWeek,
         dietType: parsed.data.dietType as DietType,
         proteinLevel: parsed.data.proteinLevel as ProteinLevel,
+        customProteinPerKg: parsed.data.customProteinPerKg,
+        initialTdeeOverrideKcal,
         calorieFloorKcal: parsed.data.calorieFloorKcal,
         distributionMode: parsed.data.distributionMode,
         shiftedHighDays: parsed.data.shiftedHighDays,
@@ -131,6 +156,7 @@ export function registerProgramRoutes(app: FastifyInstance) {
         proteinLevel: parsed.data.proteinLevel,
         proteinPerKgUsed: result.breakdown.proteinPerKgUsed,
         proteinBasis: result.breakdown.proteinBasisUsed,
+        initialTdeeOverrideKcal,
         distributionMode: parsed.data.distributionMode,
         shiftedHighDays: parsed.data.distributionMode === "shifted" ? shiftedHighDaysJson(parsed.data.shiftedHighDays) : null,
       };
@@ -143,6 +169,7 @@ export function registerProgramRoutes(app: FastifyInstance) {
         proteinLevel: null,
         proteinPerKgUsed: null,
         proteinBasis: "total",
+        initialTdeeOverrideKcal: null,
         distributionMode: "custom",
         shiftedHighDays: null,
       };
@@ -219,6 +246,11 @@ export function registerProgramRoutes(app: FastifyInstance) {
       targetRateKgPerWeek: goal.targetRateKgPerWeek,
       dietType: program.dietType as DietType,
       proteinLevel: program.proteinLevel as ProteinLevel,
+      // Re-derives from the value already resolved and stored last time
+      // (proteinPerKgUsed), not re-asked from the user — regenerate has no
+      // wizard step to re-pick a custom g/kg from.
+      customProteinPerKg: program.proteinLevel === "custom" ? (program.proteinPerKgUsed ?? undefined) : undefined,
+      initialTdeeOverrideKcal: program.initialTdeeOverrideKcal,
       calorieFloorKcal: program.calorieFloorKcal!,
       distributionMode: "even",
       proteinBasis: program.proteinBasis as "total" | "lean",

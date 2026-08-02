@@ -6,18 +6,21 @@ import {
   ScanBarcode,
   Zap,
   Plus,
-  Utensils,
   Library as LibraryIcon,
   Sparkles,
   Loader2,
   Camera,
+  ChevronLeft,
+  ChevronRight,
+  ChefHat,
+  Link2,
   type LucideIcon,
 } from "lucide-react";
 import type { Food, LogEntry, Nutrition } from "../api/types";
 import type { MacroTargets } from "./MacroSummaryBar";
 import { useFoodSearch, useCreateFood, useCustomFoods, useBarcodeLookup, useDeleteFood, useDescribeMeal } from "../api/foods";
 import { useFavorites, useAddFavorite, useRemoveFavorite } from "../api/favorites";
-import { useRecipes, useCreateRecipe, type RecipeSummary } from "../api/recipes";
+import { useRecipes, useCreateRecipe, useImportRecipeUrl, type RecipeSummary } from "../api/recipes";
 import { useAddLog, useBulkAddLog, useUpdateLogQuantity, useDeleteLog, useSmartHistory } from "../api/logs";
 import { scaleNutrition, sumNutrition, subtractNutrition } from "../lib/nutrition";
 import { localTimeString, localIsoNoTz, formatLogTime, loggedAtTimeString, buildLoggedAt } from "../lib/date";
@@ -27,23 +30,38 @@ import { useVisualViewportMetrics } from "../lib/useVisualViewportMetrics";
 import { useBackDismiss } from "../lib/useBackDismiss";
 import FoodIconAvatar from "./FoodIconAvatar";
 import CreateFoodForm from "./CreateFoodForm";
-import RecipeForm from "./RecipeForm";
+import RecipeForm, { type RecipeFormInitial } from "./RecipeForm";
 import DraggableSnapSheet from "./DraggableSnapSheet";
 import FoodDetailScreen from "./FoodDetailScreen";
 import NutrientStatusBar, { LogTimePill } from "./NutrientStatusBar";
 import DateTimePickerSheet from "./DateTimePickerSheet";
 import ConfirmDeleteSheet from "./ConfirmDeleteSheet";
 import PhotoSourceSheet from "./PhotoSourceSheet";
+import DiscardWarningSheet from "./DiscardWarningSheet";
 
 // zxing's decoder is ~400kB and only ever needed for the occasional barcode
 // scan, not the everyday search-and-log path — split it into its own chunk
 // so it doesn't weigh down the initial load.
 const BarcodeScanner = lazy(() => import("./BarcodeScanner"));
 
-type Step = "browse" | "quantity" | "create" | "scan" | "recipe" | "detail";
-// Steps reachable *from* browse whose own back/close action should return
-// there rather than exit the whole sheet — see requestClose().
-const SHEET_SUB_STEPS = new Set<Step>(["detail", "create", "recipe", "scan"]);
+type Step = "browse" | "quantity" | "create" | "scan" | "recipe" | "recipeChoice" | "recipeImportUrl" | "detail";
+// Where a hardware/gesture back press from each sub-step should land — reads
+// the same as each step's own visible back button, since requestClose()
+// below drives both from this one map. Most steps are one hop from "browse"
+// (the sheet's own home view), but "recipeImportUrl" sits one level deeper,
+// behind "recipeChoice" — collapsing it straight to "browse" (the old flat
+// Set version of this) would skip the chooser screen on a single back press,
+// same class of bug the Goal/Program wizards had before their own
+// useBackDismiss wiring. Steps absent here (browse/quantity) aren't
+// "sub-steps" — requestClose treats those as a real dismissal instead.
+const SHEET_SUB_STEP_BACK: Partial<Record<Step, Step>> = {
+  detail: "browse",
+  create: "browse",
+  scan: "browse",
+  recipe: "browse",
+  recipeChoice: "browse",
+  recipeImportUrl: "recipeChoice",
+};
 type Tab = "search" | "quickAdd" | "describe" | "library";
 type LibraryView = "recipes" | "foods" | "favorites";
 
@@ -121,7 +139,12 @@ export default function AddFoodSheet({
   totals,
   targets,
   onPickItems,
-  commitLabel,
+  // Defaulted here, not just on ActionBar below — the floating collapsed-
+  // state commit button reads this same prop directly (not through
+  // ActionBar), so a default that only lived on ActionBar left that button
+  // rendering the literal text "undefined" for every caller that doesn't
+  // pass this explicitly (i.e. every caller except RecipeForm).
+  commitLabel = "Log Foods",
 }: {
   open: boolean;
   date: string;
@@ -145,12 +168,20 @@ export default function AddFoodSheet({
   // rather than a broken one.
   totals?: Nutrition;
   targets?: MacroTargets | null;
-  // Recipe-ingredient-picker mode (RecipeForm's "+" button): when set, every
-  // commit path (the header's "Log Foods" button, FoodDetailScreen's own
-  // "Log Foods" numpad key) hands the staged plate to this instead of
-  // POSTing it to today's log via bulkAddLog — same staging/search/scan/
-  // library UI, different final destination. The sheet still closes and
-  // clears its plate exactly like a real log commit does.
+  // Recipe-ingredient-picker mode (RecipeForm's "+" button): most picks
+  // (search "+", Quick Add, Describe) stage onto the same plate regular
+  // logging uses — nothing lands in the recipe until the bottom bar's
+  // commitLabel button ("Add Ingredients") is actually tapped, which hands
+  // the whole staged batch to this callback instead of POSTing it to
+  // today's log via bulkAddLog (see confirmPlate). Swiping the sheet away
+  // (or the X) without tapping it discards whatever was staged this session
+  // — same "unlogged plate" confirmation regular logging already has (see
+  // requestClose/DiscardWarningSheet), just with recipe-appropriate copy.
+  // The header's icon row (BrowseHeader's pickedFoods) is sourced straight
+  // from this same staged plate. Food Detail's own "Add" is the one
+  // exception — it calls this directly per-item instead of staging (see the
+  // "detail" step's onAdd below), since setting an exact quantity there and
+  // tapping Add is already a deliberate, considered action.
   onPickItems?: (items: { food: Food; quantityGrams: number }[]) => void;
   // Overrides the "Log Foods" copy everywhere it'd otherwise appear —
   // factually wrong once onPickItems is set, since nothing is being logged.
@@ -174,6 +205,15 @@ export default function AddFoodSheet({
   // and after leaving the "create" step, so a later, unrelated "Create
   // custom food" tap doesn't inherit a stale prefill.
   const [createPrefillFood, setCreatePrefillFood] = useState<Food | null>(null);
+  // The "recipeImportUrl" step's own input/result state — url as typed, an
+  // error from the last attempt (if any), and the parsed draft once a fetch
+  // succeeds. The draft is handed to RecipeForm as `initial` the same way
+  // CreateRecipeFromGroupSheet already pre-fills a brand-new (not yet saved)
+  // recipe — see that component's own comment for why `initial` doesn't mean
+  // "already persisted" here. Reset on every open (reset effect below).
+  const [recipeImportUrlInput, setRecipeImportUrlInput] = useState("");
+  const [recipeImportError, setRecipeImportError] = useState<string | null>(null);
+  const [recipeImportInitial, setRecipeImportInitial] = useState<RecipeFormInitial | null>(null);
   // Which snap point the Search sheet (Layer 2) is at — expanded by default
   // whenever the modal opens (see the reset effect below), toggled by the
   // header's chevron, a drag on the sheet's own grabber, or tapping a tab
@@ -283,11 +323,27 @@ export default function AddFoodSheet({
   const actionBarRef = useRef<HTMLDivElement>(null);
   const [actionBarHeight, setActionBarHeight] = useState(84);
   // Same useLayoutEffect + `open`-dependency reasoning as headerHeight above.
+  // Ignores a 0px reading — ActionBar's own slot visually collapses (grid-
+  // template-rows 0fr, see its own comment above) while the sheet is
+  // collapsed, which genuinely shrinks this ref'd wrapper to ~0. Without
+  // this guard, actionBarHeight would follow it down, contentHeight/
+  // sheetPanelHeightPx would grow to match, and the moment the sheet
+  // re-expands (ActionBar's real height instantly back via CSS, but this
+  // state update is one ResizeObserver tick behind) DraggableSnapSheet would
+  // read the still-stale, too-large panelHeight for that render's height
+  // transition, then snap down once the corrected measurement lands —
+  // visible as a brief overshoot-then-snap on every expand. Keeping the last
+  // real (non-zero) measurement instead means contentHeight never actually
+  // reflects the collapsed state, which is fine: it only ever needs to be
+  // correct for sizing the *expanded* sheet.
   useLayoutEffect(() => {
     if (!open || step !== "browse") return;
     const el = actionBarRef.current;
     if (!el) return;
-    const update = () => setActionBarHeight(el.offsetHeight);
+    const update = () => {
+      const h = el.offsetHeight;
+      if (h > 0) setActionBarHeight(h);
+    };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(el);
@@ -300,15 +356,6 @@ export default function AddFoodSheet({
   // it closed; the user asked for the sheet to stay at that taller layout
   // permanently instead of dropping back down when the keyboard closes.
   const sheetPanelHeightPx = contentHeight;
-  // Fixed height for centering the empty-plate message — the space that's
-  // visible above the sheet's collapsed (dismissed) resting position, not
-  // whatever's currently visible while the sheet is being dragged/expanded.
-  // This used to track the sheet's live visible height instead (0 while
-  // expanded, growing as it collapsed), so the message slid/faded around
-  // and even disappeared entirely whenever the sheet toggled — explicitly
-  // unwanted: the message should sit in one fixed spot (~screen center) and
-  // never move with the sheet.
-  const emptyPlateMessageHeight = Math.max(0, contentHeight - SHEET_COLLAPSED_PEEK_PX);
 
   useEffect(() => {
     if (!open) return;
@@ -327,7 +374,7 @@ export default function AddFoodSheet({
     } else {
       setSelectedFood(null);
       setGrams(100);
-      setStep(initialStep === "scan" ? "scan" : initialStep === "create" ? "create" : initialStep === "recipe" ? "recipe" : "browse");
+      setStep(initialStep === "scan" ? "scan" : initialStep === "create" ? "create" : initialStep === "recipe" ? "recipeChoice" : "browse");
       setActiveTab(initialStep === "describe" ? "describe" : "search");
       setPendingSearchFocus(initialStep === "search");
     }
@@ -335,6 +382,9 @@ export default function AddFoodSheet({
     setDebouncedQuery("");
     setScannedBarcode(undefined);
     setCreatePrefillFood(null);
+    setRecipeImportUrlInput("");
+    setRecipeImportError(null);
+    setRecipeImportInitial(null);
     setSheetExpanded(true);
     setLoggedAtOverride(forcedLoggedAt ?? localIsoNoTz());
     setShowTimePicker(false);
@@ -387,6 +437,7 @@ export default function AddFoodSheet({
   const createFood = useCreateFood();
   const deleteFood = useDeleteFood();
   const createRecipe = useCreateRecipe();
+  const importRecipeUrl = useImportRecipeUrl();
   const barcodeLookup = useBarcodeLookup();
   const favorites = useFavorites();
   const recipes = useRecipes();
@@ -542,6 +593,28 @@ export default function AddFoodSheet({
     });
   }
 
+  // Import-from-link's own submit — fetches+parses the page server-side (see
+  // engine/recipeImport.ts), then hands the result to RecipeForm as a
+  // pre-filled but still-unsaved draft via recipeImportInitial, same as
+  // CreateRecipeFromGroupSheet's own group-to-recipe prefill.
+  function submitRecipeImport() {
+    const url = recipeImportUrlInput.trim();
+    if (!url) return;
+    setRecipeImportError(null);
+    importRecipeUrl.mutate(url, {
+      onSuccess: (result) => {
+        setRecipeImportInitial({
+          name: result.name,
+          servings: result.servings,
+          totalWeightGrams: result.totalWeightGrams ?? result.ingredients.reduce((sum, i) => sum + i.quantityGrams, 0),
+          ingredients: result.ingredients,
+        });
+        changeStep("recipe");
+      },
+      onError: (err) => setRecipeImportError(err instanceof Error ? err.message : "Couldn't import a recipe from that link"),
+    });
+  }
+
   // The batch commit — this project's equivalent of a single bulkAdd write,
   // via the same POST /api/logs/bulk endpoint the old multi-select flow
   // used (backend/src/routes/logs.ts), just fed from stagedPlate instead of
@@ -602,8 +675,9 @@ export default function AddFoodSheet({
   // reaches it, but the ref removes any dependency on that being true and
   // costs nothing.
   function requestClose() {
-    if (!editingEntry && SHEET_SUB_STEPS.has(stepRef.current)) {
-      changeStep("browse");
+    const backTarget = !editingEntry ? SHEET_SUB_STEP_BACK[stepRef.current] : undefined;
+    if (backTarget) {
+      changeStep(backTarget);
       return;
     }
     if (stagedPlate.length > 0) {
@@ -621,6 +695,7 @@ export default function AddFoodSheet({
       : "Recently logged";
 
   const plateTotals = sumNutrition(stagedPlate.map((item) => scaleNutrition(item.food, item.quantityGrams)));
+  const commitDisabled = stagedPlate.length === 0;
 
   // Portaled straight to <body>, same as BottomSheet.tsx and for the same
   // reason: this is mounted from several different call sites at very
@@ -652,12 +727,26 @@ export default function AddFoodSheet({
       // and only renders this subtree once `open` flips true, so it's a fresh
       // DOM node — and therefore a fresh animation — on every open, regardless
       // of which step (browse/search/scan/create) it lands on.
-      className="fixed inset-x-0 z-50 bg-dashboardBg flex flex-col pb-[env(safe-area-inset-bottom)] page-enter"
+      //
+      // Recipe-picker mode's own "browse" step goes without the opaque
+      // background here (and re-adds it explicitly on the header/Layer 2
+      // below, which do need to stay legible) — the caller (RecipeForm, via
+      // AddFoodSheet's own "recipe" step) is a second AddFoodSheet instance
+      // rendered directly underneath this one, at the exact same visual-
+      // viewport-tracked box, so leaving Layer 1's own region transparent
+      // reveals the real Create Recipe screen through it while dragging
+      // instead of a blank sliver — see Layer 1 below. Every other step
+      // (detail/create/scan) still wants the normal opaque background
+      // regardless of onPickItems, hence the `step === "browse"` half of
+      // this check.
+      className={`fixed inset-x-0 z-50 flex flex-col pb-[env(safe-area-inset-bottom)] page-enter ${
+        step === "browse" && onPickItems ? "" : "bg-dashboardBg"
+      }`}
       style={{ top: viewportOffsetTop, height: viewportHeight }}
     >
         {step === "browse" && (
           <>
-            <div ref={headerRef}>
+            <div ref={headerRef} className={onPickItems ? "bg-dashboardBg" : undefined}>
               <BrowseHeader
                 onClose={requestClose}
                 totals={totals}
@@ -666,6 +755,7 @@ export default function AddFoodSheet({
                 stagedPlate={stagedPlate}
                 timeLabel={formatLogTime(loggedAtOverride)}
                 onTimeClick={() => setShowTimePicker(true)}
+                pickedFoods={onPickItems ? stagedPlate.map((i) => i.food) : undefined}
               />
             </div>
 
@@ -674,12 +764,17 @@ export default function AddFoodSheet({
             <div className="relative flex-1 min-h-0">
               {/* Layer 1: Plate View — full-screen background. Bottom padding
                   reserves room for the Search sheet's collapsed peek, which is
-                  always visible on top of it regardless of expand state. */}
+                  always visible on top of it regardless of expand state.
+                  Recipe-picker mode never renders StagedPlateSection here —
+                  BrowseHeader's icon row above already shows what's staged,
+                  and leaving this region empty is what lets the real Create
+                  Recipe screen show through it (see the outer container's own
+                  comment above). */}
               <div
                 className="absolute inset-0 overflow-y-auto"
                 style={{ paddingBottom: SHEET_COLLAPSED_PEEK_PX }}
               >
-                {stagedPlate.length > 0 ? (
+                {stagedPlate.length > 0 && !onPickItems ? (
                   <StagedPlateSection
                     stagedPlate={stagedPlate}
                     plateTotals={plateTotals}
@@ -692,29 +787,26 @@ export default function AddFoodSheet({
                     updatePlateItemQuantity={updatePlateItemQuantity}
                     removeFromPlate={removeFromPlate}
                   />
-                ) : (
-                  // Fixed height (emptyPlateMessageHeight, the space visible
-                  // above the sheet's collapsed resting position) — not the
-                  // sheet's live current height. The message stays anchored
-                  // at this one spot (~screen center) regardless of whether
-                  // the sheet is expanded, collapsed, or mid-drag; it may sit
-                  // underneath the expanded sheet rather than always being
-                  // visible above it, which is the explicit tradeoff for not
-                  // having it move around.
-                  <div
-                    className="flex flex-col items-center justify-center gap-1.5 px-8 text-center"
-                    style={{ height: emptyPlateMessageHeight }}
-                  >
-                    <Utensils className="w-4 h-4 text-muted" strokeWidth={1.5} />
-                    <p className="text-[11px] text-muted">Nothing on your plate yet — search below to add something</p>
-                  </div>
-                )}
+                ) : null}
               </div>
 
               {/* Layer 2 (foreground): the Search/Scan/Quick Add/Custom sheet. */}
               <DraggableSnapSheet
                 expanded={sheetExpanded}
-                onExpandedChange={setSheetExpanded}
+                onExpandedChange={(next) => {
+                  // Recipe-picker mode has no real "collapsed" resting state
+                  // of its own (no Plate View worth peeking at — see Layer 1
+                  // above), so the collapse gesture instead means what it
+                  // visually looks like: dismiss the sheet, back to the
+                  // recipe screen. Goes through requestClose (not a bare
+                  // onClose) so a non-empty staged plate still gets its
+                  // discard confirmation, same as the X button.
+                  if (!next && onPickItems) {
+                    requestClose();
+                    return;
+                  }
+                  setSheetExpanded(next);
+                }}
                 panelHeight={sheetPanelHeightPx}
                 collapsedPeek={SHEET_COLLAPSED_PEEK_PX}
                 panelClassName="bg-dashboardBg rounded-t-xl border-t border-white/10 shadow-[0_-8px_24px_rgba(0,0,0,0.45)]"
@@ -811,7 +903,7 @@ export default function AddFoodSheet({
                           onOpen={openFoodDetail}
                           onQuickAdd={pickFood}
                           onCreateFood={() => changeStep("create")}
-                          onCreateRecipe={() => changeStep("recipe")}
+                          onCreateRecipe={() => changeStep("recipeChoice")}
                         />
                       )}
                     </div>
@@ -852,21 +944,51 @@ export default function AddFoodSheet({
                   </div>
                 )}
               </DraggableSnapSheet>
+
+              {/* Floating commit button — replaces the pinned ActionBar
+                  (search pill + commit button) while the sheet is collapsed
+                  and nothing's being quantity-edited, so the collapsed Plate
+                  View isn't permanently sharing its bottom edge with a search
+                  box that has nothing to search against right now (the
+                  sheet's own tab row is what re-opens search). Positioned
+                  against SHEET_COLLAPSED_PEEK_PX directly (not a measured
+                  ref) since the collapsed sheet's own height is that same
+                  constant, not something that needs runtime measurement. */}
+              {!sheetExpanded && !editingPlateKey && (
+                <button
+                  onClick={confirmPlate}
+                  disabled={commitDisabled}
+                  className="absolute right-4 z-10 rounded-full bg-white px-5 py-2.5 text-sm font-bold text-black shadow-[0_4px_16px_rgba(0,0,0,0.35)] disabled:opacity-50"
+                  style={{ bottom: SHEET_COLLAPSED_PEEK_PX + 12 }}
+                >
+                  {stagedPlate.length > 0 ? `${commitLabel} (${stagedPlate.length})` : commitLabel}
+                </button>
+              )}
             </div>
 
             {/* Unified pinned action bar — search pill + Log Foods, always in
-                the same place together regardless of which tab is active or
-                whether the sheet above is expanded or collapsed. A normal
-                flex sibling (not absolutely/fixed-positioned over Layer
-                1/Layer 2), so it can't drift out of sync with — or overlap —
-                the collapsed sheet's own peek row the way two independently
-                bottom-pinned elements could.
+                the same place together regardless of which tab is active. A
+                normal flex sibling (not absolutely/fixed-positioned over
+                Layer 1/Layer 2), so it can't drift out of sync with — or
+                overlap — the collapsed sheet's own peek row the way two
+                independently bottom-pinned elements could.
                 While a plate item's quantity is being edited (Layer 1's
                 "358 g" pill swapped for a live input — see StagedPlateSection),
                 this same pinned slot shows quick-pick serving chips instead —
                 reusing the spot ActionBar already keeps pinned just above the
                 on-screen keyboard rather than teaching a second element that
-                same visual-viewport-tracked positioning. */}
+                same visual-viewport-tracked positioning.
+                The ActionBar branch is visually collapsed (grid-template-rows
+                0fr/1fr, not a conditional unmount) whenever the sheet is
+                collapsed — see the floating button above, which takes over
+                its job in that state. The collapse is purely visual — the
+                `actionBarHeight` measurement effect below ignores a 0px
+                reading (see its own comment) specifically so this doesn't
+                feed a stale 0 into contentHeight/sheetPanelHeightPx (which
+                size the *expanded* sheet) for the one tick between the sheet
+                re-expanding and ActionBar's real height being remeasured;
+                unmounting it here instead of just visually collapsing it
+                would have made that gap real, not just a stale reading. */}
             <div ref={actionBarRef}>
               {editingPlateKey && stagedPlate.some((i) => i.key === editingPlateKey) ? (
                 <QuantityPresetBar
@@ -877,15 +999,23 @@ export default function AddFoodSheet({
                   }}
                 />
               ) : (
-                <ActionBar
-                  activeTab={activeTab}
-                  query={query}
-                  setQuery={setQuery}
-                  searchInputRef={searchInputRef}
-                  stagedPlate={stagedPlate}
-                  onLogFoods={confirmPlate}
-                  commitLabel={commitLabel}
-                />
+                <div
+                  className="grid transition-[grid-template-rows] duration-200 ease-out"
+                  style={{ gridTemplateRows: sheetExpanded ? "1fr" : "0fr" }}
+                >
+                  <div className="overflow-hidden">
+                    <ActionBar
+                      activeTab={activeTab}
+                      query={query}
+                      setQuery={setQuery}
+                      searchInputRef={searchInputRef}
+                      stagedPlate={stagedPlate}
+                      commitDisabled={commitDisabled}
+                      onLogFoods={confirmPlate}
+                      commitLabel={commitLabel}
+                    />
+                  </div>
+                </div>
               )}
             </div>
           </>
@@ -906,16 +1036,29 @@ export default function AddFoodSheet({
             backLabel={editingEntry ? "Close" : "Back to search results"}
             onBack={() => (editingEntry ? onClose() : changeStep("browse"))}
             onAdd={(food, quantityGrams) => {
-              addToPlate(food, quantityGrams);
+              // Recipe-picker mode: Food Detail's "Add" commits straight to
+              // the recipe rather than onto this sheet's own local staging
+              // plate — unlike the row's quick-"+" (still staged, reviewable
+              // via the header icon row, undoable by swiping away), setting
+              // an exact quantity here and tapping Add is a deliberate,
+              // considered action, so it lands for real immediately. The
+              // sheet still stays open afterward (changeStep("browse"), not
+              // onClose) so more ingredients can be picked in a row.
+              if (onPickItems) {
+                onPickItems([{ food, quantityGrams }]);
+              } else {
+                addToPlate(food, quantityGrams);
+              }
               changeStep("browse");
             }}
             onLogFoods={confirmPlateWithExtra}
+            hideTargetsUi={!!onPickItems}
             onSaveAsCustom={openCreateFromFood}
             isFavorite={favoriteFoodIds.has(selectedFood.id)}
             onToggleFavorite={toggleFavorite}
             editing={editingEntry ? { onSave: saveEditedQuantity, onDelete: () => setShowDeleteConfirm(true) } : undefined}
             onDeleteFood={
-              selectedFood.source === "custom" || selectedFood.source === "ai_estimate"
+              selectedFood.source === "custom" || selectedFood.source === "ai_estimate" || selectedFood.source === "afcd"
                 ? () => deleteFood.mutate(selectedFood.id, { onSuccess: () => changeStep("browse") })
                 : undefined
             }
@@ -943,26 +1086,133 @@ export default function AddFoodSheet({
           />
         )}
 
+        {step === "recipeChoice" && (
+          <div className="flex-1 flex flex-col min-h-0 step-enter">
+            <div className="px-2.5 pt-1 pb-1 flex items-center gap-1 shrink-0">
+              <button
+                onClick={() => changeStep("browse")}
+                aria-label="Back"
+                className="h-9 w-9 shrink-0 flex items-center justify-center rounded-full text-white active:bg-white/10"
+              >
+                <ChevronLeft size={18} strokeWidth={2} />
+              </button>
+              <span className="text-sm font-medium text-white">New recipe</span>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
+              <button
+                onClick={() => changeStep("recipe")}
+                className="w-full flex items-center gap-3 rounded-2xl bg-surface p-4 text-left active:bg-surface-raised"
+              >
+                <span className="h-11 w-11 rounded-full bg-dashboardChip flex items-center justify-center shrink-0">
+                  <ChefHat size={20} strokeWidth={2} className="text-white" />
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm font-semibold text-white">From scratch</span>
+                  <span className="block text-xs text-muted mt-0.5">Add ingredients and build it up yourself.</span>
+                </span>
+                <ChevronRight size={16} strokeWidth={2} className="text-muted shrink-0" />
+              </button>
+              <button
+                onClick={() => changeStep("recipeImportUrl")}
+                className="w-full flex items-center gap-3 rounded-2xl bg-surface p-4 text-left active:bg-surface-raised"
+              >
+                <span className="h-11 w-11 rounded-full bg-dashboardChip flex items-center justify-center shrink-0">
+                  <Link2 size={20} strokeWidth={2} className="text-white" />
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm font-semibold text-white">Import from a link</span>
+                  <span className="block text-xs text-muted mt-0.5">Paste a recipe URL and we'll fill it in for you to review.</span>
+                </span>
+                <ChevronRight size={16} strokeWidth={2} className="text-muted shrink-0" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === "recipeImportUrl" && (
+          <div className="flex-1 flex flex-col min-h-0 step-enter">
+            <div className="px-2.5 pt-1 pb-1 flex items-center gap-1 shrink-0">
+              <button
+                onClick={() => changeStep("recipeChoice")}
+                aria-label="Back"
+                className="h-9 w-9 shrink-0 flex items-center justify-center rounded-full text-white active:bg-white/10"
+              >
+                <ChevronLeft size={18} strokeWidth={2} />
+              </button>
+              <span className="text-sm font-medium text-white">Import from a link</span>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 pb-4">
+              <p className="text-xs text-muted mb-3">
+                Paste a link to a recipe page — we'll read it and fill in the name, ingredients, and amounts for
+                you to review before saving.
+              </p>
+              <input
+                type="url"
+                inputMode="url"
+                autoComplete="off"
+                autoFocus
+                value={recipeImportUrlInput}
+                onChange={(e) => setRecipeImportUrlInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") submitRecipeImport(); }}
+                placeholder="https://example.com/recipe"
+                disabled={importRecipeUrl.isPending}
+                className="w-full rounded-md bg-surface-raised border border-line px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent disabled:opacity-60"
+              />
+              {recipeImportError && <p className="text-xs text-red-400 mt-2">{recipeImportError}</p>}
+            </div>
+            <div className="p-4 shrink-0">
+              <button
+                onClick={submitRecipeImport}
+                disabled={!recipeImportUrlInput.trim() || importRecipeUrl.isPending}
+                className="w-full py-3.5 rounded-xl bg-accent text-base disabled:opacity-40 font-semibold flex items-center justify-center gap-2"
+                style={{ color: "#0B1210" }}
+              >
+                {importRecipeUrl.isPending && <Loader2 size={16} strokeWidth={2.5} className="animate-spin" />}
+                {importRecipeUrl.isPending ? "Importing…" : "Import Recipe"}
+              </button>
+            </div>
+          </div>
+        )}
+
         {step === "recipe" && (
-          <RecipeForm
-            initialName={query.trim()}
-            onCancel={() => changeStep("browse")}
-            onCreated={(input) => {
-              createRecipe.mutate(
-                {
-                  name: input.name,
-                  icon: input.icon,
-                  servings: input.servings,
-                  totalWeightGrams: input.totalWeightGrams,
-                  ingredients: input.ingredients.map((i) => ({
-                    foodId: i.food.id,
-                    quantityGrams: i.quantityGrams,
-                  })),
-                },
-                { onSuccess: (created) => pickFood(created) }
-              );
-            }}
-          />
+          // step-enter (see FoodDetailScreen's own identical wrapper) — a
+          // plain conditional swap between sibling steps otherwise has no
+          // transition of its own. RecipeForm itself returns a bare
+          // Fragment (its header/body/footer need to be direct flex
+          // children of *some* flex-col container, not nested one level
+          // deeper — see FoodDetailScreen's own comment on this), so this
+          // wrapper both provides that container and carries the animation,
+          // rather than baking step-enter into RecipeForm itself — it's
+          // also reused inside a BottomSheet (RecipeEditSheet,
+          // CreateRecipeFromGroupSheet), which already animates its own
+          // entrance and shouldn't get a second, different one layered on.
+          <div className="flex-1 flex flex-col min-h-0 step-enter">
+            <RecipeForm
+              initialName={query.trim()}
+              // Set only when this step was reached via a successful URL
+              // import (recipeChoice's "From scratch" option leaves this
+              // null) — same "prefilled but not yet persisted" contract as
+              // CreateRecipeFromGroupSheet's own `initial` usage, not "this
+              // is an existing saved recipe."
+              initial={recipeImportInitial ?? undefined}
+              onCancel={() => changeStep("browse")}
+              onCreated={(input) => {
+                createRecipe.mutate(
+                  {
+                    name: input.name,
+                    icon: input.icon,
+                    servings: input.servings,
+                    totalWeightGrams: input.totalWeightGrams,
+                    ingredients: input.ingredients.map((i) => ({
+                      foodId: i.food.id,
+                      quantityGrams: i.quantityGrams,
+                    })),
+                  },
+                  { onSuccess: (created) => pickFood(created) }
+                );
+              }}
+            />
+          </div>
         )}
     </div>
 
@@ -973,10 +1223,19 @@ export default function AddFoodSheet({
       )}
 
       {showCloseWarning && (
-        <UnloggedPlateWarning
-          count={stagedPlate.length}
-          onKeepEditing={() => setShowCloseWarning(false)}
-          onCloseAnyway={() => {
+        <DiscardWarningSheet
+          title={
+            onPickItems
+              ? `${stagedPlate.length} ingredient${stagedPlate.length === 1 ? "" : "s"} not yet added`
+              : `${stagedPlate.length} unlogged item${stagedPlate.length === 1 ? "" : "s"} on your plate`
+          }
+          message={
+            onPickItems
+              ? `${stagedPlate.length === 1 ? "It won't" : "They won't"} be added to this recipe unless you go back and tap ${commitLabel}.`
+              : `${stagedPlate.length === 1 ? "It hasn't" : "They haven't"} been logged yet. ${stagedPlate.length === 1 ? "It'll" : "They'll"} still be here if you come back, but will be lost if you refresh or fully close the app.`
+          }
+          onCancel={() => setShowCloseWarning(false)}
+          onConfirm={() => {
             setShowCloseWarning(false);
             onClose();
           }}
@@ -1175,6 +1434,7 @@ function BrowseHeader({
   stagedPlate,
   timeLabel,
   onTimeClick,
+  pickedFoods,
 }: {
   onClose: () => void;
   totals?: Nutrition;
@@ -1187,9 +1447,32 @@ function BrowseHeader({
   stagedPlate: PlateItem[];
   timeLabel: string;
   onTimeClick: () => void;
+  // Recipe-picker mode only (see AddFoodSheet's onPickItems) — when set,
+  // this replaces the whole time-pill + macro-bars row below with a plain
+  // icon row of the staged plate instead (same items as stagedPlate, just
+  // rendered as a flat scrollable row rather than the small overlapping
+  // stack): a time-of-day pill and "N left" budget bars don't mean anything
+  // for a recipe, which has no log time and no daily target. Matches
+  // MacroFactor's own Create Recipe picker header.
+  pickedFoods?: Food[];
 }) {
   const visibleAvatars = stagedPlate.slice(0, 3);
   const overflowCount = stagedPlate.length - visibleAvatars.length;
+
+  if (pickedFoods) {
+    return (
+      <div className="flex items-center gap-3 px-4 pb-3 shrink-0" style={{ paddingTop: "calc(env(safe-area-inset-top) + 16px)" }}>
+        <button onClick={onClose} aria-label="Close" className="shrink-0 h-5 flex items-center text-white/70 active:text-white">
+          <X className="w-5 h-5" strokeWidth={2} />
+        </button>
+        <div className="flex-1 min-w-0 flex items-center gap-2 overflow-x-auto no-scrollbar">
+          {pickedFoods.map((food, i) => (
+            <FoodIconAvatar key={i} name={food.name} icon={food.icon} className="w-9 h-9 shrink-0" />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     // Top row is the corner controls plus the time pill, all in one row now
@@ -1252,60 +1535,6 @@ function BrowseHeader({
   );
 }
 
-// A small centered confirmation, not a native window.confirm() — this app
-// builds its own dark-themed dialogs/sheets everywhere else, and a native
-// browser prompt would look jarringly out of place here. z-[70], above both
-// the modal itself (z-50) and the barcode scanner (z-[60]), since either
-// could in principle be what's open when this fires (though in practice only
-// the browse step's X button triggers it).
-function UnloggedPlateWarning({
-  count,
-  onKeepEditing,
-  onCloseAnyway,
-}: {
-  count: number;
-  onKeepEditing: () => void;
-  onCloseAnyway: () => void;
-}) {
-  // This dialog is itself conditionally rendered by its parent
-  // (`{showCloseWarning && <UnloggedPlateWarning .../>}`), so it's only ever
-  // mounted while showing — its own history entry layers on top of
-  // AddFoodSheet's, so back dismisses just the warning ("Keep editing")
-  // first, then a second back reaches the sheet underneath.
-  useBackDismiss(true, onKeepEditing);
-
-  return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 px-6" onClick={onKeepEditing}>
-      <div
-        className="w-full max-w-xs rounded-2xl bg-dashboardCard border border-white/10 p-5"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <p className="text-sm font-semibold text-white">
-          {count} unlogged item{count === 1 ? "" : "s"} on your plate
-        </p>
-        <p className="text-[13px] text-muted mt-1.5 leading-snug">
-          {count === 1 ? "It hasn't" : "They haven't"} been logged yet. {count === 1 ? "It" : "They"}'ll still be here
-          if you come back, but will be lost if you refresh or fully close the app.
-        </p>
-        <div className="flex gap-2 mt-4">
-          <button
-            onClick={onKeepEditing}
-            className="flex-1 py-2.5 rounded-full border border-white/15 text-sm font-medium text-white active:bg-white/5"
-          >
-            Keep editing
-          </button>
-          <button
-            onClick={onCloseAnyway}
-            className="flex-1 py-2.5 rounded-full bg-white text-sm font-bold text-black active:bg-white/90"
-          >
-            Close anyway
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // The one place "Search for a food" and "Log Foods" live — previously the
 // search input was tab-specific footer content inside the sheet (Layer 2)
 // while Log Foods floated as its own absolutely-positioned pill elsewhere,
@@ -1324,6 +1553,7 @@ function ActionBar({
   setQuery,
   searchInputRef,
   stagedPlate,
+  commitDisabled,
   onLogFoods,
   commitLabel = "Log Foods",
 }: {
@@ -1332,6 +1562,7 @@ function ActionBar({
   setQuery: (q: string) => void;
   searchInputRef: RefObject<HTMLInputElement>;
   stagedPlate: PlateItem[];
+  commitDisabled: boolean;
   onLogFoods: () => void;
   commitLabel?: string;
 }) {
@@ -1365,7 +1596,7 @@ function ActionBar({
       )}
       <button
         onClick={onLogFoods}
-        disabled={stagedPlate.length === 0}
+        disabled={commitDisabled}
         className={`rounded-full bg-white px-5 py-2.5 text-sm font-bold text-black disabled:opacity-50 ${
           activeTab === "search" ? "shrink-0" : "flex-1"
         }`}

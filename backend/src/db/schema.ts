@@ -25,7 +25,7 @@ export const foods = sqliteTable("foods", {
   name: text("name").notNull(),
   brand: text("brand"),
   barcode: text("barcode"),
-  source: text("source").notNull().default("custom"), // 'custom' | 'openfoodfacts' | 'recipe' | 'ai_estimate'
+  source: text("source").notNull().default("custom"), // 'custom' | 'openfoodfacts' | 'recipe' | 'ai_estimate' | 'afcd'
   servingSizeGrams: real("serving_size_grams"),
   servingName: text("serving_name"),
   caloriesPer100g: real("calories_per_100g").notNull(),
@@ -42,6 +42,17 @@ export const foods = sqliteTable("foods", {
   omega6Per100g: real("omega_6_per_100g"),
   transFatPer100g: real("trans_fat_per_100g"),
   microsJson: text("micros_json"),
+  // Same {key: grams-per-100g} JSON-blob convention as microsJson, kept as
+  // separate columns rather than folded into it purely for read-side
+  // clarity (FoodDetailScreen renders them as distinct sections) — 18 amino
+  // acids and a curated set of carb subtypes (fructose/glucose/sucrose/
+  // lactose/maltose/galactose/starch) both fall on the "open-ended set, JSON
+  // blob" side of this file's own rule above, same reasoning as
+  // microsJson itself. Populated by scripts/import-afcd-foods.ts (Australian
+  // Food Composition Database) — sparse by design like microsJson, since
+  // AFCD only lab-tested amino acids for a subset of its foods.
+  aminoAcidsJson: text("amino_acids_json"),
+  carbDetailJson: text("carb_detail_json"),
   // A user-picked emoji for a custom food or recipe — null means "no
   // override", so FoodIconAvatar falls back to its keyword-based guess
   // (see lib/foodEmoji.ts's getFoodIcon). OpenFoodFacts imports never set
@@ -148,6 +159,13 @@ export const profiles = sqliteTable("profiles", {
   // ≥7h → Formula 3 (athlete, FFM only); any BF% on file → Formula 2 (body
   // comp); fallback → Formula 1 (height/weight).
   weeklyExerciseHours: real("weekly_exercise_hours"),
+  // Set once, the moment a user's first-ever goal is created (see
+  // POST /api/goals) — never re-derived, never cleared except by the
+  // account-reset flow deleting this whole row. App.tsx's onboarding gate
+  // reads this instead of inferring "done" from live weights/goal state, so
+  // a user who deletes their only weigh-in (trendWeightKg briefly null) or
+  // is temporarily between goals isn't bounced back into OnboardingFlow.
+  onboardingCompletedAt: text("onboarding_completed_at"),
 });
 
 // A goal is WHAT you want (target weight + rate), separate from a Program
@@ -189,8 +207,16 @@ export const programs = sqliteTable("programs", {
   style: text("style").notNull(), // 'coached' | 'manual' (not a DB enum — SQLite has none; 'collaborative' can be added later with no migration)
   dietType: text("diet_type"), // 'balanced'|'low_fat'|'low_carb'|'keto' — null for manual
   calorieFloorKcal: real("calorie_floor_kcal"), // resolved number (1200 or 800) — null for manual
-  proteinLevel: text("protein_level"), // 'low'|'moderate'|'high'|'extra_high' — null for manual
+  proteinLevel: text("protein_level"), // 'low'|'moderate'|'high'|'extra_high'|'custom' — null for manual
   proteinPerKgUsed: real("protein_per_kg_used"), // resolved g/kg actually applied, coached or manual
+  // User-supplied "starting Calories" from the wizard's Calories step, back-
+  // solved into an implied TDEE (see routes/programs.ts) — null when the
+  // wizard's own formula estimate was used instead. Fills the same fallback
+  // slot the formula estimate would (generateCoachedProgramDays: adaptive ??
+  // initialTdeeOverrideKcal ?? formulaTdee), so it seeds check-ins/regenerate
+  // until estimateAdaptiveTdee has enough real logging data to take over on
+  // its own — never touched again after that point, by design. Null for manual.
+  initialTdeeOverrideKcal: real("initial_tdee_override_kcal"),
   // 'total' | 'lean' — whether proteinPerKgUsed is applied against total
   // trend weight or estimated lean body mass (needs a body-fat % on file;
   // falls back to total if none). Defaults 'total' so existing programs are

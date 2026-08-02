@@ -16,6 +16,7 @@ import {
   Beef,
   Dumbbell,
   Check,
+  SlidersHorizontal,
 } from "lucide-react";
 import { useCoachStatus } from "../api/coach";
 import { useCreateProgram, type DietType, type ProteinLevel, type ProteinBasis, type ProgramBreakdown, type ProgramStyle } from "../api/programs";
@@ -24,11 +25,16 @@ import WizardIntroCard from "../components/WizardIntroCard";
 import WizardOption from "../components/WizardOption";
 import WeeklyProgramGrid from "../components/WeeklyProgramGrid";
 import OrbitLoadingAnimation from "../components/OrbitLoadingAnimation";
+import { useBackDismiss } from "../lib/useBackDismiss";
 
-type Step = "intro" | "style" | "diet" | "floor" | "distribution" | "shiftDays" | "protein" | "manualEntry" | "generating" | "results";
+type Step = "intro" | "style" | "diet" | "floor" | "distribution" | "shiftDays" | "protein" | "calories" | "manualEntry" | "generating" | "results";
+// Total step count the progress bar's fractions are measured against — the
+// wizard always visits exactly 6 of these (shiftDays is conditional, but
+// distribution's own 4/6 already accounts for the branch either way).
+const TOTAL_STEPS = 6;
 
 const DIET_LABELS: Record<DietType, string> = { balanced: "Balanced", low_fat: "Low-fat", low_carb: "Low-carb", keto: "Keto" };
-const PROTEIN_LABELS: Record<ProteinLevel, string> = { low: "Low", moderate: "Moderate", high: "High", extra_high: "Extra High" };
+const PROTEIN_LABELS: Record<ProteinLevel, string> = { low: "Low", moderate: "Moderate", high: "High", extra_high: "Extra High", custom: "Custom" };
 const SHIFT_DAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]; // indexed by dayOfWeek (Sun=0)
 
 export default function ProgramWizardScreen() {
@@ -58,6 +64,7 @@ function ProgramWizardBody({ goalId }: { goalId: string }) {
   const createProgram = useCreateProgram();
   const status = useCoachStatus();
   const bodyFatPercent = status.data?.bodyFatPercent ?? null;
+  const trendWeightKg = status.data?.trendWeightKg ?? null;
 
   const [step, setStep] = useState<Step>("intro");
   const [style, setStyle] = useState<ProgramStyle | null>(null);
@@ -70,7 +77,15 @@ function ProgramWizardBody({ goalId }: { goalId: string }) {
   // engine/program.ts) — the "shiftDays" step's Next button enforces that.
   const [shiftedHighDays, setShiftedHighDays] = useState<number[]>([0, 6]);
   const [proteinLevel, setProteinLevel] = useState<ProteinLevel>("moderate");
+  const [customProteinPerKg, setCustomProteinPerKg] = useState(2.0);
   const [proteinBasis, setProteinBasis] = useState<ProteinBasis>("total");
+  // Weight the live "g/day" preview under the Custom slider is based on —
+  // lean mass when that's what proteinBasis will actually apply (matches
+  // generateCoachedProgramDays' own useLean fallback), else trend weight.
+  const proteinPreviewWeightKg =
+    trendWeightKg === null ? null : proteinBasis === "lean" && bodyFatPercent !== null ? trendWeightKg * (1 - bodyFatPercent / 100) : trendWeightKg;
+  const [caloriesMode, setCaloriesMode] = useState<"auto" | "custom">("auto");
+  const [startingCalories, setStartingCalories] = useState("");
   const [manualValues, setManualValues] = useState({ calories: "2000", protein: "150", carbs: "200", fat: "60" });
   const [result, setResult] = useState<{ program: Awaited<ReturnType<typeof createProgram.mutateAsync>>["program"]; breakdown: ProgramBreakdown | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -85,6 +100,8 @@ function ProgramWizardBody({ goalId }: { goalId: string }) {
         dietType,
         calorieFloorKcal,
         proteinLevel,
+        customProteinPerKg: proteinLevel === "custom" ? customProteinPerKg : undefined,
+        startingCalories: caloriesMode === "custom" ? Number(startingCalories) : undefined,
         distributionMode,
         shiftedHighDays: distributionMode === "shifted" ? shiftedHighDays : undefined,
         proteinBasis,
@@ -96,11 +113,36 @@ function ProgramWizardBody({ goalId }: { goalId: string }) {
         },
         onError: (e) => {
           setError(e instanceof Error ? e.message : "Couldn't generate your program.");
-          setStep("protein");
+          setStep("calories");
         },
       }
     );
   }
+
+  // Single source of truth for "back" within the wizard's own steps — shared
+  // by every step's WizardShell chevron (below) and the hardware/gesture
+  // back button (via useBackDismiss just below). Same fix as GoalWizardScreen:
+  // without a trap, none of these steps have their own history entry, so one
+  // back press from anywhere past "intro" used to skip the whole wizard
+  // instead of stepping back one page.
+  function goBack() {
+    if (step === "diet") setStep("style");
+    else if (step === "floor") setStep("diet");
+    else if (step === "distribution") setStep("floor");
+    else if (step === "shiftDays") setStep("distribution");
+    else if (step === "protein") setStep(distributionMode === "shifted" ? "shiftDays" : "distribution");
+    else if (step === "calories") setStep("protein");
+    else if (step === "manualEntry") setStep("style");
+    // "results" is a terminal success state with nothing to step back into —
+    // matches its own WizardShell's onBack below, which already left the
+    // whole wizard rather than reopening an input step.
+    else if (step === "results") navigate("/strategy");
+    else setStep("intro");
+  }
+  // Inactive on "intro" (a real route, falls through to normal browser
+  // history same as GoalWizardScreen) and "generating" (a transient submit
+  // state with no back button of its own to mirror).
+  useBackDismiss(step !== "intro" && step !== "generating", goBack);
 
   function submitManual() {
     const calories = Number(manualValues.calories) || 0;
@@ -139,7 +181,7 @@ function ProgramWizardBody({ goalId }: { goalId: string }) {
 
   if (step === "style") {
     return (
-      <WizardShell key={step} title="Create New Program" progress={1 / 5} onBack={() => setStep("intro")} footer={
+      <WizardShell key={step} title="Create New Program" progress={1 / TOTAL_STEPS} onBack={goBack} footer={
         <button
           onClick={() => setStep(style === "manual" ? "manualEntry" : "diet")}
           disabled={!style}
@@ -180,7 +222,7 @@ function ProgramWizardBody({ goalId }: { goalId: string }) {
 
   if (step === "diet") {
     return (
-      <WizardShell key={step} title="Create New Program" progress={2 / 5} onBack={() => setStep("style")} footer={
+      <WizardShell key={step} title="Create New Program" progress={2 / TOTAL_STEPS} onBack={goBack} footer={
         <button onClick={() => setStep("floor")} className="w-full py-3.5 rounded-full text-sm font-semibold" style={{ background: "#ECEDEE", color: "#0B1210" }}>
           Next
         </button>
@@ -198,7 +240,7 @@ function ProgramWizardBody({ goalId }: { goalId: string }) {
 
   if (step === "floor") {
     return (
-      <WizardShell key={step} title="Create New Program" progress={3 / 5} onBack={() => setStep("diet")} footer={
+      <WizardShell key={step} title="Create New Program" progress={3 / TOTAL_STEPS} onBack={goBack} footer={
         <button onClick={() => setStep("distribution")} className="w-full py-3.5 rounded-full text-sm font-semibold" style={{ background: "#ECEDEE", color: "#0B1210" }}>
           Next
         </button>
@@ -214,7 +256,7 @@ function ProgramWizardBody({ goalId }: { goalId: string }) {
 
   if (step === "distribution") {
     return (
-      <WizardShell key={step} title="Create New Program" progress={4 / 5} onBack={() => setStep("floor")} footer={
+      <WizardShell key={step} title="Create New Program" progress={4 / TOTAL_STEPS} onBack={goBack} footer={
         <button
           onClick={() => setStep(distributionMode === "shifted" ? "shiftDays" : "protein")}
           className="w-full py-3.5 rounded-full text-sm font-semibold"
@@ -238,7 +280,7 @@ function ProgramWizardBody({ goalId }: { goalId: string }) {
       setShiftedHighDays((prev) => (prev.includes(dow) ? prev.filter((d) => d !== dow) : [...prev, dow]));
 
     return (
-      <WizardShell key={step} title="Create New Program" progress={4.5 / 5} onBack={() => setStep("distribution")} footer={
+      <WizardShell key={step} title="Create New Program" progress={4.5 / TOTAL_STEPS} onBack={goBack} footer={
         <button
           onClick={() => setStep("protein")}
           disabled={!isValid}
@@ -281,13 +323,10 @@ function ProgramWizardBody({ goalId }: { goalId: string }) {
 
   if (step === "protein") {
     return (
-      <WizardShell key={step} title="Create New Program" progress={5 / 5} onBack={() => setStep(distributionMode === "shifted" ? "shiftDays" : "distribution")} footer={
-        <div className="space-y-2">
-          {error && <p className="text-xs text-red-400 text-center">{error}</p>}
-          <button onClick={generateCoached} className="w-full py-3.5 rounded-full text-sm font-semibold" style={{ background: "#ECEDEE", color: "#0B1210" }}>
-            Next
-          </button>
-        </div>
+      <WizardShell key={step} title="Create New Program" progress={5 / TOTAL_STEPS} onBack={goBack} footer={
+        <button onClick={() => setStep("calories")} className="w-full py-3.5 rounded-full text-sm font-semibold" style={{ background: "#ECEDEE", color: "#0B1210" }}>
+          Next
+        </button>
       }>
         <h2 className="text-lg font-bold mb-3">What is your preferred protein intake?</h2>
         <div className="space-y-2">
@@ -295,7 +334,37 @@ function ProgramWizardBody({ goalId }: { goalId: string }) {
           <WizardOption icon={<Egg className="w-4 h-4" strokeWidth={2} />} title="Moderate" description="1.8 g/kg — comfortably above the intake shown to maximize muscle gains." selected={proteinLevel === "moderate"} onSelect={() => setProteinLevel("moderate")} />
           <WizardOption icon={<Beef className="w-4 h-4" strokeWidth={2} />} title="High" description="2.2 g/kg — top of the evidence-backed range for building muscle." selected={proteinLevel === "high"} onSelect={() => setProteinLevel("high")} />
           <WizardOption icon={<Dumbbell className="w-4 h-4" strokeWidth={2} />} title="Extra High" description="2.8 g/kg — within the higher range research supports for preserving muscle in a calorie deficit." selected={proteinLevel === "extra_high"} onSelect={() => setProteinLevel("extra_high")} />
+          <WizardOption icon={<SlidersHorizontal className="w-4 h-4" strokeWidth={2} />} title="Custom" description="Pick your own g/kg target with a slider." selected={proteinLevel === "custom"} onSelect={() => setProteinLevel("custom")} />
         </div>
+
+        {proteinLevel === "custom" && (
+          <div className="mt-3 border border-line rounded-md px-4 py-3">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-medium">Protein per kg</p>
+              <p className="tabular text-sm">{customProteinPerKg.toFixed(2)} g/kg</p>
+            </div>
+            {/* data-no-rubber-band: a horizontal thumb-drag always carries a
+                little vertical wobble, enough to arm useRubberBandScroll's
+                pull gesture mid-drag otherwise — same fix as Edit Program's
+                sliders. */}
+            <div data-no-rubber-band>
+              <input
+                type="range"
+                min={0.5}
+                max={4}
+                step={0.05}
+                value={customProteinPerKg}
+                onChange={(e) => setCustomProteinPerKg(Number(e.target.value))}
+                className="w-full accent-protein"
+              />
+            </div>
+            <p className="text-xs text-muted mt-1">
+              {proteinPreviewWeightKg === null
+                ? "Log a weigh-in to preview your daily gram target."
+                : `${Math.round(customProteinPerKg * proteinPreviewWeightKg)} g/day at ${proteinPreviewWeightKg.toFixed(1)} kg ${proteinBasis === "lean" ? "lean mass" : "body weight"}.`}
+            </p>
+          </div>
+        )}
 
         {/* A compact segmented toggle, not two more WizardOption cards — a
             plain binary choice doesn't need the icon+description card
@@ -330,9 +399,70 @@ function ProgramWizardBody({ goalId }: { goalId: string }) {
     );
   }
 
+  if (step === "calories") {
+    const isValid = caloriesMode === "auto" || (startingCalories.trim() !== "" && Number(startingCalories) > 0);
+    return (
+      <WizardShell key={step} title="Create New Program" progress={6 / TOTAL_STEPS} onBack={goBack} footer={
+        <div className="space-y-2">
+          {error && <p className="text-xs text-red-400 text-center">{error}</p>}
+          <button
+            onClick={generateCoached}
+            disabled={!isValid}
+            className="w-full py-3.5 rounded-full text-sm font-semibold disabled:opacity-40"
+            style={{ background: "#ECEDEE", color: "#0B1210" }}
+          >
+            Create Program
+          </button>
+        </div>
+      }>
+        <h2 className="text-lg font-bold mb-3">Where would you like to start your Calories?</h2>
+        <div className="space-y-2">
+          <WizardOption
+            icon={<FlaskConical className="w-4 h-4" strokeWidth={2} />}
+            title="Let the Coach Calculate It"
+            description="We'll estimate your starting Calories from your stats and goal rate."
+            selected={caloriesMode === "auto"}
+            onSelect={() => setCaloriesMode("auto")}
+          />
+          <WizardOption
+            icon={<SlidersHorizontal className="w-4 h-4" strokeWidth={2} />}
+            title="Set My Own Starting Point"
+            description="Enter your own starting Calories — the Coach keeps adjusting from there as your data comes in."
+            selected={caloriesMode === "custom"}
+            onSelect={() => setCaloriesMode("custom")}
+          />
+        </div>
+
+        {caloriesMode === "custom" && (
+          <div className="mt-3 border border-line rounded-md px-4 py-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">Starting Calories</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={startingCalories}
+                  onChange={(e) => setStartingCalories(e.target.value)}
+                  placeholder="e.g. 2100"
+                  className="w-24 bg-transparent text-right tabular focus:outline-none"
+                />
+                <span className="text-xs text-muted">kcal</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <p className="text-xs text-muted mt-3">
+          Whichever you pick, future check-ins keep refining your expenditure from your real weight and logging data — this only sets where you begin.
+        </p>
+      </WizardShell>
+    );
+  }
+
   if (step === "manualEntry") {
     return (
-      <WizardShell key={step} title="Create New Program" progress={2 / 2} onBack={() => setStep("style")} footer={
+      <WizardShell key={step} title="Create New Program" progress={2 / 2} onBack={goBack} footer={
         <div className="space-y-2">
           {error && <p className="text-xs text-red-400 text-center">{error}</p>}
           <button
@@ -390,7 +520,7 @@ function ProgramWizardBody({ goalId }: { goalId: string }) {
       key={step}
       title="Create New Program"
       progress={1}
-      onBack={() => navigate("/strategy")}
+      onBack={goBack}
       footer={
         <button onClick={() => navigate("/strategy")} className="w-full py-3.5 rounded-full text-sm font-semibold" style={{ background: "#ECEDEE", color: "#0B1210" }}>
           Done
@@ -408,7 +538,11 @@ function ProgramWizardBody({ goalId }: { goalId: string }) {
           <h3 className="text-base font-bold mt-5 mb-3">How was your program designed?</h3>
           <div className="space-y-0">
             <ReasoningStep n={1} label="Estimated Expenditure" value={`${b.tdee} kcal`} valueColor="#749EF4">
-              Looking back over your nutrition and weight history, we determined that your daily energy expenditure is approximately {b.tdee} kcal.
+              {b.usedInitialOverride ? (
+                <>You set your own starting point, which implies a starting expenditure of about {b.tdee} kcal — future check-ins will refine this automatically from your real weight and logging data.</>
+              ) : (
+                <>Looking back over your nutrition and weight history, we determined that your daily energy expenditure is approximately {b.tdee} kcal.</>
+              )}
             </ReasoningStep>
             <ReasoningStep n={2} label="Average Target" value={`${b.flatTargetCalories} kcal`} valueColor="#059669">
               Your goal rate implies a daily average Calorie target of around {b.flatTargetCalories} kcal.

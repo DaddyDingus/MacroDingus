@@ -1,0 +1,2 @@
+ALTER TABLE `profiles` ADD `onboarding_completed_at` text;--> statement-breakpoint
+UPDATE `profiles` SET `onboarding_completed_at` = `created_at` WHERE `user_id` IN (SELECT DISTINCT `user_id` FROM `goals`);

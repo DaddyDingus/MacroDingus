@@ -1,7 +1,7 @@
 import { computeTrend, KCAL_PER_KG } from "./trendWeight.js";
 import { macroFactorTdee, estimateAdaptiveTdee, computeMacroTargets } from "./tdee.js";
 
-export type ProteinLevel = "low" | "moderate" | "high" | "extra_high";
+export type ProteinLevel = "low" | "moderate" | "high" | "extra_high" | "custom";
 export type DietType = "balanced" | "low_fat" | "low_carb" | "keto";
 export type DistributionMode = "even" | "shifted" | "custom";
 
@@ -39,7 +39,7 @@ export type DistributionMode = "even" | "shifted" | "custom";
 // it reinforces that 2.8 g/kg sitting near the top of Helms' 2.3-3.1 g/kg
 // FFM range (rather than the bottom) is the right place for the most
 // aggressive tier, not overshooting it.
-export const PROTEIN_LEVEL_GRAMS_PER_KG: Record<ProteinLevel, number> = {
+export const PROTEIN_LEVEL_GRAMS_PER_KG: Record<Exclude<ProteinLevel, "custom">, number> = {
   low: 1.4,
   moderate: 1.8,
   high: 2.2,
@@ -153,6 +153,17 @@ export interface CoachedProgramInput {
   targetRateKgPerWeek: number;
   dietType: DietType;
   proteinLevel: ProteinLevel;
+  // Required when proteinLevel is 'custom' — the user's own g/kg pick from
+  // the wizard's slider. Ignored for the four preset levels, which resolve
+  // via PROTEIN_LEVEL_GRAMS_PER_KG instead.
+  customProteinPerKg?: number;
+  // User's own "starting Calories" from the wizard's Calories step, already
+  // back-solved into an implied TDEE by the caller (routes/programs.ts).
+  // Used in place of the formula estimate — but never in place of a real
+  // adaptive estimate, which always wins once there's enough logging
+  // history (see the tdee resolution below). Null/undefined when the
+  // wizard's own formula estimate was used instead.
+  initialTdeeOverrideKcal?: number | null;
   calorieFloorKcal: number;
   distributionMode: "even" | "shifted";
   // Which days get the higher calorie target under 'shifted' — ignored for
@@ -183,6 +194,11 @@ export interface CoachedProgramBreakdown {
   // 'lean' was actually used.
   proteinBasisUsed: "total" | "lean";
   leanBodyMassKg: number | null;
+  // True when this generation's tdee came from initialTdeeOverrideKcal
+  // rather than the formula or real adaptive data — lets the results
+  // screen's "Estimated Expenditure" reasoning step word itself correctly
+  // ("you set this" vs. "we determined this").
+  usedInitialOverride: boolean;
 }
 
 export interface CoachedProgramResult {
@@ -214,10 +230,11 @@ export function generateCoachedProgramDays(input: CoachedProgramInput): CoachedP
     inDeficit: input.targetRateKgPerWeek < 0,
     peakWeightKg,
   });
-  const tdee = adaptive?.tdee ?? formulaTdee;
+  const tdee = adaptive?.tdee ?? input.initialTdeeOverrideKcal ?? formulaTdee;
+  const usedInitialOverride = adaptive == null && input.initialTdeeOverrideKcal != null;
 
   const flatTargetCalories = tdee + (input.targetRateKgPerWeek * KCAL_PER_KG) / 7;
-  const proteinPerKg = PROTEIN_LEVEL_GRAMS_PER_KG[input.proteinLevel];
+  const proteinPerKg = input.proteinLevel === "custom" ? input.customProteinPerKg! : PROTEIN_LEVEL_GRAMS_PER_KG[input.proteinLevel];
   const fatPercent = DIET_TYPE_FAT_PERCENT[input.dietType];
 
   const useLean = input.proteinBasis === "lean" && input.bodyFatPercent != null;
@@ -248,6 +265,7 @@ export function generateCoachedProgramDays(input: CoachedProgramInput): CoachedP
       fatPercentUsed: fatPercent,
       proteinBasisUsed: useLean ? "lean" : "total",
       leanBodyMassKg: leanKg !== null ? Math.round(leanKg * 10) / 10 : null,
+      usedInitialOverride,
     },
   };
 }

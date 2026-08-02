@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus, Heart } from "lucide-react";
 import ConfirmDeleteSheet from "./ConfirmDeleteSheet";
 import type { Food, Nutrition } from "../api/types";
@@ -6,6 +6,7 @@ import type { MacroTargets } from "./MacroSummaryBar";
 import { scaleNutrition } from "../lib/nutrition";
 import { useBackDismiss } from "../lib/useBackDismiss";
 import { useEnergyUnit, kcalToUnit, energyUnitLabel } from "../lib/energyUnit";
+import { useLastLoggedQuantity } from "../api/foods";
 import NutrientStatusBar, { LogTimePill } from "./NutrientStatusBar";
 
 function fmt(n: number, decimals = 0): string {
@@ -104,6 +105,48 @@ const MINERAL_META: Record<string, MicroMeta> = {
 // reference to size a bar against; this row just has no bar, same as Net
 // Carbs/Other Fat/the other fat subtypes below.
 const CHOLESTEROL_META: MicroMeta = { label: "Cholesterol", unit: "mg", toDisplay: MG_TO_DISPLAY };
+
+// foods.aminoAcidsJson — same {key: grams-per-100g} convention as
+// microsJson, currently only populated by the AFCD seed
+// (scripts/import-afcd-foods.ts). No dailyValue for any of these: there's
+// no FDA %DV reference for an individual amino acid the way there is for
+// protein as a whole, so every row here renders label+amount with no bar,
+// same as Cholesterol above.
+const AMINO_ACID_META: Record<string, MicroMeta> = {
+  "alanine_100g": { label: "Alanine", unit: "mg", toDisplay: MG_TO_DISPLAY },
+  "arginine_100g": { label: "Arginine", unit: "mg", toDisplay: MG_TO_DISPLAY },
+  "aspartic-acid_100g": { label: "Aspartic acid", unit: "mg", toDisplay: MG_TO_DISPLAY },
+  "cystine-plus-cysteine_100g": { label: "Cystine + Cysteine", unit: "mg", toDisplay: MG_TO_DISPLAY },
+  "glutamic-acid_100g": { label: "Glutamic acid", unit: "mg", toDisplay: MG_TO_DISPLAY },
+  "glycine_100g": { label: "Glycine", unit: "mg", toDisplay: MG_TO_DISPLAY },
+  "histidine_100g": { label: "Histidine", unit: "mg", toDisplay: MG_TO_DISPLAY },
+  "isoleucine_100g": { label: "Isoleucine", unit: "mg", toDisplay: MG_TO_DISPLAY },
+  "leucine_100g": { label: "Leucine", unit: "mg", toDisplay: MG_TO_DISPLAY },
+  "lysine_100g": { label: "Lysine", unit: "mg", toDisplay: MG_TO_DISPLAY },
+  "methionine_100g": { label: "Methionine", unit: "mg", toDisplay: MG_TO_DISPLAY },
+  "phenylalanine_100g": { label: "Phenylalanine", unit: "mg", toDisplay: MG_TO_DISPLAY },
+  "proline_100g": { label: "Proline", unit: "mg", toDisplay: MG_TO_DISPLAY },
+  "serine_100g": { label: "Serine", unit: "mg", toDisplay: MG_TO_DISPLAY },
+  "threonine_100g": { label: "Threonine", unit: "mg", toDisplay: MG_TO_DISPLAY },
+  "tyrosine_100g": { label: "Tyrosine", unit: "mg", toDisplay: MG_TO_DISPLAY },
+  "tryptophan_100g": { label: "Tryptophan", unit: "mg", toDisplay: MG_TO_DISPLAY },
+  "valine_100g": { label: "Valine", unit: "mg", toDisplay: MG_TO_DISPLAY },
+};
+
+// foods.carbDetailJson — curated subset of AFCD's much larger sugar/starch
+// breakdown (fructose/glucose/sucrose/lactose/maltose/galactose/starch);
+// the rest (sugar alcohols, dextrin, glycogen, inulin, etc.) were left out
+// as more food-science-y than a household tracker needs — easy to extend
+// later. No dailyValue, same reasoning as amino acids above.
+const CARB_DETAIL_META: Record<string, MicroMeta> = {
+  "fructose_100g": { label: "Fructose", unit: "g", toDisplay: (g) => g },
+  "glucose_100g": { label: "Glucose", unit: "g", toDisplay: (g) => g },
+  "sucrose_100g": { label: "Sucrose", unit: "g", toDisplay: (g) => g },
+  "lactose_100g": { label: "Lactose", unit: "g", toDisplay: (g) => g },
+  "maltose_100g": { label: "Maltose", unit: "g", toDisplay: (g) => g },
+  "galactose_100g": { label: "Galactose", unit: "g", toDisplay: (g) => g },
+  "starch_100g": { label: "Starch", unit: "g", toDisplay: (g) => g },
+};
 
 // food.microsJson is `{ "vitamin-c_100g": 0.06, ... }` (grams per 100g) or
 // null — only ever populated for OpenFoodFacts-sourced foods, and only for
@@ -295,6 +338,7 @@ export default function FoodDetailScreen({
   timeLabel,
   onTimeClick,
   commitLabel = "Log Foods",
+  hideTargetsUi = false,
 }: {
   food: Food;
   totals?: Nutrition;
@@ -345,20 +389,38 @@ export default function FoodDetailScreen({
   // once the caller isn't actually logging anything (e.g. RecipeForm's
   // ingredient picker).
   commitLabel?: string;
+  // Set by AddFoodSheet's recipe-picker mode (onPickItems) — hides the
+  // "Remaining Today" macro-bar row and the "Impact on Targets" rings/
+  // fallback text entirely, rather than showing them empty/meaningless: a
+  // recipe has no daily target and no "today" to be remaining against.
+  hideTargetsUi?: boolean;
 }) {
-  // Nested on top of AddFoodSheet's own outer back-dismiss trap. Quantity
-  // entry here is a custom on-screen numpad, not a real text input, so
-  // there's no actual system keyboard for a back gesture to close first —
-  // without a trap of its own, that first gesture fell straight through to
-  // the outer one and exited the whole logging sheet in one press. This
-  // makes gesture-back consume one press to return to browse (same as the
-  // `‹` header button), then a second press reaches the outer trap.
+  // Nested on top of AddFoodSheet's own outer back-dismiss trap — the real
+  // quantity input below pops the system keyboard, and this consumes
+  // gesture-back's first press to close that (same as the `‹` header
+  // button) before a second press reaches the outer trap.
   useBackDismiss(true, onBack);
 
   const hasServing = food.servingSizeGrams != null;
   const [unit, setUnit] = useState<Unit>("g");
   const [quantityInput, setQuantityInput] = useState(String(initialQuantityGrams ?? 100));
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [quantityFocused, setQuantityFocused] = useState(false);
+
+  // Prefills a *new* log's quantity from this food's own log history — only
+  // when there's no already-known quantity to seed from (i.e. not editing;
+  // `editing` always seeds initialQuantityGrams synchronously from the real
+  // entry, see the prop doc below). Not a lazy useState initializer since
+  // the fetch is async and this same component instance is reused across
+  // different foods (AddFoodSheet doesn't remount FoodDetailScreen per
+  // food) — a real effect keeps quantityInput in sync with whichever food
+  // is current, falling back to the flat 100 default once resolved if this
+  // food has never been logged before.
+  const lastQuantity = useLastLoggedQuantity(food.id, !editing);
+  useEffect(() => {
+    if (editing) return;
+    setQuantityInput(String(lastQuantity.data?.quantityGrams ?? initialQuantityGrams ?? 100));
+  }, [food.id, lastQuantity.data, editing, initialQuantityGrams]);
 
   const units: Unit[] = hasServing ? ["g", "oz", "lb", "serving"] : ["g", "oz", "lb"];
   const unitLabel = (u: Unit) => (u === "serving" ? food.servingName ?? "serving" : u);
@@ -370,18 +432,23 @@ export default function FoodDetailScreen({
   const n = scaleNutrition(food, quantityGrams);
   const { unit: energyUnit } = useEnergyUnit();
 
-  // Only the vitamin/mineral keys this specific food actually has data for —
-  // see parseMicros/VITAMIN_META/MINERAL_META above for why missing keys are
-  // skipped rather than shown as zero.
+  // Only the keys this specific food actually has data for — see
+  // parseMicros/VITAMIN_META/MINERAL_META above for why missing keys are
+  // skipped rather than shown as zero. Generic over which JSON blob
+  // (microsJson/aminoAcidsJson/carbDetailJson) since all three share the
+  // same {key: grams-per-100g} shape.
   const scaleFactor = quantityGrams / 100;
-  const parsedMicros = parseMicros(food.microsJson);
-  function microList(meta: Record<string, MicroMeta>) {
-    return Object.entries(parsedMicros)
+  function jsonList(rawJson: string | null, meta: Record<string, MicroMeta>) {
+    const parsed = parseMicros(rawJson);
+    return Object.entries(parsed)
       .filter(([key]) => key in meta)
       .map(([key, rawPer100g]) => ({ key, ...meta[key], amount: meta[key].toDisplay(rawPer100g * scaleFactor) }));
   }
-  const vitamins = microList(VITAMIN_META);
-  const minerals = microList(MINERAL_META);
+  const vitamins = jsonList(food.microsJson, VITAMIN_META);
+  const minerals = jsonList(food.microsJson, MINERAL_META);
+  const aminoAcids = jsonList(food.aminoAcidsJson, AMINO_ACID_META);
+  const carbDetails = jsonList(food.carbDetailJson, CARB_DETAIL_META);
+  const parsedMicros = parseMicros(food.microsJson);
   const cholesterolRaw = parsedMicros["cholesterol_100g"];
   const cholesterolAmount = cholesterolRaw != null ? CHOLESTEROL_META.toDisplay(cholesterolRaw * scaleFactor) : null;
 
@@ -453,9 +520,11 @@ export default function FoodDetailScreen({
           <LogTimePill timeLabel={timeLabel} onTimeClick={onTimeClick} />
           <div />
         </div>
-        <div className="px-4 pb-3">
-          <NutrientStatusBar totals={totals} plateTotals={plateTotals} extra={n} targets={targets} />
-        </div>
+        {!hideTargetsUi && (
+          <div className="px-4 pb-3">
+            <NutrientStatusBar totals={totals} plateTotals={plateTotals} extra={n} targets={targets} />
+          </div>
+        )}
         <div className="px-4 pb-2 flex flex-col items-center text-center">
           <span className="min-w-0 max-w-full">
             <span className="block text-base font-semibold text-white truncate">{food.name}</span>
@@ -515,19 +584,24 @@ export default function FoodDetailScreen({
           </button>
         </div>
 
-        {/* Impact on Targets */}
-        <div className="px-4 pt-2 pb-4 border-t border-dashboardDivider">
-          <p className="text-[13px] font-semibold text-white/80 pt-3 pb-3">Impact on Targets</p>
-          {targets ? (
-            <div className="grid grid-cols-4 gap-2">
-              {ringData.map((r) => (
-                <Ring key={r.key} pctValue={r.pctValue} colorClass={r.colorClass} label={r.label} />
-              ))}
-            </div>
-          ) : (
-            <p className="text-[11px] text-muted">Set up daily targets on Strategy to see impact here.</p>
-          )}
-        </div>
+        {/* Impact on Targets — skipped entirely in recipe-picker mode, not
+            just the rings: a recipe has no daily target to show impact
+            against, so even the "set up targets" fallback text is nonsense
+            here. */}
+        {!hideTargetsUi && (
+          <div className="px-4 pt-2 pb-4 border-t border-dashboardDivider">
+            <p className="text-[13px] font-semibold text-white/80 pt-3 pb-3">Impact on Targets</p>
+            {targets ? (
+              <div className="grid grid-cols-4 gap-2">
+                {ringData.map((r) => (
+                  <Ring key={r.key} pctValue={r.pctValue} colorClass={r.colorClass} label={r.label} />
+                ))}
+              </div>
+            ) : (
+              <p className="text-[11px] text-muted">Set up daily targets on Strategy to see impact here.</p>
+            )}
+          </div>
+        )}
 
         {/* Detailed nutrient breakdown — plain label + amount rows, grouped
             into categories. Section headers are Title Case (as authored,
@@ -539,12 +613,30 @@ export default function FoodDetailScreen({
           </div>
         </div>
 
+        {/* AFCD only lab-tested amino acids for a subset of its foods (see
+            scripts/import-afcd-foods.ts), so this section — like Vitamins/
+            Minerals below — simply doesn't render for most foods rather than
+            showing an empty or partial-looking list. */}
+        {aminoAcids.length > 0 && (
+          <div className="px-4 pt-4 border-t border-dashboardDivider mt-4">
+            <p className="text-[13px] font-semibold text-white/80 pt-3">Amino Acids</p>
+            <div className="divide-y divide-dashboardDivider/60">
+              {aminoAcids.map((m) => (
+                <BreakdownRow key={m.key} label={m.label} amount={m.amount} unit={m.unit} dailyValueRef={m.dailyValue} />
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="px-4 pt-4 border-t border-dashboardDivider mt-4">
           <p className="text-[13px] font-semibold text-white/80 pt-3">Carb Breakdown</p>
           <div className="divide-y divide-dashboardDivider/60">
             <BreakdownRow label="Carbs" amount={n.carbs} dailyValueRef={DAILY_VALUE_REF.carbs} barColorClass="bg-carbs" />
             <BreakdownRow label="Fiber" amount={n.fiber} dailyValueRef={DAILY_VALUE_REF.fiber} barColorClass="bg-carbs" />
             <BreakdownRow label="Sugars" amount={n.sugar} dailyValueRef={DAILY_VALUE_REF.sugar} barColorClass="bg-carbs" />
+            {carbDetails.map((m) => (
+              <BreakdownRow key={m.key} label={m.label} amount={m.amount} unit={m.unit} dailyValueRef={m.dailyValue} />
+            ))}
             <BreakdownRow label="Net Carbs" amount={Math.max(0, n.carbs - n.fiber)} />
           </div>
         </div>
@@ -600,7 +692,7 @@ export default function FoodDetailScreen({
           </div>
         </div>
 
-        {(food.source === "custom" || food.source === "ai_estimate") && onDeleteFood && (
+        {(food.source === "custom" || food.source === "ai_estimate" || food.source === "afcd") && onDeleteFood && (
           <div className="px-4 pt-6 pb-2">
             <button
               onClick={() => setConfirmingDelete(true)}
@@ -628,6 +720,8 @@ export default function FoodDetailScreen({
             autoFocus
             value={quantityInput}
             onChange={(e) => setQuantityInput(e.target.value)}
+            onFocus={() => setQuantityFocused(true)}
+            onBlur={() => setQuantityFocused(false)}
             onKeyDown={(e) => {
               // Two competing actions live in this footer (Log Foods vs.
               // Add, or Delete vs. Save while editing), so this isn't a
@@ -651,19 +745,33 @@ export default function FoodDetailScreen({
             selected, border-white/15/text-white otherwise — rather than the
             filled bg-white/bg-dashboardChip pair this used to have, so the
             two serving-size pill rows read as one consistent control instead
-            of two different designs depending on which screen you're on. */}
-        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2.5">
-          {units.map((u) => (
-            <button
-              key={u}
-              onClick={() => setUnit(u)}
-              className={`shrink-0 rounded-full px-3.5 py-2 border text-xs font-medium whitespace-nowrap transition-colors ${
-                unit === u ? "border-accent text-accent" : "border-white/15 text-white active:bg-white/5"
-              }`}
-            >
-              {unitLabel(u)}
-            </button>
-          ))}
+            of two different designs depending on which screen you're on.
+            Collapsed via the grid-template-rows 0fr/1fr trick (CoachScreen's
+            narrative section uses the same one) whenever the quantity input
+            isn't focused — hidden rather than always-on so the footer takes
+            less permanent space when the keyboard's down, without an
+            abrupt height jump when it reappears. Each pill needs
+            onMouseDown preventDefault so tapping one doesn't itself blur the
+            input (which would hide the very row being tapped mid-tap) —
+            same trick LogWeightInline's body-fat toggle already uses to keep
+            the keyboard from dismissing on tap. */}
+        <div className="grid transition-[grid-template-rows] duration-200 ease-out" style={{ gridTemplateRows: quantityFocused ? "1fr" : "0fr" }}>
+          <div className="overflow-hidden">
+            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2.5">
+              {units.map((u) => (
+                <button
+                  key={u}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => setUnit(u)}
+                  className={`shrink-0 rounded-full px-3.5 py-2 border text-xs font-medium whitespace-nowrap transition-colors ${
+                    unit === u ? "border-accent text-accent" : "border-white/15 text-white active:bg-white/5"
+                  }`}
+                >
+                  {unitLabel(u)}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         {editing ? (

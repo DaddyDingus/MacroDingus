@@ -3,7 +3,7 @@ import { apiFetch } from "./client";
 
 export type ProgramStyle = "coached" | "manual";
 export type DietType = "balanced" | "low_fat" | "low_carb" | "keto";
-export type ProteinLevel = "low" | "moderate" | "high" | "extra_high";
+export type ProteinLevel = "low" | "moderate" | "high" | "extra_high" | "custom";
 export type ProteinBasis = "total" | "lean";
 export type DistributionMode = "even" | "shifted" | "custom";
 
@@ -27,6 +27,7 @@ export interface Program {
   proteinLevel: ProteinLevel | null;
   proteinPerKgUsed: number | null;
   proteinBasis: ProteinBasis;
+  initialTdeeOverrideKcal: number | null;
   distributionMode: DistributionMode;
   shiftedHighDays: number[] | null; // 0=Sunday..6=Saturday — only meaningful when distributionMode is 'shifted'
   startedAt: string;
@@ -45,6 +46,7 @@ export interface ProgramBreakdown {
   fatPercentUsed: number;
   proteinBasisUsed: ProteinBasis;
   leanBodyMassKg: number | null;
+  usedInitialOverride: boolean;
 }
 
 export interface ProgramDayValues {
@@ -61,6 +63,8 @@ export interface CreateCoachedProgramInput {
   dietType: DietType;
   calorieFloorKcal: number;
   proteinLevel: ProteinLevel;
+  customProteinPerKg?: number; // required by the backend when proteinLevel is 'custom'
+  startingCalories?: number; // optional "starting Calories" from the Calories step
   distributionMode: "even" | "shifted";
   shiftedHighDays?: number[]; // required by the backend when distributionMode is 'shifted'
   proteinBasis: ProteinBasis;

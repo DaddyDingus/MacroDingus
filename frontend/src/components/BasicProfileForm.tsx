@@ -107,8 +107,12 @@ export default function BasicProfileForm({
           onKeyDown={submitOnEnter}
           className="w-full border border-line rounded-md px-3 py-2.5 bg-transparent mt-1 focus-within:border-accent focus:outline-none"
         />
-        {parsedExerciseHours !== null && parsedExerciseHours >= 7 && (
-          <p className="text-[11px] text-accent mt-1">Athlete formula will be used (≥ 7h/week).</p>
+        {parsedExerciseHours !== null && parsedExerciseHours > 0 && (
+          <p className="text-[11px] text-accent mt-1">
+            {parsedExerciseHours >= 7
+              ? "Athlete formula will be used (≥ 7h/week)."
+              : "Added directly to your estimated expenditure."}
+          </p>
         )}
       </div>
       <button

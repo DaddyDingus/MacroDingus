@@ -8,6 +8,7 @@ import { daysBetween, localDateString } from "../lib/date";
 import { computeGoalProgressPercent } from "../lib/goalProgress";
 import ChangeCheckInDaySheet from "../components/ChangeCheckInDaySheet";
 import CheckInResultSheet from "../components/CheckInResultSheet";
+import LogWeightFirstSheet from "../components/LogWeightFirstSheet";
 import WeeklyProgramGrid from "../components/WeeklyProgramGrid";
 import BasicProfileForm from "../components/BasicProfileForm";
 import ConfirmDeleteSheet from "../components/ConfirmDeleteSheet";
@@ -109,6 +110,7 @@ export default function CoachScreen() {
   const [checkInResult, setCheckInResult] = useState<{ checkin: NonNullable<ReturnType<typeof useCoachStatus>["data"]>["latestCheckin"]; usedAdaptiveTdee: boolean } | null>(null);
   const [pendingDeleteGoalId, setPendingDeleteGoalId] = useState<string | null>(null);
   const [narrativeExpanded, setNarrativeExpanded] = useState(false);
+  const [weightPromptOpen, setWeightPromptOpen] = useState(false);
 
   if (status.isLoading) return null;
 
@@ -122,6 +124,11 @@ export default function CoachScreen() {
   const activeProgram = status.data?.activeProgram ?? null;
   const trendWeightKg = status.data?.trendWeightKg ?? null;
   const daysSinceCheckin = status.data?.daysSinceCheckin ?? null;
+
+  function goToNewGoal() {
+    if (trendWeightKg != null) navigate("/strategy/new-goal");
+    else setWeightPromptOpen(true);
+  }
   const nextCheckinDueDate = status.data?.nextCheckinDueDate ?? null;
   const latestCheckinDate = status.data?.latestCheckin?.date ?? null;
 
@@ -325,7 +332,7 @@ export default function CoachScreen() {
               </div>
             </div>
             <div className="flex gap-2 pt-1 flex-wrap">
-              <Pill icon={<Plus className="w-3.5 h-3.5" strokeWidth={2} />} label="New Goal" onClick={() => navigate("/strategy/new-goal")} />
+              <Pill icon={<Plus className="w-3.5 h-3.5" strokeWidth={2} />} label="New Goal" onClick={goToNewGoal} />
               <Pill icon={<Pencil className="w-3.5 h-3.5" strokeWidth={2} />} label="Edit Goal" onClick={() => navigate("/strategy/edit-goal")} />
             </div>
           </div>
@@ -369,6 +376,9 @@ export default function CoachScreen() {
       )}
       {checkInResult?.checkin && (
         <CheckInResultSheet checkin={checkInResult.checkin} usedAdaptiveTdee={checkInResult.usedAdaptiveTdee} onClose={() => setCheckInResult(null)} />
+      )}
+      {weightPromptOpen && (
+        <LogWeightFirstSheet onClose={() => setWeightPromptOpen(false)} onContinue={() => navigate("/strategy/new-goal")} />
       )}
       {pendingDeleteGoalId && (
         <ConfirmDeleteSheet

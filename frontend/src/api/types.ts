@@ -3,7 +3,7 @@ export interface Food {
   name: string;
   brand: string | null;
   barcode: string | null;
-  source: "custom" | "openfoodfacts" | "recipe" | "ai_estimate";
+  source: "custom" | "openfoodfacts" | "recipe" | "ai_estimate" | "afcd";
   servingSizeGrams: number | null;
   servingName: string | null;
   caloriesPer100g: number;
@@ -20,6 +20,14 @@ export interface Food {
   omega6Per100g: number | null;
   transFatPer100g: number | null;
   microsJson: string | null;
+  // Same {key: grams-per-100g} shape as microsJson — see schema.ts. Sparse:
+  // AFCD (the only current source for these) only lab-tested amino acids
+  // for a subset of its foods, so most foods have at most a couple of these
+  // 18 keys populated, some none at all.
+  aminoAcidsJson: string | null;
+  // Curated subset of carb subtypes (fructose/glucose/sucrose/lactose/
+  // maltose/galactose/starch) — also AFCD-sourced, same sparse convention.
+  carbDetailJson: string | null;
   icon: string | null;
   // Non-null means this food is "deleted" (or an ai_estimate Describe row) —
   // kept alive server-side only to back existing log entries; the backend
@@ -108,6 +116,17 @@ export interface DescribedMealItem {
   food: Food;
   quantityGrams: number;
   servingDescription: string | null;
+}
+
+// Response shape of POST /api/recipes/import-url (backend/src/engine/recipeImport.ts).
+// Same "already-real foods rows" contract as DescribedMealItem above — never
+// auto-saved as a recipe itself, just handed to RecipeForm's `initial` prop
+// as a reviewable, still-editable draft.
+export interface ImportedRecipeResult {
+  name: string;
+  servings: number;
+  totalWeightGrams: number | null;
+  ingredients: { food: Food; quantityGrams: number }[];
 }
 
 export interface CreateRecipeInput {

@@ -91,20 +91,37 @@ export function registerFoodRoutes(app: FastifyInstance) {
       const loggedRows = await db.selectDistinct({ foodId: logs.foodId }).from(logs).where(inArray(logs.foodId, candidateIds));
       for (const row of loggedRows) loggedIds.add(row.foodId);
     }
-    // Array.prototype.sort is stable (guaranteed since ES2019), so this is a
-    // straight two-bucket partition — previously-logged foods first, in
-    // whatever relative order they already had, then everything else the
-    // same way — not a full re-sort that could otherwise reshuffle matches
-    // within either bucket.
+    // Local matches had no relevance ranking at all until this — just
+    // "logged before" as the only sort key, so an exact match with no log
+    // history (e.g. a just-seeded AFCD "Honey") could rank behind eight
+    // longer names that merely *contain* the word ("Porridge, rolled oats
+    // mixed with sugar or honey...") purely because of arbitrary row order.
+    // Name relevance now comes first — exact match, then starts-with, then
+    // a whole-word match, then plain substring (the previous, only,
+    // tier) — with "logged before" breaking ties *within* a relevance tier
+    // only, not overriding it: a name match this strong is a much stronger
+    // intent signal than log history.
+    const trimmedLower = trimmed.toLowerCase();
+    const escapedForRegex = trimmedLower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const wordBoundaryRe = new RegExp(`\\b${escapedForRegex}\\b`, "i");
+    function relevance(name: string): number {
+      const lower = name.toLowerCase();
+      if (lower === trimmedLower) return 3;
+      if (lower.startsWith(trimmedLower)) return 2;
+      if (wordBoundaryRe.test(name)) return 1;
+      return 0;
+    }
     const local = localCandidates
-      .sort((a, b) => Number(loggedIds.has(b.id)) - Number(loggedIds.has(a.id)))
+      .sort((a, b) => relevance(b.name) - relevance(a.name) || Number(loggedIds.has(b.id)) - Number(loggedIds.has(a.id)))
       .slice(0, take);
 
-    // This instance's `foods` table only ever gets rows from a barcode scan, a
-    // custom entry, or a materialized recipe — there's no bulk generic food
-    // database seeded anywhere, so a plain-language term like "oats" can come
-    // back empty from local matches alone. Fold in OpenFoodFacts name-search
-    // results for whatever local didn't cover — always after every local
+    // ~1,588 generic staples are seeded locally from the Australian Food
+    // Composition Database (source: 'afcd', see scripts/import-afcd-foods.ts)
+    // on top of whatever's come from a barcode scan, a custom entry, or a
+    // materialized recipe — but that's still nowhere near comprehensive, so a
+    // less common plain-language term can still come back empty from local
+    // matches alone. Fold in OpenFoodFacts name-search results for whatever
+    // local didn't cover — always after every local
     // match regardless of logged status, since these are unfamiliar-by
     // definition (never logged, not even cached locally yet). These are
     // synthetic (id `off:<barcode>`, not a real row yet) — the frontend
@@ -255,6 +272,25 @@ export function registerFoodRoutes(app: FastifyInstance) {
     const [food] = await db.select().from(foods).where(eq(foods.id, id));
     if (!food) return reply.code(404).send({ error: "not found" });
     return food;
+  });
+
+  // Backs FoodDetailScreen's quantity prefill for a *new* log of a food
+  // that's been logged before — separate from `editing`'s own
+  // initialQuantityGrams (that one seeds from the specific entry being
+  // edited, already known synchronously; this seeds from history instead).
+  // Ordered by loggedAt, not `date` — loggedAt is a real per-entry
+  // timestamp (see CLAUDE.md's note on the fake-UTC-but-actually-local
+  // format), so this is "most recently logged", not "logged on the latest
+  // date" (which would tiebreak arbitrarily among same-day entries).
+  app.get("/api/foods/:id/last-quantity", async (req) => {
+    const { id } = req.params as { id: string };
+    const [row] = await db
+      .select({ quantityGrams: logs.quantityGrams })
+      .from(logs)
+      .where(and(eq(logs.foodId, id), eq(logs.userId, req.userId!)))
+      .orderBy(desc(logs.loggedAt))
+      .limit(1);
+    return { quantityGrams: row?.quantityGrams ?? null };
   });
 
   app.post("/api/foods", async (req, reply) => {

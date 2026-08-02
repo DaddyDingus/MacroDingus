@@ -16,6 +16,7 @@ import LogActionBar, { type LogSelection } from "../components/LogActionBar";
 import ConfirmDeleteSheet from "../components/ConfirmDeleteSheet";
 import ShortcutsBar from "../components/ShortcutsBar";
 import { staggerStyle } from "../lib/stagger";
+import { useAnnounceViewedDate } from "../lib/viewedDate";
 
 const EMPTY_TOTALS = { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0, saturatedFat: 0, sodiumMg: 0 };
 
@@ -30,6 +31,11 @@ const EMPTY_TOTALS = { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, suga
 // down the right edge.
 export default function TodayScreen() {
   const [date, setDate] = useState(localDateString());
+  // Lets the globally-rendered FAB (App.tsx's <BottomNav/>, outside this
+  // screen entirely) and the pinned shortcuts both act on whatever day this
+  // screen's own ‹/› nav is currently showing, instead of always defaulting
+  // to real today — see lib/viewedDate.tsx.
+  useAnnounceViewedDate(date);
   const dayLog = useDayLog(date);
   const deleteLog = useDeleteLog(date);
   const moveEntries = useMoveLogEntries();
@@ -40,8 +46,12 @@ export default function TodayScreen() {
   const [editingEntry, setEditingEntry] = useState<LogEntry | null>(null);
   // Set when a group's own "+" button opens the sheet — forces whatever gets
   // logged there onto that group's exact loggedAt instead of "now", so it
-  // joins/extends that same time-group. null for the normal "+ Log food"
-  // button and for editing, both of which want the usual "now" default.
+  // joins/extends that same time-group. null for editing, which wants the
+  // entry's own existing loggedAt instead (see openEdit). Adding a brand-new
+  // entry from scratch goes through the global FAB/pinned shortcuts now
+  // (QuickActionFlow, date-aware via lib/viewedDate.tsx) rather than a sheet
+  // instance of this screen's own — this screen's own AddFoodSheet mount
+  // below is reached only via editing or a group's quick-add.
   const [quickAddLoggedAt, setQuickAddLoggedAt] = useState<string | null>(null);
   const [copyOpen, setCopyOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
@@ -49,11 +59,6 @@ export default function TodayScreen() {
   const loggedDates = useLoggedDates(calendarOpen);
   const [selection, setSelection] = useState<LogSelection | null>(null);
 
-  function openAdd() {
-    setEditingEntry(null);
-    setQuickAddLoggedAt(null);
-    setSheetOpen(true);
-  }
   function openEdit(entry: LogEntry) {
     setEditingEntry(entry);
     setQuickAddLoggedAt(null);
@@ -110,7 +115,12 @@ export default function TodayScreen() {
 
   return (
     <div className="min-h-dvh pb-24 bg-dashboardBg">
-      <div className="sticky top-0 z-10 bg-dashboardBg">
+      {/* Glass rather than the flat bg-dashboardBg this used to be — a fully
+          opaque sticky header made content scrolling underneath disappear at
+          a hard line right at its bottom edge instead of continuing softly
+          out of view. bg-dashboardBg/70 + backdrop-blur-xl lets that content
+          show through, blurred, instead of cutting off abruptly. */}
+      <div className="sticky top-0 z-10 bg-dashboardBg/70 backdrop-blur-xl">
         <header className="px-4 pt-5 pb-2 max-w-md mx-auto">
           <div className="grid grid-cols-3 items-center">
             <button
@@ -179,13 +189,6 @@ export default function TodayScreen() {
             </div>
           </div>
         )}
-
-        <button
-          onClick={openAdd}
-          className="w-full mt-4 py-3 rounded-2xl border border-white/15 text-sm text-white/70 active:bg-dashboardCard"
-        >
-          + Log food
-        </button>
       </main>
 
       {/* Hidden during a selection — LogActionBar takes this same fixed slot above BottomNav */}

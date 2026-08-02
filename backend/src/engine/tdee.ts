@@ -14,9 +14,6 @@ export const ACTIVITY_MULTIPLIERS: Record<string, number> = {
 // Allometric scaling (power exponents) is more accurate than linear equations
 // at body weight extremes. Age term is piecewise: 1.96 kcal/yr up to 60,
 // 4.9 kcal/yr beyond (slope accelerates after 60, not a step jump).
-// Metabolic adaptation multipliers (deficit ×0.95, >10% below peak ×0.97)
-// are not applied here — they require goal and weight-history context the
-// engine doesn't thread through to this level.
 // Source: macrofactor.com/macrofactors-bmr/
 // MacroFactor's three published BMR formulas (macrofactor.com/macrofactors-bmr/,
 // shipped in app v2.9.8, August 2024). Formula selected by available data:
@@ -25,6 +22,29 @@ export const ACTIVITY_MULTIPLIERS: Record<string, number> = {
 //   1 — height/weight fallback:   BMR = 129.6×weight^0.55 + 0.011×height² − age_term×age − 213.8×sex
 // Metabolic adaptation multipliers applied on top: deficit ×0.95,
 // >10% below personal peak ×0.97, both ×0.92.
+//
+// HARD_TRAINING_MET below is this app's own addition, NOT part of
+// MacroFactor's published methodology — flagged explicitly so it's never
+// mistaken for something sourced the way the BMR formulas above are.
+// weeklyExerciseHours (BasicProfileForm's "High-intensity exercise" field,
+// deliberately kept separate from activityLevel — see that form's own "don't
+// count workouts here" copy) previously only affected this function via the
+// isAthlete branch below, which requires a body-fat % on file too — anyone
+// without one had their reported training hours silently discarded no matter
+// how high. Added as a direct EAT (exercise activity thermogenesis) term
+// instead: MET × bodyweight × hours is the standard Compendium of Physical
+// Activities method for converting a workout into kcal (1 MET = 1 kcal/kg/
+// hour); 7.0 sits mid-range across the field's own named examples (general
+// weight training ~6 METs, running ~8-10, HIIT ~8) since the field collects
+// hours only, not a specific modality. Skipped for isAthlete — its FFM^0.932
+// equation already represents a ≥7h/week-trained athlete's elevated energy
+// needs as a whole, so adding this on top would double-count the same
+// training volume. Added after the metabolic-adaptation multipliers, not
+// before: those model suppressed NEAT/BMR during a diet, not the mechanical
+// cost of a given workout, which doesn't itself shrink from being in a
+// deficit.
+const HARD_TRAINING_MET = 7;
+
 export function macroFactorTdee(params: {
   sex: "male" | "female";
   age: number;
@@ -66,6 +86,10 @@ export function macroFactorTdee(params: {
   if (inDeficit && farBelowPeak) tdee *= 0.92;
   else if (inDeficit) tdee *= 0.95;
   else if (farBelowPeak) tdee *= 0.97;
+
+  if (!isAthlete && params.weeklyExerciseHours) {
+    tdee += (params.weightKg * HARD_TRAINING_MET * params.weeklyExerciseHours) / 7;
+  }
 
   return tdee;
 }

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
-import type { CreateRecipeInput, Food } from "./types";
+import type { CreateRecipeInput, Food, ImportedRecipeResult } from "./types";
 
 export interface RecipeSummary {
   id: string;
@@ -52,6 +52,19 @@ export function useUpdateRecipe(id: string) {
       qc.invalidateQueries({ queryKey: ["recipes"] });
       qc.invalidateQueries({ queryKey: ["foods"] });
     },
+  });
+}
+
+// Unmatched ingredients create real foods rows server-side
+// (source: 'ai_estimate', same as useDescribeMeal) even though the recipe
+// itself isn't saved until the user actually hits "Save recipe" on the
+// pre-filled form — invalidate the same way any other food-creating
+// mutation does so those rows are visible wherever `foods` is queried.
+export function useImportRecipeUrl() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (url: string) => apiFetch<ImportedRecipeResult>("/recipes/import-url", { method: "POST", body: JSON.stringify({ url }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["foods"] }),
   });
 }
 

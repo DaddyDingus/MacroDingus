@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "../db/index.js";
 import { foods, recipes, recipeIngredients } from "../db/schema.js";
 import { scaleNutrition, sumNutrition } from "../engine/nutrition.js";
+import { importRecipeFromUrl } from "../engine/recipeImport.js";
 
 const recipeInput = z.object({
   name: z.string().min(1),
@@ -96,6 +97,29 @@ export function registerRecipeRoutes(app: FastifyInstance) {
     const detail = await recipeDetail(id, req.userId!);
     if (!detail) return reply.code(404).send({ error: "not found" });
     return detail;
+  });
+
+  // Fetches a recipe URL and hands it to Claude to extract into structured
+  // data, ready for RecipeForm's `initial` prop — same "always a real,
+  // reviewable draft, never auto-saved" shape as label scanning and
+  // describe-meal. See engine/recipeImport.ts for the fetch/parse/match
+  // logic. Same 503-when-unconfigured convention as those two features.
+  app.post("/api/recipes/import-url", async (req, reply) => {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      reply.code(503);
+      return { error: "Recipe import isn't configured on this server yet" };
+    }
+
+    const parsed = z.object({ url: z.string().min(1) }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+
+    try {
+      return await importRecipeFromUrl(parsed.data.url);
+    } catch (err) {
+      req.log.error(err);
+      reply.code(502);
+      return { error: err instanceof Error ? err.message : "Couldn't import a recipe from that link" };
+    }
   });
 
   app.post("/api/recipes", async (req, reply) => {

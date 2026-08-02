@@ -12,6 +12,7 @@ import { ShortcutsProvider } from "./lib/shortcuts";
 import { DashboardLayoutProvider } from "./lib/dashboardLayout";
 import { ThemeProvider } from "./lib/theme";
 import { NavVisibilityProvider } from "./lib/navVisibility";
+import { ViewedDateProvider } from "./lib/viewedDate";
 import {
   getSavedDashboardScroll,
   noteNavigation,
@@ -79,11 +80,13 @@ export default function App() {
         <EnergyUnitProvider>
           <ShortcutsProvider>
             <DashboardLayoutProvider>
-              <BrowserRouter>
-                <NavVisibilityProvider>
-                  <AppRoutes />
-                </NavVisibilityProvider>
-              </BrowserRouter>
+              <ViewedDateProvider>
+                <BrowserRouter>
+                  <NavVisibilityProvider>
+                    <AppRoutes />
+                  </NavVisibilityProvider>
+                </BrowserRouter>
+              </ViewedDateProvider>
             </DashboardLayoutProvider>
           </ShortcutsProvider>
         </EnergyUnitProvider>
@@ -92,12 +95,16 @@ export default function App() {
   );
 }
 
-// A fresh account (no profile yet, or a profile but no weigh-ins yet) sees
-// only the onboarding flow, full-screen, regardless of URL — nothing else
-// in the app can compute a real number without both. Reads the same
-// useCoachStatus() query OnboardingFlow itself watches to know when to hand
-// off to /strategy/new-goal, so the two stay in sync without a separate
-// "has onboarded" flag anywhere in the schema.
+// A fresh account (no profile yet, or a profile that hasn't finished the
+// wizard) sees only the onboarding flow, full-screen, regardless of URL.
+// Gated on profiles.onboardingCompletedAt — a persisted flag stamped once,
+// on the account's first-ever goal creation (see backend routes/goals.ts) —
+// rather than derived live from weights/goal state. It used to be derived
+// (no profile, or trendWeightKg === null, or no activeGoal), which meant an
+// already-onboarded user got bounced back into this screen just by deleting
+// their only weigh-in (trendWeightKg briefly null) or ending a goal without
+// yet starting a new one — both ordinary, already-supported states that
+// have nothing to do with onboarding.
 function AppRoutes() {
   const status = useCoachStatus();
   const location = useLocation();
@@ -195,21 +202,16 @@ function AppRoutes() {
   // screen — a safer default than onboarding an existing user.
   if (status.isPending && !status.isError) return null;
 
-  // activeGoal is included deliberately, not just profile/weight — without
-  // it, bailing out of the Goal wizard mid-onboarding (its own intro
-  // screen's X close button navigates to /strategy) dropped you straight
-  // into the main app with no goal or program, where Check In was still
-  // reachable and did... something, with nothing to check in against. This
-  // is safe to require for *every* user, not just fresh ones: goals.ts
-  // always atomically swaps the active goal on create/reopen (there's no
-  // "end goal without replacing it" endpoint), so activeGoal is only ever
-  // null for an account that hasn't finished this step yet — never a
-  // legitimate "established user, temporarily between goals" state.
-  // activeProgram is deliberately NOT required here — "goal but no program
-  // yet" is an existing, already-supported state (CoachScreen's own "New
-  // Program" prompt), not something unique to an incomplete onboarding.
-  const needsOnboarding =
-    !status.isError && (!status.data?.profile || status.data?.trendWeightKg === null || !status.data?.activeGoal);
+  // onboardingCompletedAt only gets stamped once the first-ever goal is
+  // created, so this is equivalent to the old "no activeGoal" check for the
+  // case that check existed to guard: bailing out of the Goal wizard
+  // mid-onboarding (its own intro screen's X close button navigates to
+  // /strategy) still can't drop you into the main app with no goal, since
+  // the flag is still unset at that point. Unlike the old check, it does
+  // NOT re-trigger for an established user who deletes their only weigh-in
+  // or ends a goal without yet starting a new one — both legitimate states
+  // for an account that has already onboarded.
+  const needsOnboarding = !status.isError && !status.data?.profile?.onboardingCompletedAt;
 
   if (needsOnboarding) {
     return (

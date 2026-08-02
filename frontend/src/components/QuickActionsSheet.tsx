@@ -42,15 +42,19 @@ export default function QuickActionsButton() {
 
 function QuickActionsSheet({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
-  const { shortcuts, toggle, reorder, colors, setColor } = useDashboardShortcuts();
+  const { shortcuts, toggle, reorder, order, reorderMore, colors, setColor } = useDashboardShortcuts();
   const [view, setView] = useState<"menu" | "edit">("menu");
   const [runningAction, setRunningAction] = useState<ShortcutId | null>(null);
   // Hand-rolled pointer drag, not a DnD library — same reasoning and same
   // pattern as DashboardCustomizeScreen's own tile reordering (this app
-  // deliberately has no drag-and-drop dependency anywhere). Only the pinned
-  // shortcuts below are draggable; the "more shortcuts" list underneath has
-  // no order of its own to reorder.
+  // deliberately has no drag-and-drop dependency anywhere). Two independent
+  // drag states rather than one generalized one: the pinned grid and the
+  // "more shortcuts" list below it are separate lists with separate backing
+  // arrays (`shortcuts` vs `order`/`reorderMore`), same reasoning as keeping
+  // the two handler sets textually separate instead of threading a "which
+  // list" flag through one shared implementation.
   const [drag, setDrag] = useState<ShortcutDragState | null>(null);
+  const [moreDrag, setMoreDrag] = useState<ShortcutDragState | null>(null);
 
   function handlePointerDown(e: ReactPointerEvent<HTMLButtonElement>, id: ShortcutId, index: number) {
     e.preventDefault();
@@ -76,6 +80,31 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
   function handlePointerUp(e: ReactPointerEvent<HTMLButtonElement>) {
     e.currentTarget.releasePointerCapture(e.pointerId);
     setDrag(null);
+  }
+
+  function handleMorePointerDown(e: ReactPointerEvent<HTMLButtonElement>, id: ShortcutId, index: number) {
+    e.preventDefault();
+    const row = e.currentTarget.closest("[data-shortcut-row]") as HTMLElement | null;
+    const rowHeight = row?.getBoundingClientRect().height ?? 52;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setMoreDrag({ id, startIndex: index, currentIndex: index, startY: e.clientY, rowHeight, offset: 0 });
+  }
+
+  function handleMorePointerMove(e: ReactPointerEvent<HTMLButtonElement>, maxIndex: number) {
+    const clientY = e.clientY;
+    setMoreDrag((d) => {
+      if (!d) return d;
+      const deltaY = clientY - d.startY;
+      const rawShift = Math.round(deltaY / d.rowHeight);
+      const newIndex = Math.min(Math.max(d.startIndex + rawShift, 0), maxIndex);
+      if (newIndex !== d.currentIndex) reorderMore(d.id, newIndex);
+      return { ...d, currentIndex: newIndex, offset: deltaY - (newIndex - d.startIndex) * d.rowHeight };
+    });
+  }
+
+  function handleMorePointerUp(e: ReactPointerEvent<HTMLButtonElement>) {
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    setMoreDrag(null);
   }
 
   // Photos is special-cased here rather than left to QuickActionFlow's own
@@ -114,7 +143,13 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
   const iconGrid = shortcuts
     .map((id) => SHORTCUT_CATALOG.find((s) => s.id === id))
     .filter((s): s is (typeof SHORTCUT_CATALOG)[number] => Boolean(s));
-  const listItems = SHORTCUT_CATALOG.filter((s) => !shortcuts.includes(s.id));
+  // In the user's own custom order (see reorderMore below), not raw catalog
+  // declaration order — `order` already excludes nothing, so this filters
+  // out whatever's currently pinned the same way the old catalog-order
+  // version did.
+  const listItems = order
+    .map((id) => SHORTCUT_CATALOG.find((s) => s.id === id))
+    .filter((s): s is (typeof SHORTCUT_CATALOG)[number] => s !== undefined && !shortcuts.includes(s.id));
 
   return (
     <BottomSheet
@@ -274,30 +309,56 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
               )}
 
               {(() => {
-                const more = SHORTCUT_CATALOG.filter((s) => !shortcuts.includes(s.id));
+                // In the user's own custom order (reorderMore below), not
+                // raw catalog declaration order.
+                const more = order
+                  .map((id) => SHORTCUT_CATALOG.find((s) => s.id === id))
+                  .filter((s): s is (typeof SHORTCUT_CATALOG)[number] => s !== undefined && !shortcuts.includes(s.id));
                 if (more.length === 0) return null;
                 return (
                   <div>
-                    <p className="text-[11px] tracking-widest uppercase text-muted px-1 pb-2">More shortcuts</p>
+                    <p className="text-[11px] tracking-widest uppercase text-muted px-1 pb-2">
+                      More shortcuts — drag the handle to reorder
+                    </p>
                     <div className="rounded-2xl bg-dashboardCard overflow-hidden divide-y divide-dashboardDivider">
-                      {more.map((s) => {
+                      {more.map((s, i) => {
                         const Icon = s.icon;
                         const disabled = shortcuts.length >= MAX_DASHBOARD_SHORTCUTS;
+                        const isDragging = moreDrag?.id === s.id;
                         return (
-                          <button
+                          <div
                             key={s.id}
-                            role="switch"
-                            aria-checked={false}
-                            onClick={() => toggle(s.id)}
-                            disabled={disabled}
-                            className="w-full flex items-center gap-3 px-4 py-3 text-left active:bg-surface-raised disabled:opacity-30"
+                            data-shortcut-row
+                            className="flex items-center gap-3 px-4 py-3 bg-dashboardCard"
+                            style={
+                              isDragging
+                                ? { transform: `translateY(${moreDrag.offset}px)`, position: "relative", zIndex: 10 }
+                                : undefined
+                            }
                           >
                             <span className="h-9 w-9 rounded-full bg-dashboardChip flex items-center justify-center shrink-0">
                               <Icon size={16} strokeWidth={2} className="text-muted" />
                             </span>
                             <span className="text-sm text-white flex-1 truncate min-w-0">{s.label}</span>
-                            <ToggleSwitch on={false} />
-                          </button>
+                            <button
+                              onClick={() => toggle(s.id)}
+                              disabled={disabled}
+                              aria-label={`Add ${s.label} to Dashboard`}
+                              className="shrink-0 p-1 disabled:opacity-30"
+                            >
+                              <ToggleSwitch on={false} />
+                            </button>
+                            <button
+                              onPointerDown={(e) => handleMorePointerDown(e, s.id, i)}
+                              onPointerMove={(e) => handleMorePointerMove(e, more.length - 1)}
+                              onPointerUp={handleMorePointerUp}
+                              onPointerCancel={handleMorePointerUp}
+                              aria-label={`Reorder ${s.label}`}
+                              className="text-muted shrink-0 p-1 touch-none cursor-grab active:cursor-grabbing"
+                            >
+                              <GripVertical size={18} strokeWidth={2} />
+                            </button>
+                          </div>
                         );
                       })}
                     </div>

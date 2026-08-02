@@ -16,6 +16,7 @@ import {
 import WizardShell from "../components/WizardShell";
 import WizardIntroCard, { type WizardIntroStep } from "../components/WizardIntroCard";
 import WizardOption from "../components/WizardOption";
+import { useBackDismiss } from "../lib/useBackDismiss";
 
 type Step = "intro" | "type" | "target" | "summary";
 
@@ -126,6 +127,27 @@ function GoalWizardBody({ mode, status }: { mode: "new" | "edit"; status: CoachS
     { label: programStillValid ? "Review program" : "Set new program", status: goalOneDone ? "active" : "pending" },
   ];
 
+  // Single source of truth for "back" within the wizard's own steps — shared
+  // by the WizardShell chevron button (below) and the hardware/gesture back
+  // button (via useBackDismiss just below). Without the latter, the browser
+  // back gesture skipped the wizard's own step history entirely (nothing
+  // pushes a history entry per step, only the wizard's route itself), so one
+  // back press from any step deeper than the first jumped straight out of
+  // the whole wizard to wherever /strategy/new-goal was opened from — same
+  // bug class useBackDismiss already fixed for every sheet/modal in the app,
+  // just never wired up for this linear stepper shape.
+  function goBack() {
+    if (step === "target") setStep(mode === "new" ? "type" : "intro");
+    else if (step === "summary") setStep(goalType === "maintain" ? "type" : "target");
+    else setStep("intro");
+  }
+  // Inactive on "intro" — that step already sits on a real route
+  // (/strategy/new-goal), so a back press there falls through to the normal
+  // browser history and correctly lands back on /strategy, exactly like the
+  // intro screen's own X button does. Only the intermediate steps (which
+  // have no history entry of their own) need trapping.
+  useBackDismiss(step !== "intro", goBack);
+
   const distanceKg = goalWeightKg !== null && trendWeightKg !== null ? Math.abs(goalWeightKg - trendWeightKg) : null;
   const previewTdee = latestTdee;
   const previewTargetCalories = previewTdee !== null ? Math.round(previewTdee + (rateKgPerWeek * 7700) / 7) : null;
@@ -213,7 +235,7 @@ function GoalWizardBody({ mode, status }: { mode: "new" | "edit"; status: CoachS
 
   if (step === "type") {
     return (
-      <WizardShell key={step} title="Create New Goal" progress={1 / 3} onBack={() => setStep("intro")} footer={null}>
+      <WizardShell key={step} title="Create New Goal" progress={1 / 3} onBack={goBack} footer={null}>
         <h2 className="text-2xl font-bold mb-6">What is your goal?</h2>
         <div className="space-y-3">
           <WizardOption
@@ -253,7 +275,7 @@ function GoalWizardBody({ mode, status }: { mode: "new" | "edit"; status: CoachS
     const monthlyPctBw = weeklyPctBw !== null ? weeklyPctBw * 4.345 : null;
 
     return (
-      <WizardShell key={step} title={mode === "new" ? "Create New Goal" : "Edit Goal"} progress={mode === "new" ? 2 / 3 : 1 / 2} onBack={() => setStep(mode === "new" ? "type" : "intro")} footer={
+      <WizardShell key={step} title={mode === "new" ? "Create New Goal" : "Edit Goal"} progress={mode === "new" ? 2 / 3 : 1 / 2} onBack={goBack} footer={
         <button onClick={() => setStep("summary")} className="w-full py-3.5 rounded-full text-sm font-semibold" style={{ background: "#ECEDEE", color: "#0B1210" }}>
           Next
         </button>
@@ -353,7 +375,7 @@ function GoalWizardBody({ mode, status }: { mode: "new" | "edit"; status: CoachS
       key={step}
       title={mode === "new" ? "Create New Goal" : "Edit Goal"}
       progress={1}
-      onBack={() => setStep(goalType === "maintain" ? "type" : "target")}
+      onBack={goBack}
       footer={
         <button
           onClick={saveGoal}

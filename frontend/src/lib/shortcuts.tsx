@@ -31,6 +31,8 @@ const DEFAULT_SHORTCUTS: ShortcutId[] = ["quickAdd", "search", "scan", "logWeigh
 const MAX_SHORTCUTS = 4;
 const STORAGE_KEY = "macrotrack-dashboard-shortcuts";
 const COLOR_STORAGE_KEY = "macrotrack-dashboard-shortcut-colors";
+const ORDER_STORAGE_KEY = "macrotrack-dashboard-shortcut-order";
+const CATALOG_ORDER: ShortcutId[] = SHORTCUT_CATALOG.map((s) => s.id);
 
 // Reuses the app's existing categorical palette (tailwind.config.js) rather
 // than introducing new colors — "default" is the current plain grey chip.
@@ -74,6 +76,26 @@ function sanitizeShortcuts(parsed: unknown): ShortcutId[] | null {
   return valid.length > 0 ? valid : null;
 }
 
+// Full catalog order, user-customizable — separate from `shortcuts` (which
+// only holds the pinned subset and its own order). Drives the plain list in
+// the Quick Actions menu and the "More shortcuts" section of its Edit view,
+// so a user can put e.g. "Copy a day" above "New food" in that list even
+// though neither is pinned to the Dashboard. Any catalog id missing from a
+// stored order (freshly added to SHORTCUT_CATALOG after the user's last
+// save, or simply never-before-seen) is appended at the end in catalog
+// order, same "don't silently drop a new option" reasoning as
+// dashboardLayout.tsx's own tile catalog, though unlike that one this DOES
+// need to auto-append — there's no separate "+Add" step for this list, it's
+// just always-visible, so a newly added shortcut would otherwise never
+// appear at all.
+function sanitizeOrder(parsed: unknown): ShortcutId[] | null {
+  if (!Array.isArray(parsed)) return null;
+  const deduped = Array.from(new Set(parsed.filter(isShortcutId)));
+  if (deduped.length === 0) return null;
+  const missing = CATALOG_ORDER.filter((id) => !deduped.includes(id));
+  return [...deduped, ...missing];
+}
+
 function sanitizeColors(parsed: unknown): Partial<Record<ShortcutId, ShortcutColorId>> | null {
   if (typeof parsed !== "object" || parsed === null) return null;
   const result: Partial<Record<ShortcutId, ShortcutColorId>> = {};
@@ -93,6 +115,16 @@ function load(): ShortcutId[] {
   }
 }
 
+function loadOrder(): ShortcutId[] {
+  try {
+    const raw = localStorage.getItem(ORDER_STORAGE_KEY);
+    if (!raw) return CATALOG_ORDER;
+    return sanitizeOrder(JSON.parse(raw)) ?? CATALOG_ORDER;
+  } catch {
+    return CATALOG_ORDER;
+  }
+}
+
 function loadColors(): Partial<Record<ShortcutId, ShortcutColorId>> {
   try {
     const raw = localStorage.getItem(COLOR_STORAGE_KEY);
@@ -107,6 +139,8 @@ interface ShortcutsContextValue {
   shortcuts: ShortcutId[];
   toggle: (id: ShortcutId) => void;
   reorder: (id: ShortcutId, toIndex: number) => void;
+  order: ShortcutId[];
+  reorderMore: (id: ShortcutId, toIndex: number) => void;
   colors: Partial<Record<ShortcutId, ShortcutColorId>>;
   setColor: (id: ShortcutId, color: ShortcutColorId) => void;
 }
@@ -115,11 +149,16 @@ const ShortcutsContext = createContext<ShortcutsContextValue | null>(null);
 
 export function ShortcutsProvider({ children }: { children: ReactNode }) {
   const [shortcuts, setShortcutsState] = useState<ShortcutId[]>(load);
+  const [order, setOrderState] = useState<ShortcutId[]>(loadOrder);
   const [colors, setColorsState] = useState<Partial<Record<ShortcutId, ShortcutColorId>>>(loadColors);
 
   function applyShortcuts(next: ShortcutId[]) {
     setShortcutsState(next);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  }
+  function applyOrder(next: ShortcutId[]) {
+    setOrderState(next);
+    localStorage.setItem(ORDER_STORAGE_KEY, JSON.stringify(next));
   }
   function applyColors(next: Partial<Record<ShortcutId, ShortcutColorId>>) {
     setColorsState(next);
@@ -127,6 +166,7 @@ export function ShortcutsProvider({ children }: { children: ReactNode }) {
   }
 
   const syncShortcuts = useSyncedSetting("dashboardShortcuts", shortcuts, applyShortcuts, sanitizeShortcuts);
+  const syncOrder = useSyncedSetting("dashboardShortcutOrder", order, applyOrder, sanitizeOrder);
   const syncColors = useSyncedSetting("dashboardShortcutColors", colors, applyColors, sanitizeColors);
 
   function toggle(id: ShortcutId) {
@@ -150,6 +190,26 @@ export function ShortcutsProvider({ children }: { children: ReactNode }) {
     syncShortcuts(next);
   }
 
+  // Reorders within the *unpinned* view specifically (toIndex is an index
+  // into that filtered list, same contract as reorder()'s toIndex is an
+  // index into `shortcuts`) — not a raw index into `order` itself, which
+  // also holds pinned ids at positions the "More shortcuts" list never
+  // shows. Derives the unpinned sequence fresh from `order`, splices within
+  // just that, then writes back `order` as [reordered unpinned ids, ...
+  // pinned ids] — the pinned ids' exact position inside `order` is never
+  // read anywhere (every consumer filters them out before display), so
+  // tacking them on unordered at the end is fine; this only ever needs to
+  // preserve the unpinned sequence.
+  function reorderMore(id: ShortcutId, toIndex: number) {
+    const moreIds = order.filter((x) => !shortcuts.includes(x));
+    const fromIndex = moreIds.indexOf(id);
+    if (fromIndex === -1 || fromIndex === toIndex) return;
+    moreIds.splice(fromIndex, 1);
+    moreIds.splice(toIndex, 0, id);
+    const pinnedIds = order.filter((x) => shortcuts.includes(x));
+    syncOrder([...moreIds, ...pinnedIds]);
+  }
+
   function setColor(id: ShortcutId, color: ShortcutColorId) {
     const next = { ...colors };
     if (color === "default") {
@@ -161,7 +221,7 @@ export function ShortcutsProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <ShortcutsContext.Provider value={{ shortcuts, toggle, reorder, colors, setColor }}>{children}</ShortcutsContext.Provider>
+    <ShortcutsContext.Provider value={{ shortcuts, toggle, reorder, order, reorderMore, colors, setColor }}>{children}</ShortcutsContext.Provider>
   );
 }
 

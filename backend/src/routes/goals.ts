@@ -3,7 +3,7 @@ import { z } from "zod";
 import { eq, and, isNull, desc, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "../db/index.js";
-import { goals, checkins, programs, programDays } from "../db/schema.js";
+import { goals, checkins, programs, programDays, profiles } from "../db/schema.js";
 import { currentTrendKg } from "./shared.js";
 import { performCheckin } from "./coach.js";
 
@@ -62,6 +62,14 @@ export function registerGoalRoutes(app: FastifyInstance) {
     if (priorCheckins === 0) {
       await performCheckin(userId); // best-effort — e.g. no-ops via its own weight_required error if no weigh-in exists yet
     }
+
+    // First-ever goal is the moment App.tsx's onboarding gate considers this
+    // account done — see profiles.onboardingCompletedAt. Guarded so a later
+    // goal never re-stamps it.
+    await db
+      .update(profiles)
+      .set({ onboardingCompletedAt: now })
+      .where(and(eq(profiles.userId, userId), isNull(profiles.onboardingCompletedAt)));
 
     const [goal] = await db.select().from(goals).where(eq(goals.id, id));
     reply.code(201);
