@@ -4,6 +4,7 @@ import type { CreateFoodInput, Food, LabelScanResult } from "../api/types";
 import { useEnergyUnit, kcalToUnit, unitToKcal, energyUnitLabel } from "../lib/energyUnit";
 import { getFoodIcon } from "../lib/foodEmoji";
 import IconPickerModal from "./IconPickerModal";
+import PhotoSourceSheet from "./PhotoSourceSheet";
 import { useScanNutritionLabel } from "../api/foods";
 
 function displayFromGrams(unit: "mg" | "mcg", grams: number): number {
@@ -197,7 +198,14 @@ export default function CreateFoodForm({
     return initial;
   });
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  // Two separate inputs, not one bare accept="image/*" — same reasoning as
+  // PhotosScreen's cameraInputRef/libraryInputRef (see that file's comment):
+  // a bare file input doesn't reliably prompt "Camera or Gallery?" on
+  // Android/Chrome, so PhotoSourceSheet asks explicitly and routes to
+  // whichever of these two matches.
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const libraryInputRef = useRef<HTMLInputElement>(null);
+  const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
   const scanLabel = useScanNutritionLabel();
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanSuccess, setScanSuccess] = useState(false);
@@ -330,13 +338,14 @@ export default function CreateFoodForm({
           </p>
         )}
 
-        {/* Camera-capture input has no visible chrome of its own — the
-            dashed button below is the only affordance. `capture="environment"`
-            opens the phone's back camera directly rather than a photo-library
-            picker; still accepts a gallery pick since it's only a hint, not
-            an enforced constraint. */}
+        {/* Hidden inputs have no visible chrome of their own — the dashed
+            button below is the only affordance. Two of them (camera +
+            library, see cameraInputRef/libraryInputRef above), routed to by
+            PhotoSourceSheet below rather than a single input clicked
+            directly — `capture="environment"` on one alone opens the phone's
+            back camera with no reliable way to reach the gallery instead. */}
         <input
-          ref={fileInputRef}
+          ref={cameraInputRef}
           type="file"
           accept="image/*"
           capture="environment"
@@ -347,9 +356,20 @@ export default function CreateFoodForm({
             if (file) handleLabelPhoto(file);
           }}
         />
+        <input
+          ref={libraryInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file) handleLabelPhoto(file);
+          }}
+        />
         <button
           type="button"
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => setSourcePickerOpen(true)}
           disabled={scanLabel.isPending}
           className="w-full flex items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-line py-3.5 text-sm font-medium text-accent active:bg-white/5 disabled:opacity-60"
         >
@@ -556,6 +576,14 @@ export default function CreateFoodForm({
           autoPreview={autoIcon.value}
           onSelect={setIcon}
           onClose={() => setIconPickerOpen(false)}
+        />
+      )}
+
+      {sourcePickerOpen && (
+        <PhotoSourceSheet
+          onChooseCamera={() => cameraInputRef.current?.click()}
+          onChooseLibrary={() => libraryInputRef.current?.click()}
+          onClose={() => setSourcePickerOpen(false)}
         />
       )}
     </>

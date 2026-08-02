@@ -17,8 +17,8 @@ export default function ShortcutsBar() {
   return (
     <>
       <div
-        className={`fixed inset-x-0 z-30 transition-[transform,opacity] duration-200 ease-out ${
-          visible ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0 pointer-events-none"
+        className={`fixed inset-x-0 z-30 transition-transform duration-200 ease-out ${
+          visible ? "translate-y-0" : "translate-y-full pointer-events-none"
         }`}
         style={{ bottom: navHeight }}
       >

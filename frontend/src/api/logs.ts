@@ -92,6 +92,12 @@ export function useAddLog(date: string) {
           old.entries.map((e) => (e.id === ctx.tempId ? serverEntry : e))
         );
       });
+      // Dashboard/detail queries (history averages, energy balance, adaptive
+      // TDEE backfill) derive from this day's totals but aren't keyed by
+      // `date`, so they never see the setQueryData above — refetch them
+      // directly. `["logs", date]` is excluded, already handled above.
+      qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "logs" && q.queryKey[1] !== date });
+      qc.invalidateQueries({ queryKey: ["coach"] });
     },
   });
 }
@@ -122,6 +128,10 @@ export function useUpdateLogQuantity(date: string) {
     },
     onError: (_err, _input, ctx) => {
       if (ctx?.previous) qc.setQueryData(["logs", date], ctx.previous);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "logs" && q.queryKey[1] !== date });
+      qc.invalidateQueries({ queryKey: ["coach"] });
     },
   });
 }
@@ -169,6 +179,8 @@ export function useBulkAddLog(date: string) {
         const remaining = old.entries.filter((e) => !ctx.tempIds.includes(e.id));
         return withEntries(date, [...remaining, ...data.entries]);
       });
+      qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "logs" && q.queryKey[1] !== date });
+      qc.invalidateQueries({ queryKey: ["coach"] });
     },
   });
 }
@@ -246,6 +258,28 @@ export function useDeleteLog(date: string) {
     },
     onError: (_err, _id, ctx) => {
       if (ctx?.previous) qc.setQueryData(["logs", date], ctx.previous);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "logs" && q.queryKey[1] !== date });
+      qc.invalidateQueries({ queryKey: ["coach"] });
+    },
+  });
+}
+
+// Deletes a whole selection (a single entry or a time-group) in one request —
+// backs LogActionBar's "Delete" chip. Not optimistic like useDeleteLog above
+// (that one's scoped to a single known date's cache entry); a selection's
+// entries are already on the currently-viewed date in practice, but a plain
+// invalidate-everything-logs-prefixed is simpler and matches
+// useCopyLogEntries/useMoveLogEntries's own approach for the same reason —
+// none of these bulk ops are worth a bespoke optimistic-cache patch.
+export function useDeleteLogEntries() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => apiFetch<null>("/logs/bulk", { method: "DELETE", body: JSON.stringify({ ids }) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "logs" });
+      qc.invalidateQueries({ queryKey: ["coach"] });
     },
   });
 }

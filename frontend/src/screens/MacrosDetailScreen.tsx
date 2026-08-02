@@ -104,27 +104,29 @@ export default function MacrosDetailScreen() {
 
       <main className="px-4 space-y-3 max-w-md mx-auto">
         <div className="tile-enter border border-line bg-surface rounded-2xl p-4" style={staggerStyle(0, 60, 5)}>
-          <div className="flex items-start gap-6">
-            <div>
+          <div className="relative grid grid-cols-3 gap-6">
+            <div className="pointer-events-none absolute inset-y-0 left-1/3 w-px -translate-x-1/2 bg-white/10" />
+            <div className="pointer-events-none absolute inset-y-0 left-2/3 w-px -translate-x-1/2 bg-white/10" />
+            <div className="text-center">
               <p className="text-[11px] tracking-widest uppercase text-muted">Protein</p>
               <p className="tabular text-xl font-medium tracking-tight whitespace-nowrap">
                 {rangeAvg ? fmt(rangeAvg.protein) : "—"} <span className="text-sm font-normal text-muted">g</span>
               </p>
             </div>
-            <div>
+            <div className="text-center">
               <p className="text-[11px] tracking-widest uppercase text-muted">Fat</p>
               <p className="tabular text-xl font-medium tracking-tight whitespace-nowrap">
                 {rangeAvg ? fmt(rangeAvg.fat) : "—"} <span className="text-sm font-normal text-muted">g</span>
               </p>
             </div>
-            <div>
+            <div className="text-center">
               <p className="text-[11px] tracking-widest uppercase text-muted">Carbs</p>
               <p className="tabular text-xl font-medium tracking-tight whitespace-nowrap">
                 {rangeAvg ? fmt(rangeAvg.carbs) : "—"} <span className="text-sm font-normal text-muted">g</span>
               </p>
             </div>
           </div>
-          {rangeLabel && <p className="text-xs text-muted mt-2">{rangeLabel}</p>}
+          {rangeLabel && <p className="text-xs text-muted mt-2 text-center">{rangeLabel}</p>}
         </div>
 
         <div className="tile-enter" style={staggerStyle(1, 60, 5)}>

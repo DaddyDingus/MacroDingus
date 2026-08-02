@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { ChevronLeft, Pencil, X } from "lucide-react";
+import { ChevronLeft, Pencil, Plus, X } from "lucide-react";
 import type { Food } from "../api/types";
-import { useFoodSearch } from "../api/foods";
 import { scaleNutrition, sumNutrition } from "../lib/nutrition";
+import { localDateString } from "../lib/date";
 import FoodIconAvatar from "./FoodIconAvatar";
 import IconPickerModal from "./IconPickerModal";
+import AddFoodSheet from "./AddFoodSheet";
 import { getFoodIcon } from "../lib/foodEmoji";
 import type { SheetDragHandlers } from "./BottomSheet";
 import { useEnergyUnit, kcalToUnit, energyUnitLabel } from "../lib/energyUnit";
@@ -34,9 +35,9 @@ export default function RecipeForm({
   onCancel: () => void;
   onCreated: (input: { name: string; icon: string | null; servings: number; totalWeightGrams?: number; ingredients: Ingredient[] }) => void;
   // Spread onto this form's own header (below) when it's rendered directly
-  // as a BottomSheet's child (RecipeEditSheet, CreateRecipeFromGroupSheet,
-  // QuickActionFlow's "newRecipe" step) — lets that header double as the
-  // sheet's drag-to-dismiss surface, same as every other sheet's header.
+  // as a BottomSheet's child (RecipeEditSheet, CreateRecipeFromGroupSheet) —
+  // lets that header double as the sheet's drag-to-dismiss surface, same as
+  // every other sheet's header.
   dragHandlers?: SheetDragHandlers;
 }) {
   const [name, setName] = useState(initial?.name ?? initialName);
@@ -49,10 +50,8 @@ export default function RecipeForm({
       ? String(initial.totalWeightGrams)
       : ""
   );
-  const [ingredientQuery, setIngredientQuery] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
   const { unit: energyUnit } = useEnergyUnit();
-
-  const search = useFoodSearch(ingredientQuery);
 
   const ingredientSumGrams = ingredients.reduce((sum, i) => sum + i.quantityGrams, 0);
   const totalWeightGrams = weightOverride.trim() ? Number(weightOverride) : ingredientSumGrams;
@@ -79,9 +78,9 @@ export default function RecipeForm({
   // current override, live as the name is typed.
   const autoIcon = getFoodIcon(name.trim() || "?");
 
-  function addIngredient(food: Food) {
-    setIngredients((prev) => [...prev, { food, quantityGrams: food.servingSizeGrams ?? 100 }]);
-    setIngredientQuery("");
+  function addIngredients(items: { food: Food; quantityGrams: number }[]) {
+    setIngredients((prev) => [...prev, ...items]);
+    setPickerOpen(false);
   }
 
   function updateQuantity(index: number, quantityGrams: number) {
@@ -163,39 +162,19 @@ export default function RecipeForm({
 
         <div>
           <span className="block text-xs text-muted mb-1.5">Ingredients</span>
-          <input
-            type="search"
-            autoComplete="off"
-            value={ingredientQuery}
-            onChange={(e) => setIngredientQuery(e.target.value)}
-            // This is a live filter, not a field with its own "confirm"
-            // action — Enter here should never submit the whole recipe (the
-            // form wrap above would otherwise do exactly that).
-            onKeyDown={(e) => {
-              if (e.key === "Enter") e.preventDefault();
-            }}
-            placeholder="Search foods to add…"
-            className="w-full rounded-md bg-surface-raised border border-line px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent"
-          />
-          {ingredientQuery.trim() && (
-            <div className="mt-2 rounded-2xl bg-dashboardCard overflow-hidden divide-y divide-dashboardDivider max-h-48 overflow-y-auto">
-              {search.data?.length === 0 && <p className="px-4 py-3 text-xs text-muted">No foods found.</p>}
-              {search.data?.map((food) => (
-                <button
-                  key={food.id}
-                  type="button"
-                  onClick={() => addIngredient(food)}
-                  className="w-full flex items-center gap-3 px-4 py-3 text-left active:bg-surface-raised"
-                >
-                  <FoodIconAvatar name={food.name} icon={food.icon} className="w-8 h-8" />
-                  <span className="text-sm text-white truncate min-w-0 flex-1">{food.name}</span>
-                  <span className="tabular text-xs text-muted shrink-0">
-                    {Math.round(kcalToUnit(food.caloriesPer100g, energyUnit))} {energyUnitLabel(energyUnit)}/100g
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
+          {/* Opens the same Search/Scan/Quick Add/Library sheet the Food Log
+              uses, in "pick" mode (see AddFoodSheet's onPickItems) — tapping
+              a result there opens Food Detail to set the serving size, same
+              as logging a food, just handed back here as an ingredient
+              instead of posted to today's log. */}
+          <button
+            type="button"
+            onClick={() => setPickerOpen(true)}
+            className="w-full flex items-center justify-center gap-2 rounded-md border border-dashed border-line px-3 py-2.5 text-sm text-muted active:bg-surface-raised"
+          >
+            <Plus size={16} strokeWidth={2} />
+            Add ingredient
+          </button>
         </div>
 
         {ingredients.length > 0 && (
@@ -342,6 +321,15 @@ export default function RecipeForm({
           onClose={() => setIconPickerOpen(false)}
         />
       )}
+
+      <AddFoodSheet
+        open={pickerOpen}
+        date={localDateString()}
+        editingEntry={null}
+        onClose={() => setPickerOpen(false)}
+        onPickItems={addIngredients}
+        commitLabel="Add to Recipe"
+      />
     </>
   );
 }

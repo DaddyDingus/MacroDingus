@@ -234,16 +234,23 @@ export default function EditProgramScreen() {
             </div>
           </div>
           {caloriesInputMode === "slider" ? (
-            <input
-              type="range"
-              min={0}
-              max={maxCalories}
-              step={10}
-              value={Math.round(current.targetCalories)}
-              disabled={isLocked}
-              onChange={(e) => updateCurrent({ targetCalories: Number(e.target.value) })}
-              className="w-full accent-ink"
-            />
+            // data-no-rubber-band: a horizontal thumb-drag always carries a
+            // little vertical wobble, which is enough to arm
+            // useRubberBandScroll's pull gesture (and its preventDefault) on
+            // top of the drag, making the slider feel stuck mid-gesture —
+            // same fix as the Compare screen's slider and the Goal wizard's.
+            <div data-no-rubber-band>
+              <input
+                type="range"
+                min={0}
+                max={maxCalories}
+                step={10}
+                value={Math.round(current.targetCalories)}
+                disabled={isLocked}
+                onChange={(e) => updateCurrent({ targetCalories: Number(e.target.value) })}
+                className="w-full accent-ink"
+              />
+            </div>
           ) : (
             <input
               type="number"
@@ -265,16 +272,19 @@ export default function EditProgramScreen() {
             <p className="text-sm font-medium">Protein</p>
             <p className="tabular text-sm">{current.proteinPerKg.toFixed(2)} g/kg</p>
           </div>
-          <input
-            type="range"
-            min={0}
-            max={4}
-            step={0.05}
-            value={current.proteinPerKg}
-            disabled={isLocked}
-            onChange={(e) => updateCurrent({ proteinPerKg: Number(e.target.value) })}
-            className="w-full accent-protein"
-          />
+          {/* data-no-rubber-band: see the Calories slider above. */}
+          <div data-no-rubber-band>
+            <input
+              type="range"
+              min={0}
+              max={4}
+              step={0.05}
+              value={current.proteinPerKg}
+              disabled={isLocked}
+              onChange={(e) => updateCurrent({ proteinPerKg: Number(e.target.value) })}
+              className="w-full accent-protein"
+            />
+          </div>
           <p className="text-xs text-muted mt-1">{currentMacros.targetProteinG} g today · set between 0 and 4.0 g per kg of body weight.</p>
         </div>
 
@@ -283,16 +293,19 @@ export default function EditProgramScreen() {
             <p className="text-sm font-medium">Carb to Fat Ratio</p>
             <p className="tabular text-sm">{current.carbFatRatioPct}%</p>
           </div>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            step={1}
-            value={current.carbFatRatioPct}
-            disabled={isLocked}
-            onChange={(e) => updateCurrent({ carbFatRatioPct: Number(e.target.value) })}
-            className="w-full accent-carbs"
-          />
+          {/* data-no-rubber-band: see the Calories slider above. */}
+          <div data-no-rubber-band>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={current.carbFatRatioPct}
+              disabled={isLocked}
+              onChange={(e) => updateCurrent({ carbFatRatioPct: Number(e.target.value) })}
+              className="w-full accent-carbs"
+            />
+          </div>
           <p className="text-xs text-muted mt-1">
             {currentMacros.targetCarbsG} g carbs · {currentMacros.targetFatG} g fat — set carbs as a share of remaining calories after protein.
           </p>

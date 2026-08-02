@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Pencil, Copy, Move, Clock, ChefHat, ChevronLeft, X, type LucideIcon } from "lucide-react";
+import { Pencil, Copy, Move, Clock, ChefHat, Trash2, ChevronLeft, X, type LucideIcon } from "lucide-react";
 import type { LogEntry } from "../api/types";
-import { useCopyLogEntries, useMoveLogEntries } from "../api/logs";
+import { useCopyLogEntries, useMoveLogEntries, useDeleteLogEntries } from "../api/logs";
 import { localDateString, localTimeString, addDays, loggedAtTimeString, buildLoggedAt } from "../lib/date";
 import useBottomNavHeight from "../lib/useBottomNavHeight";
 import DateTimePickerSheet from "./DateTimePickerSheet";
 import CreateRecipeFromGroupSheet from "./CreateRecipeFromGroupSheet";
+import ConfirmDeleteSheet from "./ConfirmDeleteSheet";
 
 export type LogSelection = { kind: "entry"; entry: LogEntry } | { kind: "group"; entries: LogEntry[] };
 
@@ -44,9 +45,11 @@ export default function LogActionBar({
   const [view, setView] = useState<RootView>("root");
   const [pendingSheet, setPendingSheet] = useState<PendingSheet>(null);
   const [recipeSheetOpen, setRecipeSheetOpen] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const navHeight = useBottomNavHeight();
   const copyEntries = useCopyLogEntries();
   const moveEntries = useMoveLogEntries();
+  const deleteEntries = useDeleteLogEntries();
 
   const entries = selection.kind === "entry" ? [selection.entry] : selection.entries;
   const isGroup = selection.kind === "group";
@@ -95,6 +98,13 @@ export default function LogActionBar({
     setPendingSheet(view === "copy" ? "copy" : "move");
   }
 
+  function executeDelete() {
+    deleteEntries.mutate(
+      entries.map((e) => e.id),
+      { onSuccess: () => { setConfirmingDelete(false); onClose(); } }
+    );
+  }
+
   return (
     <>
       <div className="fixed inset-x-0 z-30" style={{ bottom: navHeight }}>
@@ -110,7 +120,20 @@ export default function LogActionBar({
             </button>
           )}
 
-          <div className="flex-1 min-w-0 overflow-x-auto no-scrollbar flex items-center gap-2">
+          {/* touch-action: pan-x + data-no-rubber-band — same fix
+              MacroSummaryBar's own horizontal scroller needed. This bar is
+              fixed at the bottom of the screen, which is exactly where
+              window.scrollY sits at the page's max (or at 0, on a short log)
+              while the user is selecting entries down there — without both
+              of these, a horizontal swipe across the chips got read as
+              vertical wobble by useRubberBandScroll's global touchmove
+              listener and dragged the whole page into its pull-to-refresh
+              stretch instead of just scrolling this row. */}
+          <div
+            className="flex-1 min-w-0 overflow-x-auto no-scrollbar overscroll-x-contain flex items-center gap-2"
+            data-no-rubber-band
+            style={{ touchAction: "pan-x" }}
+          >
             {view === "root" && (
               <>
                 {!isGroup && (
@@ -129,6 +152,7 @@ export default function LogActionBar({
                 {isGroup && (
                   <Chip icon={ChefHat} label="Create recipe" onClick={() => setRecipeSheetOpen(true)} />
                 )}
+                <Chip icon={Trash2} label="Delete" onClick={() => setConfirmingDelete(true)} />
               </>
             )}
             {(view === "copy" || view === "move") && (
@@ -191,6 +215,21 @@ export default function LogActionBar({
             setRecipeSheetOpen(false);
             onClose();
           }}
+        />
+      )}
+
+      {confirmingDelete && (
+        <ConfirmDeleteSheet
+          title={isGroup ? "Delete Group" : "Delete Food"}
+          message={
+            entries.length === 1
+              ? `Remove ${entries[0].food.name} from this day's log? This can't be undone.`
+              : `Remove all ${entries.length} items logged at this time from this day's log? This can't be undone.`
+          }
+          confirmLabel={isGroup ? "Delete Group" : "Delete Food"}
+          onConfirm={executeDelete}
+          onClose={() => setConfirmingDelete(false)}
+          isPending={deleteEntries.isPending}
         />
       )}
     </>

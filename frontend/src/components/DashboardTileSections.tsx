@@ -311,11 +311,9 @@ export default function DashboardTileSections() {
       case "protein":
       case "carbs":
       case "fat": {
-        const values = history.map((d) => d[id]);
-        const avg = history.length > 0 ? values.reduce((s, v) => s + v, 0) / history.length : 0;
         const unitLabel = id === "calories" ? energyUnitLabel(energyUnit) : "g";
-        const displayAvg = id === "calories" ? kcalToUnit(avg, energyUnit) : avg;
         const todayValue = history.length > 0 ? history[history.length - 1][id] : 0;
+        const displayToday = id === "calories" ? kcalToUnit(todayValue, energyUnit) : todayValue;
         const target = todayTargets
           ? { calories: todayTargets.calories, protein: todayTargets.proteinG, carbs: todayTargets.carbsG, fat: todayTargets.fatG }[id]
           : 0;
@@ -324,8 +322,8 @@ export default function DashboardTileSections() {
             key={id}
             staggerIndex={staggerIndex}
             title={NUTRIENT_LABELS[id]}
-            subtitle={history.length > 0 ? `avg ${unitLabel}/day, 7d` : "No logs yet"}
-            value={history.length > 0 ? fmt(displayAvg, id === "calories" ? 0 : 1) : "—"}
+            subtitle={history.length > 0 ? "Today" : "No logs yet"}
+            value={history.length > 0 ? fmt(displayToday, id === "calories" ? 0 : 1) : "—"}
             unit={history.length > 0 ? unitLabel : undefined}
             onClick={() => navigate(`/nutrition/${id}`)}
           >

@@ -30,7 +30,6 @@ export default function DashboardScreen() {
   const checkIn = useCheckIn();
 
   const navigate = useNavigate();
-  const [mode, setMode] = useState<"total" | "remaining">("total");
   const [refreshing, setRefreshing] = useState(false);
   const [checkInResult, setCheckInResult] = useState<{ checkin: NonNullable<ReturnType<typeof useCoachStatus>["data"]>["latestCheckin"]; usedAdaptiveTdee: boolean } | null>(null);
 
@@ -174,7 +173,7 @@ export default function DashboardScreen() {
 
         <section>
           <p className="text-lg font-bold text-ink mb-3">Daily Nutrition</p>
-          <DashboardTotalsArcCard totals={totals} targets={targets} mode={mode} onModeChange={setMode} />
+          <DashboardTotalsArcCard totals={totals} targets={targets} />
         </section>
 
         <Suspense

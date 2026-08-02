@@ -120,15 +120,16 @@ export default function ExpenditureDetailScreen() {
 
       <main className="px-4 space-y-3 max-w-md mx-auto">
         <div className="tile-enter border border-line bg-surface rounded-2xl p-4" style={staggerStyle(block++, 60, 5)}>
-          <div className="flex items-start gap-6">
-            <div>
+          <div className="relative grid grid-cols-2 gap-6">
+            <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/10" />
+            <div className="text-center">
               <p className="text-[11px] tracking-widest uppercase text-muted">Average</p>
               <p className="tabular text-2xl font-medium tracking-tight whitespace-nowrap">
                 {rangeAvgKcal !== null ? Math.round(kcalToUnit(rangeAvgKcal, energyUnit)).toLocaleString() : "—"}{" "}
                 <span className="text-sm font-normal text-muted">{energyUnitLabel(energyUnit)}</span>
               </p>
             </div>
-            <div>
+            <div className="text-center">
               <p className="text-[11px] tracking-widest uppercase text-muted">Difference</p>
               <p className="tabular text-2xl font-medium tracking-tight whitespace-nowrap">
                 {rangeDiffKcal !== null ? signed(kcalToUnit(rangeDiffKcal, energyUnit)) : "—"}{" "}
@@ -137,9 +138,9 @@ export default function ExpenditureDetailScreen() {
             </div>
           </div>
           {rangeLabel ? (
-            <p className="text-xs text-muted mt-2">{rangeLabel}</p>
+            <p className="text-xs text-muted mt-2 text-center">{rangeLabel}</p>
           ) : (
-            <p className="text-xs text-muted mt-2">Check in from Strategy to get your first estimate.</p>
+            <p className="text-xs text-muted mt-2 text-center">Check in from Strategy to get your first estimate.</p>
           )}
         </div>
 

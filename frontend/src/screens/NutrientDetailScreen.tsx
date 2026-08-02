@@ -72,6 +72,11 @@ function formatRangeLabel(startDate: string, endDate: string): string {
   return `${formatRangeDate(startDate, false)} – ${formatRangeDate(endDate, true)}`;
 }
 
+function signed(n: number, decimals: number): string {
+  const s = n.toFixed(decimals);
+  return n >= 0 ? `+${s}` : s;
+}
+
 export default function NutrientDetailScreen() {
   const navigate = useNavigate();
   const { metric } = useParams<{ metric: string }>();
@@ -131,6 +136,7 @@ export default function NutrientDetailScreen() {
   );
 
   const rangeAvg = chartPoints.length ? chartPoints.reduce((s, p) => s + p.value, 0) / chartPoints.length : null;
+  const rangeDiff = chartPoints.length >= 2 ? chartPoints[chartPoints.length - 1].value - chartPoints[0].value : null;
   const rangeLabel = chartPoints.length ? formatRangeLabel(chartPoints[0].date, chartPoints[chartPoints.length - 1].date) : null;
 
   const monthGroups = new Map<string, { label: string; entries: { date: string; actual: number; target: number | null; pct: number | null }[] }>();
@@ -163,11 +169,23 @@ export default function NutrientDetailScreen() {
 
       <main className="px-4 space-y-3 max-w-md mx-auto">
         <div className="tile-enter border border-line bg-surface rounded-2xl p-4" style={staggerStyle(block++, 60, 5)}>
-          <p className="text-[11px] tracking-widest uppercase text-muted">Average</p>
-          <p className="tabular text-2xl font-medium tracking-tight whitespace-nowrap">
-            {rangeAvg !== null ? fmt(rangeAvg) : "—"} <span className="text-sm font-normal text-muted">{unitLabel}</span>
-          </p>
-          {rangeLabel && <p className="text-xs text-muted mt-2">{rangeLabel}</p>}
+          <div className="relative grid grid-cols-2 gap-6">
+            <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/10" />
+            <div className="text-center">
+              <p className="text-[11px] tracking-widest uppercase text-muted">Average</p>
+              <p className="tabular text-2xl font-medium tracking-tight whitespace-nowrap">
+                {rangeAvg !== null ? fmt(rangeAvg) : "—"} <span className="text-sm font-normal text-muted">{unitLabel}</span>
+              </p>
+            </div>
+            <div className="text-center">
+              <p className="text-[11px] tracking-widest uppercase text-muted">Difference</p>
+              <p className="tabular text-2xl font-medium tracking-tight whitespace-nowrap">
+                {rangeDiff !== null ? signed(rangeDiff, config.decimals) : "—"}{" "}
+                <span className="text-sm font-normal text-muted">{unitLabel}</span>
+              </p>
+            </div>
+          </div>
+          {rangeLabel && <p className="text-xs text-muted mt-2 text-center">{rangeLabel}</p>}
         </div>
 
         <div className="tile-enter" style={staggerStyle(block++, 60, 5)}>

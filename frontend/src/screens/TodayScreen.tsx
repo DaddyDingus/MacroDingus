@@ -14,6 +14,7 @@ import CopyDaySheet from "../components/CopyDaySheet";
 import CalendarJumpSheet from "../components/CalendarJumpSheet";
 import LogActionBar, { type LogSelection } from "../components/LogActionBar";
 import ConfirmDeleteSheet from "../components/ConfirmDeleteSheet";
+import ShortcutsBar from "../components/ShortcutsBar";
 import { staggerStyle } from "../lib/stagger";
 
 const EMPTY_TOTALS = { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0, saturatedFat: 0, sodiumMg: 0 };
@@ -186,6 +187,9 @@ export default function TodayScreen() {
           + Log food
         </button>
       </main>
+
+      {/* Hidden during a selection — LogActionBar takes this same fixed slot above BottomNav */}
+      {!selection && <ShortcutsBar />}
 
       <AddFoodSheet
         open={sheetOpen}

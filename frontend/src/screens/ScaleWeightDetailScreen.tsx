@@ -101,15 +101,16 @@ export default function ScaleWeightDetailScreen() {
 
       <main className="px-4 space-y-3 max-w-md mx-auto">
         <div className="tile-enter border border-line bg-surface rounded-2xl p-4" style={staggerStyle(0, 60, 5)}>
-          <div className="flex items-start gap-6">
-            <div>
+          <div className="relative grid grid-cols-2 gap-6">
+            <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/10" />
+            <div className="text-center">
               <p className="text-[11px] tracking-widest uppercase text-muted">Average</p>
               <p className="tabular text-2xl font-medium tracking-tight">
                 {rangeAvgKg !== null ? kgToUnit(rangeAvgKg, unit).toFixed(1) : "—"}{" "}
                 <span className="text-sm font-normal text-muted">{unit}</span>
               </p>
             </div>
-            <div>
+            <div className="text-center">
               <p className="text-[11px] tracking-widest uppercase text-muted">Difference</p>
               <p className="tabular text-2xl font-medium tracking-tight">
                 {rangeDiffKg !== null ? signed(kgToUnit(rangeDiffKg, unit)) : "—"}{" "}
@@ -117,7 +118,7 @@ export default function ScaleWeightDetailScreen() {
               </p>
             </div>
           </div>
-          {rangeLabel && <p className="text-xs text-muted mt-2">{rangeLabel}</p>}
+          {rangeLabel && <p className="text-xs text-muted mt-2 text-center">{rangeLabel}</p>}
         </div>
 
         <div className="tile-enter" style={staggerStyle(1, 60, 5)}>

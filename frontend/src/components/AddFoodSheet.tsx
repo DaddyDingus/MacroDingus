@@ -8,7 +8,6 @@ import {
   Plus,
   Utensils,
   Library as LibraryIcon,
-  Heart,
   Sparkles,
   Loader2,
   Camera,
@@ -31,9 +30,10 @@ import CreateFoodForm from "./CreateFoodForm";
 import RecipeForm from "./RecipeForm";
 import DraggableSnapSheet from "./DraggableSnapSheet";
 import FoodDetailScreen from "./FoodDetailScreen";
-import NutrientStatusBar from "./NutrientStatusBar";
+import NutrientStatusBar, { LogTimePill } from "./NutrientStatusBar";
 import DateTimePickerSheet from "./DateTimePickerSheet";
 import ConfirmDeleteSheet from "./ConfirmDeleteSheet";
+import PhotoSourceSheet from "./PhotoSourceSheet";
 
 // zxing's decoder is ~400kB and only ever needed for the occasional barcode
 // scan, not the everyday search-and-log path — split it into its own chunk
@@ -120,6 +120,8 @@ export default function AddFoodSheet({
   forcedLoggedAt,
   totals,
   targets,
+  onPickItems,
+  commitLabel,
 }: {
   open: boolean;
   date: string;
@@ -129,7 +131,7 @@ export default function AddFoodSheet({
   // quick-actions sheet, a recipe picker) skip straight to scanning, straight
   // to the new-food form, or to a preselected food's quantity step instead of
   // always landing on search.
-  initialStep?: "search" | "scan" | "create" | "describe";
+  initialStep?: "search" | "scan" | "create" | "describe" | "recipe";
   initialFood?: Food;
   // Overrides the default "now" timestamp everything staged here gets
   // logged under — set by the Food Log's per-group "+" button so items
@@ -143,6 +145,16 @@ export default function AddFoodSheet({
   // rather than a broken one.
   totals?: Nutrition;
   targets?: MacroTargets | null;
+  // Recipe-ingredient-picker mode (RecipeForm's "+" button): when set, every
+  // commit path (the header's "Log Foods" button, FoodDetailScreen's own
+  // "Log Foods" numpad key) hands the staged plate to this instead of
+  // POSTing it to today's log via bulkAddLog — same staging/search/scan/
+  // library UI, different final destination. The sheet still closes and
+  // clears its plate exactly like a real log commit does.
+  onPickItems?: (items: { food: Food; quantityGrams: number }[]) => void;
+  // Overrides the "Log Foods" copy everywhere it'd otherwise appear —
+  // factually wrong once onPickItems is set, since nothing is being logged.
+  commitLabel?: string;
 }) {
   const [step, setStep] = useState<Step>("browse");
   // Mirrors `step` so requestClose (handed to useBackDismiss) always reads
@@ -288,27 +300,15 @@ export default function AddFoodSheet({
   // it closed; the user asked for the sheet to stay at that taller layout
   // permanently instead of dropping back down when the keyboard closes.
   const sheetPanelHeightPx = contentHeight;
-  // How much of Layer 1 (the Plate View) is actually visible above the
-  // sheet's current top edge — used to center the empty-plate message within
-  // what's really on screen rather than the full (mostly sheet-covered)
-  // layer height. See the empty-state block below for why this matters.
-  const visibleLayer1Height = sheetExpanded ? 0 : Math.max(0, contentHeight - SHEET_COLLAPSED_PEEK_PX);
-  // Same ref-based "did this just toggle" check DraggableSnapSheet uses
-  // internally for its own panel height — needed here too so this value's
-  // *own* height transition (below) only fires on a real expand/collapse
-  // toggle, not on every keyboard-driven viewport resize. Without this, e.g.
-  // opening the sheet via the "Search" shortcut (which auto-focuses the
-  // search input) has the keyboard sliding up shrink viewportHeight several
-  // times in quick succession; DraggableSnapSheet's own panel deliberately
-  // snaps to each of those instantly (see its own comment on why easing that
-  // caused a stuttery bounce), but this text block used to keep its 220ms
-  // ease-out regardless of cause — so it visibly detached and animated past
-  // the (correctly instant-snapping) sheet next to it. Snapping both in
-  // lockstep during a keyboard resize tracks the keyboard's own already-smooth
-  // native slide directly, with no artificial second animation layered on top.
-  const prevSheetExpandedRef = useRef(sheetExpanded);
-  const sheetJustToggled = prevSheetExpandedRef.current !== sheetExpanded;
-  prevSheetExpandedRef.current = sheetExpanded;
+  // Fixed height for centering the empty-plate message — the space that's
+  // visible above the sheet's collapsed (dismissed) resting position, not
+  // whatever's currently visible while the sheet is being dragged/expanded.
+  // This used to track the sheet's live visible height instead (0 while
+  // expanded, growing as it collapsed), so the message slid/faded around
+  // and even disappeared entirely whenever the sheet toggled — explicitly
+  // unwanted: the message should sit in one fixed spot (~screen center) and
+  // never move with the sheet.
+  const emptyPlateMessageHeight = Math.max(0, contentHeight - SHEET_COLLAPSED_PEEK_PX);
 
   useEffect(() => {
     if (!open) return;
@@ -327,7 +327,7 @@ export default function AddFoodSheet({
     } else {
       setSelectedFood(null);
       setGrams(100);
-      setStep(initialStep === "scan" ? "scan" : initialStep === "create" ? "create" : "browse");
+      setStep(initialStep === "scan" ? "scan" : initialStep === "create" ? "create" : initialStep === "recipe" ? "recipe" : "browse");
       setActiveTab(initialStep === "describe" ? "describe" : "search");
       setPendingSearchFocus(initialStep === "search");
     }
@@ -432,8 +432,20 @@ export default function AddFoodSheet({
   // here, still inside the real user gesture/tap, is what actually gives a
   // mobile browser a chance to hide its on-screen keyboard as a direct
   // consequence of that tap — without this, leaving "browse" could leave a
-  // stray keyboard open over e.g. the detail step, with nothing left
+  // stray keyboard open over e.g. the create/scan steps, with nothing left
   // focused for anything afterward to blur.
+  //
+  // Except when heading to "detail": FoodDetailScreen's own quantity input
+  // is autoFocus, so it grabs focus the moment it mounts regardless. Blurring
+  // the search input first (closing the keyboard) only to have that new
+  // input immediately reopen it made tapping a search result look like two
+  // back-to-back keyboard-resize jolts, which visually swamped
+  // FoodDetailScreen's own step-enter fade/slide — it technically still
+  // played, just underneath a much bigger, jankier viewport resize. Leaving
+  // the old input focused lets the browser hand focus straight to the new
+  // one instead (a normal focus-to-focus transfer, not focus-to-nothing-to-
+  // focus), so the keyboard just stays put and the entrance animation is
+  // actually visible against a stable layout.
   //
   // Also remembers whether the search input specifically was the thing
   // focused when leaving "browse" — restored via the ref below when
@@ -445,7 +457,7 @@ export default function AddFoodSheet({
     if (next !== "browse") {
       returnFocusToSearchRef.current = activeTab === "search" && document.activeElement === searchInputRef.current;
     }
-    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    if (next !== "detail" && document.activeElement instanceof HTMLElement) document.activeElement.blur();
     setStep(next);
     if (next === "browse" && returnFocusToSearchRef.current) {
       returnFocusToSearchRef.current = false;
@@ -536,10 +548,12 @@ export default function AddFoodSheet({
   // a checked-rows Set.
   function confirmPlate() {
     if (stagedPlate.length === 0) return;
-    bulkAddLog.mutate({
-      entries: stagedPlate.map((item) => ({ food: item.food, quantityGrams: item.quantityGrams })),
-      loggedAt: loggedAtOverride,
-    });
+    const entries = stagedPlate.map((item) => ({ food: item.food, quantityGrams: item.quantityGrams }));
+    if (onPickItems) {
+      onPickItems(entries);
+    } else {
+      bulkAddLog.mutate({ entries, loggedAt: loggedAtOverride });
+    }
     clearPlate();
     onClose();
   }
@@ -557,7 +571,11 @@ export default function AddFoodSheet({
       ...stagedPlate.map((item) => ({ food: item.food, quantityGrams: item.quantityGrams })),
       ...(quantityGrams > 0 ? [{ food, quantityGrams }] : []),
     ];
-    bulkAddLog.mutate({ entries, loggedAt: loggedAtOverride });
+    if (onPickItems) {
+      onPickItems(entries);
+    } else {
+      bulkAddLog.mutate({ entries, loggedAt: loggedAtOverride });
+    }
     clearPlate();
     onClose();
   }
@@ -675,19 +693,17 @@ export default function AddFoodSheet({
                     removeFromPlate={removeFromPlate}
                   />
                 ) : (
-                  // Centered within visibleLayer1Height — the space actually
-                  // visible above the sheet's current top edge — not the
-                  // full layer height. Centering in the full height would put
-                  // this dead center of the whole background layer, which
-                  // when the sheet is expanded (the default) is mostly
-                  // covered by it, making the message invisible; anchoring it
-                  // to a fixed top offset instead looks stranded near the
-                  // header once the sheet is collapsed and most of the layer
-                  // is visible. This tracks whichever amount is actually on
-                  // screen right now, animating alongside the sheet itself.
+                  // Fixed height (emptyPlateMessageHeight, the space visible
+                  // above the sheet's collapsed resting position) — not the
+                  // sheet's live current height. The message stays anchored
+                  // at this one spot (~screen center) regardless of whether
+                  // the sheet is expanded, collapsed, or mid-drag; it may sit
+                  // underneath the expanded sheet rather than always being
+                  // visible above it, which is the explicit tradeoff for not
+                  // having it move around.
                   <div
                     className="flex flex-col items-center justify-center gap-1.5 px-8 text-center"
-                    style={{ height: visibleLayer1Height, transition: sheetJustToggled ? "height 220ms ease-out" : "none" }}
+                    style={{ height: emptyPlateMessageHeight }}
                   >
                     <Utensils className="w-4 h-4 text-muted" strokeWidth={1.5} />
                     <p className="text-[11px] text-muted">Nothing on your plate yet — search below to add something</p>
@@ -705,10 +721,20 @@ export default function AddFoodSheet({
               >
                 {(dragHandlers) => sheetExpanded ? (
                   <>
-                    {/* Sharing the sheet's own drag gesture on this row too (not just
-                        the grabber above) — a plain tap on a tab still switches tabs as
-                        normal (see DraggableSnapSheet's commit-threshold), a real drag
-                        collapses/expands the sheet the same as dragging the grabber. */}
+                    {/* Icon-over-label, matching the collapsed peek row's own shape
+                        (below) instead of the old icon-beside-label row — that
+                        horizontal pairing needed a horizontal scroll to fit all five
+                        tabs, and a scroll affordance subtle enough to look
+                        intentional (an edge fade, tried first) turned out not to
+                        read as "scrollable" at a glance anyway. Stacking each
+                        label under its icon is narrower per tab, so all five go
+                        back to sharing the row at flex-1 equal widths with no
+                        scrolling — the actual fix, not a better hint. Sharing the
+                        sheet's own drag gesture on this row too (not just the
+                        grabber above) — a plain tap on a tab still switches tabs as
+                        normal (see DraggableSnapSheet's commit-threshold), a real
+                        drag collapses/expands the sheet the same as dragging the
+                        grabber. */}
                     <div {...dragHandlers} className="flex border-b border-dashboardDivider px-2 shrink-0 touch-none">
                       {BASE_TAB_BAR_ITEMS.map((t) => {
                         const active = t.id !== "scan" && activeTab === t.id;
@@ -718,16 +744,16 @@ export default function AddFoodSheet({
                             onClick={() => (t.id === "scan" ? changeStep("scan") : setActiveTab(t.id))}
                             className="flex-1 flex justify-center py-2"
                           >
-                            {/* The border lives on this inline-content span, not the flex-1
-                                button, so the indicator hugs the icon+label instead of the
-                                button's full equal-width tap target. */}
+                            {/* The border lives on this inline-content span, not the
+                                flex-1 button, so the indicator hugs the icon+label
+                                instead of the button's full equal-width tap target. */}
                             <span
-                              className={`flex items-center gap-1.5 pb-1.5 border-b-2 transition-colors ${
+                              className={`flex flex-col items-center gap-1 pb-1.5 border-b-2 transition-colors ${
                                 active ? "border-accent text-white" : "border-transparent text-muted"
                               }`}
                             >
-                              <t.icon className="w-3.5 h-3.5" strokeWidth={2} />
-                              <span className="text-[11px] font-medium">{t.label}</span>
+                              <t.icon className="w-4 h-4" strokeWidth={2} />
+                              <span className="text-[10px] font-medium">{t.label}</span>
                             </span>
                           </button>
                         );
@@ -834,16 +860,33 @@ export default function AddFoodSheet({
                 flex sibling (not absolutely/fixed-positioned over Layer
                 1/Layer 2), so it can't drift out of sync with — or overlap —
                 the collapsed sheet's own peek row the way two independently
-                bottom-pinned elements could. */}
+                bottom-pinned elements could.
+                While a plate item's quantity is being edited (Layer 1's
+                "358 g" pill swapped for a live input — see StagedPlateSection),
+                this same pinned slot shows quick-pick serving chips instead —
+                reusing the spot ActionBar already keeps pinned just above the
+                on-screen keyboard rather than teaching a second element that
+                same visual-viewport-tracked positioning. */}
             <div ref={actionBarRef}>
-              <ActionBar
-                activeTab={activeTab}
-                query={query}
-                setQuery={setQuery}
-                searchInputRef={searchInputRef}
-                stagedPlate={stagedPlate}
-                onLogFoods={confirmPlate}
-              />
+              {editingPlateKey && stagedPlate.some((i) => i.key === editingPlateKey) ? (
+                <QuantityPresetBar
+                  item={stagedPlate.find((i) => i.key === editingPlateKey)!}
+                  onSelect={(quantityGrams) => {
+                    updatePlateItemQuantity(editingPlateKey, quantityGrams);
+                    setEditingPlateKey(null);
+                  }}
+                />
+              ) : (
+                <ActionBar
+                  activeTab={activeTab}
+                  query={query}
+                  setQuery={setQuery}
+                  searchInputRef={searchInputRef}
+                  stagedPlate={stagedPlate}
+                  onLogFoods={confirmPlate}
+                  commitLabel={commitLabel}
+                />
+              )}
             </div>
           </>
         )}
@@ -878,6 +921,7 @@ export default function AddFoodSheet({
             }
             timeLabel={editingEntry ? undefined : formatLogTime(loggedAtOverride)}
             onTimeClick={editingEntry ? undefined : () => setShowTimePicker(true)}
+            commitLabel={commitLabel}
           />
         )}
 
@@ -1061,12 +1105,13 @@ function LibraryTab({
 
   return (
     <div>
-      <div className="px-4 pt-3 pb-2 flex items-center gap-2">
+      <div className="px-4 pt-4 pb-3 flex items-center gap-2">
         <div className="flex-1 flex items-center gap-1 rounded-full bg-dashboardChip p-1 min-w-0">
           {(
             [
               { id: "recipes" as const, label: "Recipes" },
               { id: "foods" as const, label: "Foods" },
+              { id: "favorites" as const, label: "Favourites" },
             ] as const
           ).map((t) => (
             <button
@@ -1079,15 +1124,6 @@ function LibraryTab({
               {t.label}
             </button>
           ))}
-          <button
-            onClick={() => setView("favorites")}
-            aria-label="Favourites"
-            className={`shrink-0 w-7 h-7 flex items-center justify-center rounded-full transition-colors ${
-              view === "favorites" ? "bg-white text-black" : "text-muted"
-            }`}
-          >
-            <Heart className="w-3.5 h-3.5" strokeWidth={2.5} fill={view === "favorites" ? "currentColor" : "none"} />
-          </button>
         </div>
         {view !== "favorites" && (
           <button
@@ -1100,7 +1136,7 @@ function LibraryTab({
         )}
       </div>
 
-      <div className="px-4 pb-2">
+      <div className="px-4 pb-4">
         <div className="flex items-center gap-2 rounded-full bg-dashboardChip px-4 py-2.5">
           <SearchIcon className="w-4 h-4 text-muted shrink-0" strokeWidth={2} />
           <input
@@ -1156,12 +1192,17 @@ function BrowseHeader({
   const overflowCount = stagedPlate.length - visibleAvatars.length;
 
   return (
-    // Top row is just the corner controls — X at the top-left, the staged-
-    // avatar stack at the top-right when anything's staged, both genuine top
-    // corners of the screen — with NutrientStatusBar's time pill and four
-    // macro bars on their own row below. FoodDetailScreen mirrors this same
-    // two-row shape (its own top-left corner control — the back button — on
-    // the first row, this same status bar on the second) so the bars land at
+    // Top row is the corner controls plus the time pill, all in one row now
+    // — X at the top-left, the time pill genuinely centered (grid-cols-3
+    // with equal-width outer columns, not flex justify-between, so the pill
+    // stays centered whether or not the avatar stack is present), the
+    // staged-avatar stack at the top-right when anything's staged. The pill
+    // used to sit stacked on its own row directly above NutrientStatusBar's
+    // "Remaining Today" label, which read as cramped with the two rows right
+    // on top of each other — sharing this row with the corner controls
+    // instead gives that label normal breathing room below. FoodDetailScreen
+    // mirrors this same shape (its own top-left corner control — the back
+    // button — sharing a row with the same time pill) so the bars land at
     // the same vertical offset in both places despite each screen having
     // different top-row controls.
     //
@@ -1174,13 +1215,18 @@ function BrowseHeader({
     // pt accounts for the status bar/notch now that this sits at the very
     // top of a genuinely full-screen modal, not a few percent down inside a
     // rounded sheet.
-    <div className="flex flex-col gap-2 px-4 pb-3 shrink-0" style={{ paddingTop: "calc(env(safe-area-inset-top) + 16px)" }}>
-      <div className="flex items-center justify-between gap-3">
-        <button onClick={onClose} aria-label="Close" className="shrink-0 h-5 flex items-center text-white/70 active:text-white">
+    <div className="flex flex-col gap-3 px-4 pb-3 shrink-0" style={{ paddingTop: "calc(env(safe-area-inset-top) + 16px)" }}>
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          className="justify-self-start shrink-0 h-5 flex items-center text-white/70 active:text-white"
+        >
           <X className="w-5 h-5" strokeWidth={2} />
         </button>
-        {stagedPlate.length > 0 && (
-          <div className="shrink-0 h-5 flex items-center -space-x-1.5">
+        <LogTimePill timeLabel={timeLabel} onTimeClick={onTimeClick} />
+        {stagedPlate.length > 0 ? (
+          <div className="justify-self-end shrink-0 h-5 flex items-center -space-x-1.5">
             {visibleAvatars.map((item) => (
               <FoodIconAvatar
                 key={item.key}
@@ -1197,9 +1243,11 @@ function BrowseHeader({
               </span>
             )}
           </div>
+        ) : (
+          <div />
         )}
       </div>
-      <NutrientStatusBar totals={totals} plateTotals={plateTotals} targets={targets} timeLabel={timeLabel} onTimeClick={onTimeClick} />
+      <NutrientStatusBar totals={totals} plateTotals={plateTotals} targets={targets} />
     </div>
   );
 }
@@ -1277,6 +1325,7 @@ function ActionBar({
   searchInputRef,
   stagedPlate,
   onLogFoods,
+  commitLabel = "Log Foods",
 }: {
   activeTab: Tab;
   query: string;
@@ -1284,15 +1333,20 @@ function ActionBar({
   searchInputRef: RefObject<HTMLInputElement>;
   stagedPlate: PlateItem[];
   onLogFoods: () => void;
+  commitLabel?: string;
 }) {
   // The search pill only ever makes sense on the Search tab itself — it used
   // to render everywhere as a "tap to switch to Search" button, but that tap
   // never actually focused the input it looked like (no keyboard opened),
   // and every other tab already has its own dedicated input for adding a
   // food (Quick Add's Name field, Describe's textarea, Library's own
-  // per-view search below) or doesn't need one at all. Log Foods alone
-  // stretches to fill the row instead of sitting orphaned next to empty
-  // space where the pill used to be.
+  // per-view search below) or doesn't need one at all. Log Foods itself
+  // stays pinned here regardless of tab — it's the one control that commits
+  // the whole staged plate, and Quick Add/Describe's own "Add to Plate"
+  // button (further up, inside their own tab content) is a different action
+  // (stage the just-entered/described item), not a substitute for it. Log
+  // Foods alone stretches to fill the row instead of sitting orphaned next
+  // to empty space where the pill used to be.
   return (
     <div className="shrink-0 flex items-center gap-3 px-4 py-3 bg-dashboardBg border-t border-white/10">
       {activeTab === "search" && (
@@ -1316,8 +1370,48 @@ function ActionBar({
           activeTab === "search" ? "shrink-0" : "flex-1"
         }`}
       >
-        {stagedPlate.length > 0 ? `Log Foods (${stagedPlate.length})` : "Log Foods"}
+        {stagedPlate.length > 0 ? `${commitLabel} (${stagedPlate.length})` : commitLabel}
       </button>
+    </div>
+  );
+}
+
+// Quick-pick serving chips shown in ActionBar's own pinned slot while a
+// staged plate item's quantity is being edited — same amounts as
+// QuantityStep's own chips (1 serving, 50/100/150g), surfaced here too since
+// typing an exact gram figure by hand isn't always the fastest correction.
+// Reusing ActionBar's slot (rather than inventing a second pinned element)
+// is what puts this right above the on-screen keyboard for free — that
+// position already tracks real visual-viewport metrics for ActionBar's own
+// sake (see AddFoodSheet's actionBarRef), so a second element doing the same
+// tracking independently would just be duplicated plumbing.
+function QuantityPresetBar({ item, onSelect }: { item: PlateItem; onSelect: (quantityGrams: number) => void }) {
+  const chips = [
+    item.food.servingSizeGrams && { label: `1 serving (${item.food.servingSizeGrams}g)`, value: item.food.servingSizeGrams },
+    { label: "50 g", value: 50 },
+    { label: "100 g", value: 100 },
+    { label: "150 g", value: 150 },
+  ].filter(Boolean) as { label: string; value: number }[];
+
+  return (
+    <div className="shrink-0 flex items-center gap-2 px-4 py-3 bg-dashboardBg border-t border-white/10 overflow-x-auto no-scrollbar">
+      {chips.map((chip) => (
+        <button
+          key={chip.label}
+          // Suppresses the pointer's own default focus-shift so the still-
+          // focused quantity input never blurs from this tap — a blur there
+          // independently commits whatever's currently *typed* (see
+          // StagedPlateSection's onBlur below), which would otherwise race
+          // this handler's own commit of the chip's value instead.
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={() => onSelect(chip.value)}
+          className={`shrink-0 px-3.5 py-2 rounded-full border text-xs font-medium transition-colors ${
+            item.quantityGrams === chip.value ? "border-accent text-accent" : "border-white/15 text-white active:bg-white/5"
+          }`}
+        >
+          {chip.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -1405,24 +1499,30 @@ function StagedPlateSection({
 
       <div className="px-4 pt-4 pb-2 flex items-center justify-between">
         <p className="text-[11px] tracking-widest uppercase text-muted">Nutrition</p>
-        <div className="flex rounded-full bg-dashboardChip p-0.5 text-[11px]">
-          <button
-            onClick={() => setNutritionView("plate")}
+        {/* One button spanning both labels, not two adjacent ones — with only
+            two states, "tap the one you want" and "tap anywhere to flip to
+            the other" are the same action, but the old two-button version
+            only responded to a precise tap on the small Plate/Day text
+            itself, not the pill around it. */}
+        <button
+          onClick={() => setNutritionView(nutritionView === "plate" ? "day" : "plate")}
+          className="flex rounded-full bg-dashboardChip p-0.5 text-[11px]"
+        >
+          <span
             className={`px-3 py-1 rounded-full transition-colors ${
               nutritionView === "plate" ? "bg-white text-black font-medium" : "text-muted"
             }`}
           >
             Plate
-          </button>
-          <button
-            onClick={() => setNutritionView("day")}
+          </span>
+          <span
             className={`px-3 py-1 rounded-full transition-colors ${
               nutritionView === "day" ? "bg-white text-black font-medium" : "text-muted"
             }`}
           >
             Day
-          </button>
-        </div>
+          </span>
+        </button>
       </div>
 
       <div className="px-4 pb-4 grid grid-cols-2 gap-3">
@@ -1446,12 +1546,37 @@ function StagedPlateSection({
               <p className="text-[11px] text-muted mt-0.5">
                 {fmt(displayVal)} {unitLabel} {nutritionView === "plate" ? "in plate" : "today"}
               </p>
-              <span className="block h-[3px] w-full rounded-full bg-dashboardTrack overflow-hidden mt-2">
-                <span
-                  className="block h-full rounded-full"
-                  style={{ width: `${pct(shownVal, target)}%`, backgroundColor: m.color }}
-                />
-              </span>
+              {/* Only meaningful against a real daily target — RecipeForm's
+                  ingredient picker opens this same sheet with no totals/
+                  targets prop at all (a recipe has no "day"), so target is
+                  always 0 there and this bar would otherwise render a
+                  permanently empty track that never fills as ingredients are
+                  added, reading as broken/stuck rather than just N/A. */}
+              {target > 0 && (
+                // h-2, not the header badges' hairline h-[3px] — these tiles
+                // sit right under a bold text-base number, and matched the
+                // header's thinner treatment made the bar read as an
+                // afterthought next to that much heavier text. h-2 matches
+                // the Dashboard's own stat-tile progress bars (e.g. Goal
+                // Progress in DashboardTileSections.tsx), the closest visual
+                // analog to this "big number + bar" tile shape.
+                <span className="block h-2 w-full rounded-full bg-dashboardTrack overflow-hidden mt-2">
+                  {/* minWidth floor (only once there's a real value) — a small
+                      amount against a whole day's target can be a low single-
+                      digit percentage, rendering as a near-invisible sliver
+                      next to the number above it. Guaranteeing a legible
+                      minimum keeps the fill readable at any percentage
+                      without lying about 0 (no floor while shownVal is 0). */}
+                  <span
+                    className="block h-full rounded-full"
+                    style={{
+                      width: `${pct(shownVal, target)}%`,
+                      minWidth: shownVal > 0 ? "28px" : undefined,
+                      backgroundColor: m.color,
+                    }}
+                  />
+                </span>
+              )}
             </div>
           );
         })}
@@ -1572,7 +1697,7 @@ function QuickAddTab({
             className="w-full rounded-md bg-dashboardCard border border-dashboardDivider px-3 py-2.5 text-sm text-white placeholder:text-muted focus:outline-none focus:border-white/40"
           />
         </label>
-        <p className="text-[11px] tracking-widest uppercase text-muted pt-1">
+        <p className="text-[11px] text-white/60 pt-1">
           Macros — fill in what you know, calories fill themselves in
         </p>
         <div className="grid grid-cols-2 gap-3">
@@ -1593,10 +1718,19 @@ function QuickAddTab({
         </div>
       </div>
       <div className="p-4 shrink-0">
+        {/* Accent (not white) so it reads as a distinct "stage this one item"
+            action from the pinned white "Log Foods" bar below, which commits
+            the whole plate — same accent-CTA convention as every other
+            primary confirm button in the app (see e.g. RecipeForm's save
+            button). disabled:opacity-40 matches that same convention too,
+            rather than the old bg-white/disabled:opacity-50 combo, which read
+            as a flat muddy grey block on this dark theme instead of visibly
+            receding. */}
         <button
           onClick={submit}
           disabled={!canSave || createFood.isPending}
-          className="w-full py-3 rounded-full bg-white text-sm font-bold text-black disabled:opacity-50"
+          className="w-full py-3 rounded-full bg-accent text-sm font-bold disabled:opacity-40"
+          style={{ color: "#0B1210" }}
         >
           Add to Plate
         </button>
@@ -1620,7 +1754,14 @@ function DescribeTab({ onAdded }: { onAdded: (food: Food, quantityGrams?: number
   const [addedSummary, setAddedSummary] = useState<string | null>(null);
   const describeMeal = useDescribeMeal();
   const footerRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  // Two separate inputs, not one bare accept="image/*" — same reasoning as
+  // PhotosScreen's cameraInputRef/libraryInputRef (see that file's comment):
+  // a bare file input doesn't reliably prompt "Camera or Gallery?" on
+  // Android/Chrome, so PhotoSourceSheet asks explicitly and routes to
+  // whichever of these two matches.
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const libraryInputRef = useRef<HTMLInputElement>(null);
+  const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
 
   function attachPhoto(file: File) {
     setPhoto(file);
@@ -1732,17 +1873,31 @@ function DescribeTab({ onAdded }: { onAdded: (food: Food, quantityGrams?: number
           />
         </label>
 
-        {/* Camera-capture input has no visible chrome of its own, same
+        {/* Hidden inputs have no visible chrome of their own, same
             hidden-input + visible-button pattern as CreateFoodForm's "Scan
-            nutrition label". A photo is never persisted — it's discarded
-            client-side (removePhoto, on both manual removal and a
-            successful submit) the same way the typed text always was; only
-            the foods it resolves to survive. */}
+            nutrition label" — except two of them here (camera + library, see
+            cameraInputRef/libraryInputRef above), routed to by
+            PhotoSourceSheet below rather than a single input clicked
+            directly. A photo is never persisted — it's discarded client-side
+            (removePhoto, on both manual removal and a successful submit) the
+            same way the typed text always was; only the foods it resolves to
+            survive. */}
         <input
-          ref={fileInputRef}
+          ref={cameraInputRef}
           type="file"
           accept="image/*"
           capture="environment"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file) attachPhoto(file);
+          }}
+        />
+        <input
+          ref={libraryInputRef}
+          type="file"
+          accept="image/*"
           className="hidden"
           onChange={(e) => {
             const file = e.target.files?.[0];
@@ -1768,7 +1923,7 @@ function DescribeTab({ onAdded }: { onAdded: (food: Food, quantityGrams?: number
         ) : (
           <button
             type="button"
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => setSourcePickerOpen(true)}
             className="w-full flex items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-dashboardDivider py-3 text-sm font-medium text-accent active:bg-white/5"
           >
             <Camera size={16} strokeWidth={2} />
@@ -1784,10 +1939,13 @@ function DescribeTab({ onAdded }: { onAdded: (food: Food, quantityGrams?: number
         {addedSummary && <p className="text-xs text-accent">{addedSummary}</p>}
       </div>
       <div ref={footerRef} className="p-4 shrink-0">
+        {/* Accent, same as QuickAddTab's own "Add to Plate" — see that
+            button's comment for why it's not the white "Log Foods" style. */}
         <button
           onClick={() => submit()}
           disabled={(!text.trim() && !photo) || describeMeal.isPending}
-          className="w-full flex items-center justify-center gap-2 py-3 rounded-full bg-white text-sm font-bold text-black disabled:opacity-50"
+          className="w-full flex items-center justify-center gap-2 py-3 rounded-full bg-accent text-sm font-bold disabled:opacity-40"
+          style={{ color: "#0B1210" }}
         >
           {describeMeal.isPending ? (
             <>
@@ -1799,6 +1957,14 @@ function DescribeTab({ onAdded }: { onAdded: (food: Food, quantityGrams?: number
           )}
         </button>
       </div>
+
+      {sourcePickerOpen && (
+        <PhotoSourceSheet
+          onChooseCamera={() => cameraInputRef.current?.click()}
+          onChooseLibrary={() => libraryInputRef.current?.click()}
+          onClose={() => setSourcePickerOpen(false)}
+        />
+      )}
     </>
   );
 }
@@ -1829,7 +1995,7 @@ function QuickAddField({
           onKeyDown={onEnter ? (e) => { if (e.key === "Enter") onEnter(); } : undefined}
           className="tabular w-full bg-transparent py-2.5 text-sm text-white focus:outline-none"
         />
-        {suffix && <span className="text-xs text-muted">{suffix}</span>}
+        {suffix && <span className="shrink-0 flex items-center leading-none text-xs text-muted">{suffix}</span>}
       </div>
     </label>
   );

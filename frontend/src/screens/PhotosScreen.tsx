@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import imageCompression from "browser-image-compression";
-import { Calendar, Camera, ChevronDown, ChevronLeft, Columns2, Image, Trash2, X } from "lucide-react";
+import { Calendar, Camera, ChevronDown, ChevronLeft, Columns2, Trash2, X } from "lucide-react";
 import { usePhotos, useUploadPhoto, useDeletePhoto, type Photo, type PhotoPose } from "../api/photos";
 import {
   BODY_PARTS,
@@ -19,7 +19,7 @@ import { useHideBottomNav } from "../lib/navVisibility";
 import PhotoAlignerModal from "../components/PhotoAlignerModal";
 import CalendarJumpSheet from "../components/CalendarJumpSheet";
 import ConfirmDeleteSheet from "../components/ConfirmDeleteSheet";
-import BottomSheet from "../components/BottomSheet";
+import PhotoSourceSheet from "../components/PhotoSourceSheet";
 
 const POSES: PhotoPose[] = ["front", "side", "back"];
 const POSE_LABEL: Record<PhotoPose, string> = { front: "Front", side: "Side", back: "Back" };
@@ -71,8 +71,9 @@ export default function PhotosScreen() {
   // Two separate inputs rather than one — a bare accept="image/*" input
   // (no `capture`) doesn't reliably show a "Camera or Gallery?" chooser on
   // Android/Chrome, it can jump straight into the system photo picker
-  // instead. Presenting our own two-option sheet (below) and routing to
-  // whichever input matches guarantees the choice is asked every time.
+  // instead. Presenting our own two-option sheet (components/PhotoSourceSheet.tsx)
+  // and routing to whichever input matches guarantees the choice is asked
+  // every time. Same pattern reused by AddFoodSheet's Describe tab.
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const libraryInputRef = useRef<HTMLInputElement>(null);
   const [date, setDate] = useState(localDateString);
@@ -539,56 +540,5 @@ export default function PhotosScreen() {
         </div>
       )}
     </div>
-  );
-}
-
-// Two options, always asked — see the comment by cameraInputRef/
-// libraryInputRef above for why this can't just be left to the browser's
-// own accept="image/*" chooser.
-function PhotoSourceSheet({
-  onChooseCamera,
-  onChooseLibrary,
-  onClose,
-}: {
-  onChooseCamera: () => void;
-  onChooseLibrary: () => void;
-  onClose: () => void;
-}) {
-  return (
-    <BottomSheet
-      onClose={onClose}
-      backdropClassName="bg-black/60"
-      panelClassName="bg-surface rounded-t-xl border-t border-line pb-[env(safe-area-inset-bottom)]"
-    >
-      {(dragHandlers, close) => (
-        <>
-          <div {...dragHandlers} className="px-4 pt-1 pb-2 flex items-center shrink-0 touch-none">
-            <span className="text-sm font-medium text-ink">Add photo</span>
-          </div>
-          <div className="px-4 pb-4 space-y-2">
-            <button
-              onClick={() => {
-                onChooseCamera();
-                close();
-              }}
-              className="w-full flex items-center gap-3 px-4 py-3.5 rounded-md bg-dashboardCard text-left active:bg-surface-raised"
-            >
-              <Camera size={18} strokeWidth={2} className="text-muted" />
-              <span className="text-sm text-ink flex-1">Take Photo</span>
-            </button>
-            <button
-              onClick={() => {
-                onChooseLibrary();
-                close();
-              }}
-              className="w-full flex items-center gap-3 px-4 py-3.5 rounded-md bg-dashboardCard text-left active:bg-surface-raised"
-            >
-              <Image size={18} strokeWidth={2} className="text-muted" />
-              <span className="text-sm text-ink flex-1">Choose from Library</span>
-            </button>
-          </div>
-        </>
-      )}
-    </BottomSheet>
   );
 }

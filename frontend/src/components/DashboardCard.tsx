@@ -44,7 +44,7 @@ export default function DashboardCard({
           just paints straight through its own shrunk box and overlaps the
           divider/footer below rather than being cut off cleanly. */}
       <div className="flex-1 min-h-0 py-1 overflow-hidden">{children}</div>
-      <div className="h-px bg-dashboardDivider -mx-4" />
+      <div className="h-px bg-dashboardDivider" />
       <div className="flex items-center justify-between">
         <p className="tabular leading-none">
           <span className="text-lg font-bold text-ink tracking-tight">{value}</span>

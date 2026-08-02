@@ -1,9 +1,17 @@
 import type { FastifyInstance } from "fastify";
 import fs from "node:fs";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import bcrypt from "bcrypt";
+import { z } from "zod";
+import { and, eq, ne } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { logs, favorites, programDays, programs, checkins, goals, weights, photos, profiles } from "../db/schema.js";
+import { logs, favorites, programDays, programs, checkins, goals, weights, photos, profiles, users } from "../db/schema.js";
+
+const nameSchema = z.object({ name: z.string().trim().min(1).max(40) });
+const passwordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8).max(200),
+});
 
 // Self-service version of the manual DB wipe used to reset a test/mock
 // account — scoped to exactly one user's own data. Deliberately does NOT
@@ -15,6 +23,45 @@ import { logs, favorites, programDays, programs, checkins, goals, weights, photo
 // back up as fresh on the very next load, rather than leaving it in a
 // half-reset state with no data but a still-configured profile.
 export function registerAccountRoutes(app: FastifyInstance, dataDir: string) {
+  app.patch("/api/account/name", async (req, reply) => {
+    const parsed = nameSchema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "Enter a name" };
+    }
+    const userId = req.userId!;
+    const { name } = parsed.data;
+
+    const [existing] = await db.select({ id: users.id }).from(users).where(and(eq(users.name, name), ne(users.id, userId)));
+    if (existing) {
+      reply.code(409);
+      return { error: "That name is already taken" };
+    }
+
+    await db.update(users).set({ name }).where(eq(users.id, userId));
+    return { ok: true, user: { id: userId, name } };
+  });
+
+  app.patch("/api/account/password", async (req, reply) => {
+    const parsed = passwordSchema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "New password must be at least 8 characters" };
+    }
+    const userId = req.userId!;
+    const { currentPassword, newPassword } = parsed.data;
+
+    const [user] = await db.select().from(users).where(eq(users.id, userId));
+    if (!user || !(await bcrypt.compare(currentPassword, user.passwordHash))) {
+      reply.code(401);
+      return { error: "Current password is incorrect" };
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await db.update(users).set({ passwordHash }).where(eq(users.id, userId));
+    return { ok: true };
+  });
+
   app.delete("/api/account/data", async (req, reply) => {
     const userId = req.userId!;
 

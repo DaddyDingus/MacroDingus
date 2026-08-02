@@ -64,6 +64,33 @@ interface DragState {
   // straight to full stretch because the whole gesture's delta was already
   // larger than MAX_PULL_PX.
   armedAtY: number;
+  // The nearest real scrollable ancestor of the touch's start element, if
+  // any — null means the touch started somewhere that only the document
+  // itself can scroll (e.g. Dashboard). Screens like WizardShell scroll an
+  // inner `overflow-y-auto` `main` instead of the document, so `window`'s
+  // own scrollY/scrollHeight stay at 0 the entire time; arming off those
+  // made the hook think it was already at the bottom on the very first
+  // upward swipe (0 >= 0 - epsilon), preventDefault-ing the gesture before
+  // the inner container ever got to scroll — the reported symptom was a
+  // wizard step whose content simply couldn't be scrolled into view at all.
+  scrollEl: Element | null;
+}
+
+function isRealScrollContainer(el: Element): boolean {
+  const style = getComputedStyle(el);
+  return (style.overflowY === "auto" || style.overflowY === "scroll") && el.scrollHeight > el.clientHeight + 1;
+}
+
+// Walks up from the touch's start element looking for whatever actually
+// scrolls under the finger — stops before body/documentElement since the
+// window-level fallback already covers that case.
+function findScrollableAncestor(el: Element): Element | null {
+  let node: Element | null = el;
+  while (node && node !== document.body && node !== document.documentElement) {
+    if (isRealScrollContainer(node)) return node;
+    node = node.parentElement;
+  }
+  return null;
 }
 
 export function useRubberBandScroll() {
@@ -115,7 +142,8 @@ export function useRubberBandScroll() {
       // than letting a stale transition animate over the new gesture.
       clearOffset();
       const y = e.touches[0].clientY;
-      drag = { edge: "top", active: false, lastY: y, armedAtY: y };
+      const scrollEl = e.target instanceof Element ? findScrollableAncestor(e.target) : null;
+      drag = { edge: "top", active: false, lastY: y, armedAtY: y, scrollEl };
     }
 
     function onTouchMove(e: TouchEvent) {
@@ -125,14 +153,22 @@ export function useRubberBandScroll() {
       drag.lastY = currentY;
 
       if (!drag.active) {
+        // Measured against the touch's own scrollable ancestor when it has
+        // one (e.g. WizardShell's inner `main`), not always window/document
+        // — otherwise a container that scrolls independently of the page
+        // reads as permanently "at the boundary" (window never moves), and
+        // arms a bounce instead of letting the container's native scroll
+        // run.
+        const scrollTop = drag.scrollEl ? drag.scrollEl.scrollTop : window.scrollY;
+        const scrollMax = drag.scrollEl ? drag.scrollEl.scrollHeight - drag.scrollEl.clientHeight : maxScroll();
         // Arms only while the finger is moving in the pull direction *and*
         // we're already sitting at that boundary — never mid-scroll, so a
         // normal scroll gesture keeps its native handling (momentum,
         // performance, all of it) right up until it genuinely runs out of
         // content.
-        if (moveDelta > 0 && window.scrollY <= 0) {
+        if (moveDelta > 0 && scrollTop <= 0) {
           drag.edge = "top";
-        } else if (moveDelta < 0 && window.scrollY >= maxScroll() - BOTTOM_EPSILON_PX) {
+        } else if (moveDelta < 0 && scrollTop >= scrollMax - BOTTOM_EPSILON_PX) {
           drag.edge = "bottom";
         } else {
           return;

@@ -283,15 +283,22 @@ function GoalWizardBody({ mode, status }: { mode: "new" | "edit"; status: CoachS
         <p className="text-center tabular text-3xl font-bold mb-3">
           {displayWeight.toFixed(1)} <span className="text-base font-normal text-muted">{unit}</span>
         </p>
-        <input
-          type="range"
-          min={kgToUnit(weightBoundsKg.min, unit)}
-          max={kgToUnit(weightBoundsKg.max, unit)}
-          step={0.1}
-          value={displayWeight}
-          onChange={(e) => setGoalWeightKg(unitToKg(Number(e.target.value), unit))}
-          className="w-full accent-ink mb-8"
-        />
+        {/* data-no-rubber-band: same reason as the Compare screen's slider —
+            a horizontal drag always carries a little vertical wobble, which
+            was enough to arm useRubberBandScroll's pull gesture (and its
+            preventDefault) on top of the thumb drag, making the slider feel
+            stuck mid-gesture. */}
+        <div data-no-rubber-band>
+          <input
+            type="range"
+            min={kgToUnit(weightBoundsKg.min, unit)}
+            max={kgToUnit(weightBoundsKg.max, unit)}
+            step={0.1}
+            value={displayWeight}
+            onChange={(e) => setGoalWeightKg(unitToKg(Number(e.target.value), unit))}
+            className="w-full accent-ink mb-8"
+          />
+        </div>
 
         <h2 className="text-xl font-bold mb-1">What is your target goal rate?</h2>
         <p
@@ -459,8 +466,10 @@ function RecommendedRangeSlider({
 }) {
   const pct = (v: number) => clamp(((v - min) / (max - min)) * 100, 0, 100);
 
+  // data-no-rubber-band: see the target-weight slider above — same fix,
+  // same reason.
   return (
-    <div className="relative h-8">
+    <div data-no-rubber-band className="relative h-8">
       <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-1.5 rounded-full bg-surface-raised" />
       {range && (
         <div

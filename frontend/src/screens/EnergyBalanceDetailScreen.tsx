@@ -70,7 +70,7 @@ export default function EnergyBalanceDetailScreen() {
     () => (allBalance.length ? dayIndex(allBalance[0].date) : dayIndex(localDateString())),
     [allBalance]
   );
-  const gesture = useChartGesture({ earliestTs, initialDays: 30 });
+  const gesture = useChartGesture({ earliestTs, initialDays: 7 });
 
   const chartBalance = useMemo(
     () => allBalance.filter((p) => dayIndex(p.date) >= gesture.view.start && dayIndex(p.date) <= gesture.view.end),
@@ -78,6 +78,7 @@ export default function EnergyBalanceDetailScreen() {
   );
 
   const rangeAvg = chartBalance.length ? chartBalance.reduce((s, p) => s + p.balance, 0) / chartBalance.length : null;
+  const rangeTotal = chartBalance.length ? chartBalance.reduce((s, p) => s + p.balance, 0) : null;
   const rangeLabel = chartBalance.length ? formatRangeLabel(chartBalance[0].date, chartBalance[chartBalance.length - 1].date) : null;
   const summaryLabel = tab === "targets" ? "Average" : balanceLabel(changeDirection(rangeAvg, BALANCE_EPSILON), "expenditure");
 
@@ -119,15 +120,27 @@ export default function EnergyBalanceDetailScreen() {
 
       <main className="px-4 pt-3 space-y-3 max-w-md mx-auto">
         <div className="tile-enter border border-line bg-surface rounded-2xl p-4" style={staggerStyle(block++, 60, 5)}>
-          <p className="text-[11px] tracking-widest uppercase text-muted">{summaryLabel}</p>
-          <p className="tabular text-2xl font-medium tracking-tight whitespace-nowrap">
-            {rangeAvg !== null ? signed(kcalToUnit(rangeAvg, energyUnit)) : "—"}{" "}
-            <span className="text-sm font-normal text-muted">{energyUnitLabel(energyUnit)}</span>
-          </p>
+          <div className="relative grid grid-cols-2 gap-6">
+            <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/10" />
+            <div className="text-center">
+              <p className="text-[11px] tracking-widest uppercase text-muted">{summaryLabel}</p>
+              <p className="tabular text-2xl font-medium tracking-tight whitespace-nowrap">
+                {rangeAvg !== null ? signed(kcalToUnit(rangeAvg, energyUnit)) : "—"}{" "}
+                <span className="text-sm font-normal text-muted">{energyUnitLabel(energyUnit)}</span>
+              </p>
+            </div>
+            <div className="text-center">
+              <p className="text-[11px] tracking-widest uppercase text-muted">Total</p>
+              <p className="tabular text-2xl font-medium tracking-tight whitespace-nowrap">
+                {rangeTotal !== null ? signed(kcalToUnit(rangeTotal, energyUnit)) : "—"}{" "}
+                <span className="text-sm font-normal text-muted">{energyUnitLabel(energyUnit)}</span>
+              </p>
+            </div>
+          </div>
           {rangeLabel ? (
-            <p className="text-xs text-muted mt-2">{rangeLabel}</p>
+            <p className="text-xs text-muted mt-2 text-center">{rangeLabel}</p>
           ) : (
-            <p className="text-xs text-muted mt-2">Check in from Strategy to get your first estimate.</p>
+            <p className="text-xs text-muted mt-2 text-center">Check in from Strategy to get your first estimate.</p>
           )}
         </div>
 

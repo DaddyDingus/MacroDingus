@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ChefHat, ChevronRight } from "lucide-react";
 import type { Food } from "../api/types";
-import { useRecipes, useCreateRecipe } from "../api/recipes";
+import { useRecipes } from "../api/recipes";
 import { useDayLog } from "../api/logs";
 import { usePrograms } from "../api/programs";
 import { targetsForDate } from "../lib/programTargets";
@@ -12,12 +12,11 @@ import type { ShortcutId } from "../lib/shortcuts";
 import AddFoodSheet from "./AddFoodSheet";
 import QuickAddSheet from "./QuickAddSheet";
 import CopyDaySheet from "./CopyDaySheet";
-import RecipeForm from "./RecipeForm";
 import LogWeightInline from "./LogWeightInline";
 import BottomSheet from "./BottomSheet";
 import FoodIconAvatar from "./FoodIconAvatar";
 
-type Step = "recipesList" | "logWeight" | "newRecipe" | "copyDay" | "quickAdd" | "addFood";
+type Step = "recipesList" | "logWeight" | "copyDay" | "quickAdd" | "addFood";
 
 // Runs a single quick action to completion (today's date always — date
 // navigation stays on the Food log screen). Shared by the FAB's quick-actions
@@ -30,7 +29,6 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
   const navigate = useNavigate();
   const today = localDateString();
   const recipes = useRecipes();
-  const createRecipe = useCreateRecipe();
   const dayLog = useDayLog(today);
   const programs = usePrograms();
   const { unit: energyUnit } = useEnergyUnit();
@@ -38,11 +36,10 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
   const [recipeQuery, setRecipeQuery] = useState("");
   const [step, setStep] = useState<Step>(() => {
     if (action === "logWeight") return "logWeight";
-    if (action === "newRecipe") return "newRecipe";
     if (action === "copyDay") return "copyDay";
     if (action === "recipes") return "recipesList";
     if (action === "quickAdd") return "quickAdd";
-    return "addFood"; // search / scan / newFood / describe
+    return "addFood"; // search / scan / newFood / describe / newRecipe
   });
 
   // Photos has no sheet of its own — jump straight there. Navigating (and
@@ -86,7 +83,17 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
         open
         date={today}
         editingEntry={null}
-        initialStep={action === "scan" ? "scan" : action === "newFood" ? "create" : action === "describe" ? "describe" : "search"}
+        initialStep={
+          action === "scan"
+            ? "scan"
+            : action === "newFood"
+              ? "create"
+              : action === "describe"
+                ? "describe"
+                : action === "newRecipe"
+                  ? "recipe"
+                  : "search"
+        }
         initialFood={pickedFood ?? undefined}
         onClose={onClose}
         totals={dayLog.data?.totals}
@@ -187,24 +194,6 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
           </>
         )}
 
-        {step === "newRecipe" && (
-          <RecipeForm
-            initialName=""
-            onCancel={close}
-            dragHandlers={dragHandlers}
-            onCreated={(input) => {
-              createRecipe.mutate(
-                {
-                  name: input.name,
-                  servings: input.servings,
-                  totalWeightGrams: input.totalWeightGrams,
-                  ingredients: input.ingredients.map((i) => ({ foodId: i.food.id, quantityGrams: i.quantityGrams })),
-                },
-                { onSuccess: onClose }
-              );
-            }}
-          />
-        )}
         </>
       )}
     </BottomSheet>

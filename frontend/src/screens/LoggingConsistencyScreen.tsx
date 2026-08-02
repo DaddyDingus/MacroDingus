@@ -22,19 +22,22 @@ export default function LoggingConsistencyScreen() {
       </header>
 
       <main className="px-4 space-y-3 max-w-md mx-auto">
-        <div className="tile-enter border border-line bg-surface rounded-2xl p-4 flex items-start gap-6" style={staggerStyle(0, 60, 5)}>
-          <div>
-            <p className="text-[11px] tracking-widest uppercase text-muted">Today</p>
-            <p className="tabular text-2xl font-medium tracking-tight">
-              {Math.round(kcalToUnit(todayCalories, energyUnit)).toLocaleString()}{" "}
-              <span className="text-sm font-normal text-muted">{energyUnitLabel(energyUnit)}</span>
-            </p>
-          </div>
-          <div>
-            <p className="text-[11px] tracking-widest uppercase text-muted">Streak</p>
-            <p className="tabular text-2xl font-medium tracking-tight">
-              {streak} <span className="text-sm font-normal text-muted">days</span>
-            </p>
+        <div className="tile-enter border border-line bg-surface rounded-2xl p-4" style={staggerStyle(0, 60, 5)}>
+          <div className="relative grid grid-cols-2 gap-6">
+            <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/10" />
+            <div className="text-center">
+              <p className="text-[11px] tracking-widest uppercase text-muted">Today</p>
+              <p className="tabular text-2xl font-medium tracking-tight">
+                {Math.round(kcalToUnit(todayCalories, energyUnit)).toLocaleString()}{" "}
+                <span className="text-sm font-normal text-muted">{energyUnitLabel(energyUnit)}</span>
+              </p>
+            </div>
+            <div className="text-center">
+              <p className="text-[11px] tracking-widest uppercase text-muted">Streak</p>
+              <p className="tabular text-2xl font-medium tracking-tight">
+                {streak} <span className="text-sm font-normal text-muted">days</span>
+              </p>
+            </div>
           </div>
         </div>
 

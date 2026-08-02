@@ -311,6 +311,19 @@ export function registerLogRoutes(app: FastifyInstance) {
     return null;
   });
 
+  // Deletes one or more entries in one request — backs the Food Log's
+  // group-selection "Delete" action (removing a whole time-group at once),
+  // same ids-array shape as /logs/bulk-move above.
+  app.delete("/api/logs/bulk", async (req, reply) => {
+    const schema = z.object({ ids: z.array(z.string()).min(1).max(50) });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+
+    await db.delete(logs).where(and(inArray(logs.id, parsed.data.ids), eq(logs.userId, req.userId!)));
+    reply.code(204);
+    return null;
+  });
+
   // Foods logged within +/-2h of the given time-of-day, ranked by frequency then
   // recency; falls back to "most recently logged, ever" when history is too sparse
   // (new install, or nothing has ever been logged around this hour before).

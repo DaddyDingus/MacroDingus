@@ -108,12 +108,21 @@ function GoalProgressBody({
   const today = localDateString();
   const goalStartDate = goal.startedAt.slice(0, 10);
   const goalWeightKg = goal.goalWeightKg!;
+  const startWeightKg = goal.startWeightKg!;
 
   const points = tab === "scale" ? weighInsAsc.map((w) => ({ date: w.date, valueKg: w.weightKg })) : trendPointsAsc.map((p) => ({ date: p.date, valueKg: p.trendKg }));
 
   const latestScaleKg = weighInsAsc.length ? weighInsAsc[weighInsAsc.length - 1].weightKg : null;
   const currentKg = tab === "scale" ? latestScaleKg : trendWeightKg;
   const distanceKg = currentKg !== null ? Math.abs(goalWeightKg - currentKg) : null;
+  // Total planned change (start -> goal), not yet-covered distance — lets
+  // "Distance" (what's left) sit alongside a relative sense of how far along
+  // that is, rather than two views of the same absolute number.
+  const totalPlannedKg = Math.abs(goalWeightKg - startWeightKg);
+  const progressPct =
+    distanceKg !== null && totalPlannedKg > 0
+      ? Math.min(100, Math.max(0, Math.round(((totalPlannedKg - distanceKg) / totalPlannedKg) * 100)))
+      : null;
 
   const waterfall = computeGoalWaterfall(points, goalStartDate, goalWeightKg, today);
   const etaDate = distanceKg !== null ? computeOptimisticEtaDate(distanceKg, goal.targetRateKgPerWeek, today) : null;
@@ -132,12 +141,23 @@ function GoalProgressBody({
 
       <main className="px-4 pt-3 space-y-3 max-w-md mx-auto">
         <div className="tile-enter border border-line bg-surface rounded-2xl p-4" style={staggerStyle(0, 60, 5)}>
-          <p className="text-[11px] tracking-widest uppercase text-muted">Distance</p>
-          <p className="tabular text-2xl font-medium tracking-tight">
-            {distanceKg !== null ? kgToUnit(distanceKg, unit).toFixed(1) : "—"}{" "}
-            <span className="text-sm font-normal text-muted">{unit}</span>
-          </p>
-          <p className="text-xs text-muted mt-2">{formatFullDate(goalStartDate)} – Today</p>
+          <div className="relative grid grid-cols-2 gap-6">
+            <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/10" />
+            <div className="text-center">
+              <p className="text-[11px] tracking-widest uppercase text-muted">Distance</p>
+              <p className="tabular text-2xl font-medium tracking-tight">
+                {distanceKg !== null ? kgToUnit(distanceKg, unit).toFixed(1) : "—"}{" "}
+                <span className="text-sm font-normal text-muted">{unit}</span>
+              </p>
+            </div>
+            <div className="text-center">
+              <p className="text-[11px] tracking-widest uppercase text-muted">Progress</p>
+              <p className="tabular text-2xl font-medium tracking-tight">
+                {progressPct !== null ? progressPct : "—"} <span className="text-sm font-normal text-muted">%</span>
+              </p>
+            </div>
+          </div>
+          <p className="text-xs text-muted mt-2 text-center">{formatFullDate(goalStartDate)} – Today</p>
         </div>
 
         <div className="tile-enter border border-line bg-surface rounded-2xl p-4" style={staggerStyle(1, 60, 5)}>

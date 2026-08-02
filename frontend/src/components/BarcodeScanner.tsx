@@ -251,7 +251,12 @@ export default function BarcodeScanner({
           <p className="text-sm text-muted mb-2">Tap the barcode to focus on it</p>
         )}
         {focusRange && (
-          <div className="pt-1">
+          // data-no-rubber-band: a horizontal thumb-drag always carries a
+          // little vertical wobble, which is enough to arm
+          // useRubberBandScroll's pull gesture (and its preventDefault) on
+          // top of the drag — same fix as the Compare screen's slider and
+          // the Goal wizard's sliders.
+          <div data-no-rubber-band className="pt-1">
             <input
               type="range"
               min={focusRange.min}

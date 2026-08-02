@@ -6,8 +6,7 @@ import type { MacroTargets } from "./MacroSummaryBar";
 import { scaleNutrition } from "../lib/nutrition";
 import { useBackDismiss } from "../lib/useBackDismiss";
 import { useEnergyUnit, kcalToUnit, energyUnitLabel } from "../lib/energyUnit";
-import FoodIconAvatar from "./FoodIconAvatar";
-import NutrientStatusBar from "./NutrientStatusBar";
+import NutrientStatusBar, { LogTimePill } from "./NutrientStatusBar";
 
 function fmt(n: number, decimals = 0): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: decimals, minimumFractionDigits: decimals });
@@ -46,7 +45,7 @@ const GRAMS_PER_LB = 453.592;
 // just for the four nutrients that get their own dedicated Nutrition field
 // instead of living in the microsJson bag. Used only to size each row's bar
 // fill — never rendered as a number.
-const DAILY_VALUE_REF = { protein: 50, fiber: 28, sugar: 50, saturatedFat: 20, sodiumMg: 2300 };
+const DAILY_VALUE_REF = { protein: 50, carbs: 275, fat: 78, fiber: 28, sugar: 50, saturatedFat: 20, sodiumMg: 2300 };
 
 interface MicroMeta {
   label: string;
@@ -154,7 +153,7 @@ function Ring({ pctValue, colorClass, label }: { pctValue: number; colorClass: s
           <span className="tabular text-xs font-semibold text-white">{fmt(pctValue)}%</span>
         </div>
       </div>
-      <span className="text-[10px] tracking-widest uppercase text-muted">{label}</span>
+      <span className="text-[10px] tracking-widest uppercase text-white/60">{label}</span>
     </div>
   );
 }
@@ -237,13 +236,24 @@ function ActionButtons({
 }) {
   return (
     <div className="grid grid-cols-2 gap-2">
+      {/* Explicit background/text/border swap rather than an opacity dim on a
+          permanently-chip-colored button — at 0/empty this read identically
+          to a disabled control even while tappable, since disabled:opacity-40
+          was the only signal telling the two states apart. A lighter fill
+          plus a faint accent border once there's a valid amount now marks
+          "active and interactive" the same explicit way the right key
+          already does with its own white/chip swap. */}
       <button
         onClick={() => {
           triggerHaptic(15);
           onLeft();
         }}
         disabled={leftDisabled}
-        className="rounded-lg bg-dashboardChip text-muted text-sm font-semibold py-3.5 disabled:opacity-40"
+        className={`rounded-lg text-sm font-semibold py-3.5 border ${
+          leftDisabled
+            ? "bg-dashboardChip text-muted border-transparent opacity-40"
+            : "bg-white/10 text-white border-accent/40"
+        }`}
       >
         {leftLabel}
       </button>
@@ -284,6 +294,7 @@ export default function FoodDetailScreen({
   onDeleteFood,
   timeLabel,
   onTimeClick,
+  commitLabel = "Log Foods",
 }: {
   food: Food;
   totals?: Nutrition;
@@ -330,6 +341,10 @@ export default function FoodDetailScreen({
   // "log time" being staged.
   timeLabel?: string;
   onTimeClick?: () => void;
+  // Overrides the numpad's left-key copy — factually wrong as "Log Foods"
+  // once the caller isn't actually logging anything (e.g. RecipeForm's
+  // ingredient picker).
+  commitLabel?: string;
 }) {
   // Nested on top of AddFoodSheet's own outer back-dismiss trap. Quantity
   // entry here is a custom on-screen numpad, not a real text input, so
@@ -354,8 +369,6 @@ export default function FoodDetailScreen({
 
   const n = scaleNutrition(food, quantityGrams);
   const { unit: energyUnit } = useEnergyUnit();
-  const macroCalories = n.protein * 4 + n.fat * 9 + n.carbs * 4;
-  const caloricRatio = (cal: number) => (macroCalories > 0 ? Math.round((cal / macroCalories) * 100) : 0);
 
   // Only the vitamin/mineral keys this specific food actually has data for —
   // see parseMicros/VITAMIN_META/MINERAL_META above for why missing keys are
@@ -393,23 +406,38 @@ export default function FoodDetailScreen({
   });
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    // step-enter (the same fade + slight horizontal slide GoalWizardScreen's
+    // steps use, see index.css) — this screen used to just appear instantly
+    // the instant `step` flipped to "detail" in AddFoodSheet, since a plain
+    // conditional swap between sibling steps has no transition of its own.
+    // Safe to use a transform here (unlike AddFoodSheet's own outer wrapper,
+    // which deliberately avoids one) because this screen has no position:fixed
+    // descendants of its own — ConfirmDeleteSheet is built on BottomSheet,
+    // which portals straight to document.body, so it's never actually nested
+    // under this div in the real DOM regardless of what the JSX looks like.
+    <div className="flex-1 flex flex-col min-h-0 step-enter">
       {/* Persistent header — pulled out of the scrollable region below (it
           used to live inside it and scroll away with the rest of the
           breakdown, along with the back button). NutrientStatusBar is the
-          same time/calories-left/protein-left/fat-left/carbs-left row the
-          search sheet shows (see AddFoodSheet's BrowseHeader) — drilling
-          into a food's own nutrition breakdown shouldn't mean losing sight
-          of what's actually left for the day. The back button gets its own
-          top-left row above the status bar, mirroring BrowseHeader's
-          top-corners-then-bars shape (X top-left there, avatar-stack/chevron
-          top-right) so the bars land at the same vertical offset in both
-          places despite the two screens having different top-row controls.
-          pt accounts for the status bar/notch the same way BrowseHeader's
-          does, since this sits at the very top of the same full-screen
-          modal once "detail" is the active step. */}
+          same "Remaining Today" macro-bar row the search sheet shows (see
+          AddFoodSheet's BrowseHeader) — drilling into a food's own nutrition
+          breakdown shouldn't mean losing sight of what's actually left for
+          the day. The back button and time pill share one top row (mirroring
+          BrowseHeader's X-button/time-pill/avatar-stack row — grid-cols-3
+          with the outer columns equal width keeps the pill genuinely
+          centered regardless of what sits in either side column, rather than
+          the pill sitting stacked directly above NutrientStatusBar's own
+          "Remaining Today" label, which read as cramped) so the bars land at
+          the same vertical offset in both places despite the two screens
+          having different top-row controls. pt accounts for the status
+          bar/notch the same way BrowseHeader's does, since this sits at the
+          very top of the same full-screen modal once "detail" is the active
+          step. */}
       <div className="shrink-0" style={{ paddingTop: "calc(env(safe-area-inset-top) + 16px)" }}>
-        <div className="px-4 pb-2">
+        {/* pb-3 (12px) — matches BrowseHeader's flex-col gap-3 between its
+            own top row and NutrientStatusBar exactly, so the "Remaining
+            Today" block lands at the same vertical offset on both screens. */}
+        <div className="px-4 pb-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
           {/* h-5 flex items-center matches BrowseHeader's X button box exactly
               (w-5 h-5 icon) — this glyph alone at text-lg/leading-none rendered
               a couple px shorter, which was enough to shift NutrientStatusBar
@@ -418,23 +446,18 @@ export default function FoodDetailScreen({
           <button
             onClick={onBack}
             aria-label={backLabel}
-            className="shrink-0 h-5 flex items-center text-muted text-lg leading-none px-1 -mx-1"
+            className="justify-self-start shrink-0 h-5 flex items-center text-muted text-lg leading-none px-1 -mx-1"
           >
             ‹
           </button>
+          <LogTimePill timeLabel={timeLabel} onTimeClick={onTimeClick} />
+          <div />
         </div>
         <div className="px-4 pb-3">
-          <NutrientStatusBar
-            totals={totals}
-            plateTotals={plateTotals}
-            targets={targets}
-            timeLabel={timeLabel}
-            onTimeClick={onTimeClick}
-          />
+          <NutrientStatusBar totals={totals} plateTotals={plateTotals} extra={n} targets={targets} />
         </div>
-        <div className="px-4 pb-2 flex items-center gap-3">
-          <FoodIconAvatar name={food.name} icon={food.icon} />
-          <span className="min-w-0 flex-1">
+        <div className="px-4 pb-2 flex flex-col items-center text-center">
+          <span className="min-w-0 max-w-full">
             <span className="block text-base font-semibold text-white truncate">{food.name}</span>
             {food.brand && <span className="block text-[11px] text-muted truncate">{food.brand}</span>}
           </span>
@@ -451,25 +474,18 @@ export default function FoodDetailScreen({
         <div className="px-4 pt-2 pb-4 grid grid-cols-4 gap-2 items-end">
           <div className="col-span-1">
             <p className="tabular text-2xl font-bold text-calories leading-none">{fmt(kcalToUnit(n.calories, energyUnit))}</p>
-            <p className="text-[10px] text-muted mt-1.5">{energyUnitLabel(energyUnit)}</p>
+            <p className="text-[10px] text-white/60 mt-1.5">{energyUnitLabel(energyUnit)}</p>
           </div>
-          {(["protein", "fat", "carbs"] as const).map((key) => {
-            const cal = key === "protein" ? n.protein * 4 : key === "fat" ? n.fat * 9 : n.carbs * 4;
-            // Full literal class strings per branch (not a template-built
-            // `bg-${key}/15`) — Tailwind's JIT only picks up classes it can
-            // find as complete strings in the source.
-            const badgeClass =
-              key === "protein" ? "bg-protein/15 text-protein" : key === "fat" ? "bg-fat/15 text-fat" : "bg-carbs/15 text-carbs";
-            return (
-              <div key={key} className="text-center">
-                <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${badgeClass}`}>
-                  {caloricRatio(cal)}%
-                </span>
-                <p className="tabular text-xl font-semibold text-white leading-none mt-1.5">{fmt(n[key], 1)}</p>
-                <p className="text-[10px] text-muted mt-0.5 capitalize">{key}</p>
-              </div>
-            );
-          })}
+          {/* Percentage-of-calories pills used to sit above each number here
+              — removed as a duplicate of the Impact on Targets rings below,
+              which already own percentage visualization for these same three
+              macros; this row is now just the plain gram amounts. */}
+          {(["protein", "fat", "carbs"] as const).map((key) => (
+            <div key={key} className="text-center">
+              <p className="tabular text-xl font-semibold text-white leading-none">{fmt(n[key], 1)}</p>
+              <p className="text-[10px] text-white/60 mt-0.5 capitalize">{key}</p>
+            </div>
+          ))}
         </div>
 
         {/* "To custom" duplicates this food into the create-food form (see
@@ -526,6 +542,7 @@ export default function FoodDetailScreen({
         <div className="px-4 pt-4 border-t border-dashboardDivider mt-4">
           <p className="text-[13px] font-semibold text-white/80 pt-3">Carb Breakdown</p>
           <div className="divide-y divide-dashboardDivider/60">
+            <BreakdownRow label="Carbs" amount={n.carbs} dailyValueRef={DAILY_VALUE_REF.carbs} barColorClass="bg-carbs" />
             <BreakdownRow label="Fiber" amount={n.fiber} dailyValueRef={DAILY_VALUE_REF.fiber} barColorClass="bg-carbs" />
             <BreakdownRow label="Sugars" amount={n.sugar} dailyValueRef={DAILY_VALUE_REF.sugar} barColorClass="bg-carbs" />
             <BreakdownRow label="Net Carbs" amount={Math.max(0, n.carbs - n.fiber)} />
@@ -535,6 +552,7 @@ export default function FoodDetailScreen({
         <div className="px-4 pt-4 border-t border-dashboardDivider mt-4">
           <p className="text-[13px] font-semibold text-white/80 pt-3">Fat Breakdown</p>
           <div className="divide-y divide-dashboardDivider/60">
+            <BreakdownRow label="Fat" amount={n.fat} dailyValueRef={DAILY_VALUE_REF.fat} barColorClass="bg-fat" />
             <BreakdownRow label="Saturated Fat" amount={n.saturatedFat} dailyValueRef={DAILY_VALUE_REF.saturatedFat} barColorClass="bg-fat" />
             {monounsaturated !== null && <BreakdownRow label="Monounsaturated" amount={monounsaturated} />}
             {polyunsaturated !== null && <BreakdownRow label="Polyunsaturated" amount={polyunsaturated} />}
@@ -604,7 +622,7 @@ export default function FoodDetailScreen({
       <div className="shrink-0 border-t border-white/10 bg-dashboardBg px-4 pt-3 pb-3">
         <div className="rounded-xl bg-dashboardCard border border-white/30 px-4 py-3 mb-2.5 flex items-center justify-between gap-1.5 focus-within:border-accent">
           <input
-            type="number"
+            type="search"
             inputMode="decimal"
             autoComplete="off"
             autoFocus
@@ -628,13 +646,19 @@ export default function FoodDetailScreen({
           <span className="text-sm text-muted shrink-0">{unitLabel(unit)}</span>
         </div>
 
+        {/* Same outlined-pill treatment as the staged-plate editor's own
+            QuantityPresetBar (AddFoodSheet.tsx) — border-accent/text-accent
+            selected, border-white/15/text-white otherwise — rather than the
+            filled bg-white/bg-dashboardChip pair this used to have, so the
+            two serving-size pill rows read as one consistent control instead
+            of two different designs depending on which screen you're on. */}
         <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2.5">
           {units.map((u) => (
             <button
               key={u}
               onClick={() => setUnit(u)}
-              className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-medium whitespace-nowrap ${
-                unit === u ? "bg-white text-black" : "bg-dashboardChip text-muted"
+              className={`shrink-0 rounded-full px-3.5 py-2 border text-xs font-medium whitespace-nowrap transition-colors ${
+                unit === u ? "border-accent text-accent" : "border-white/15 text-white active:bg-white/5"
               }`}
             >
               {unitLabel(u)}
@@ -655,8 +679,8 @@ export default function FoodDetailScreen({
           <ActionButtons
             leftLabel={
               stagedCount + (quantityGrams > 0 ? 1 : 0) > 0
-                ? `Log Foods (${stagedCount + (quantityGrams > 0 ? 1 : 0)})`
-                : "Log Foods"
+                ? `${commitLabel} (${stagedCount + (quantityGrams > 0 ? 1 : 0)})`
+                : commitLabel
             }
             onLeft={() => onLogFoods(food, quantityGrams)}
             leftDisabled={quantityGrams <= 0 && stagedCount === 0}

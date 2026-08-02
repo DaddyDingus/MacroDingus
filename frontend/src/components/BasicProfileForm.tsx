@@ -10,26 +10,43 @@ const ACTIVITY_OPTIONS: { value: ActivityLevel; label: string; description: stri
 ];
 
 // The sex/age/height/activity/exercise form CoachScreen shows as a fallback
-// when a profile is missing, and OnboardingFlow shows as its own step — same
-// fields, same validation, deliberately no header/wrapper of its own so each
-// caller can supply the chrome that fits its context.
+// when a profile is missing, OnboardingFlow shows as its own step, and More
+// shows (via EditBodyProfileSheet) for editing an already-set-up profile —
+// same fields, same validation, deliberately no header/wrapper of its own so
+// each caller can supply the chrome that fits its context. `initial` seeds
+// the fields for the edit case; omitted it falls back to the same onboarding
+// defaults as before. `initial.checkInDayOfWeek` isn't a field this form
+// collects (that's ChangeCheckInDaySheet's job) but it's round-tripped
+// through onSave unchanged rather than hardcoded to null, so editing an
+// already-configured profile can't silently clear a check-in day that was
+// already chosen.
 export default function BasicProfileForm({
   saving,
   ctaLabel = "Continue",
+  initial,
   onSave,
 }: {
   saving: boolean;
   ctaLabel?: string;
+  initial?: {
+    sex: "male" | "female";
+    birthYear: number;
+    heightCm: number;
+    activityLevel: ActivityLevel;
+    weeklyExerciseHours: number | null;
+    checkInDayOfWeek?: number | null;
+  };
   onSave: (input: { sex: "male" | "female"; birthYear: number; heightCm: number; activityLevel: ActivityLevel; checkInDayOfWeek: number | null; weeklyExerciseHours: number | null }) => void;
 }) {
-  const [sex, setSex] = useState<"male" | "female">("male");
-  const [birthYear, setBirthYear] = useState("1990");
-  const [heightCm, setHeightCm] = useState("175");
-  const [activityLevel, setActivityLevel] = useState<ActivityLevel>("moderate");
-  const [exerciseHours, setExerciseHours] = useState("");
+  const [sex, setSex] = useState<"male" | "female">(initial?.sex ?? "male");
+  const [birthYear, setBirthYear] = useState(String(initial?.birthYear ?? 1990));
+  const [heightCm, setHeightCm] = useState(String(initial?.heightCm ?? 175));
+  const [activityLevel, setActivityLevel] = useState<ActivityLevel>(initial?.activityLevel ?? "moderate");
+  const [exerciseHours, setExerciseHours] = useState(initial?.weeklyExerciseHours != null ? String(initial.weeklyExerciseHours) : "");
 
   const canSave = Number(birthYear) > 1900 && Number(heightCm) > 0;
   const parsedExerciseHours = exerciseHours.trim() === "" ? null : Math.max(0, Number(exerciseHours));
+  const checkInDayOfWeek = initial?.checkInDayOfWeek ?? null;
 
   // Enter submits via onKeyDown on the number fields below, not a wrapping
   // <form> — a <form> element turned out to be what triggers Chrome's full
@@ -38,7 +55,7 @@ export default function BasicProfileForm({
   // fuller story.
   function submitOnEnter(e: React.KeyboardEvent) {
     if (e.key !== "Enter" || !canSave || saving) return;
-    onSave({ sex, birthYear: Number(birthYear), heightCm: Number(heightCm), activityLevel, checkInDayOfWeek: null, weeklyExerciseHours: parsedExerciseHours });
+    onSave({ sex, birthYear: Number(birthYear), heightCm: Number(heightCm), activityLevel, checkInDayOfWeek, weeklyExerciseHours: parsedExerciseHours });
   }
 
   return (
@@ -95,7 +112,7 @@ export default function BasicProfileForm({
         )}
       </div>
       <button
-        onClick={() => onSave({ sex, birthYear: Number(birthYear), heightCm: Number(heightCm), activityLevel, checkInDayOfWeek: null, weeklyExerciseHours: parsedExerciseHours })}
+        onClick={() => onSave({ sex, birthYear: Number(birthYear), heightCm: Number(heightCm), activityLevel, checkInDayOfWeek, weeklyExerciseHours: parsedExerciseHours })}
         disabled={!canSave || saving}
         className="w-full py-3 rounded-md bg-accent text-base disabled:opacity-40 font-medium"
         style={{ color: "#0B1210" }}

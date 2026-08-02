@@ -1,5 +1,26 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
+import type { AuthStatus } from "./auth";
+
+export function useRenameAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      apiFetch<{ ok: true; user: { id: string; name: string } }>("/account/name", {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+      }),
+    onSuccess: (data) =>
+      qc.setQueryData<AuthStatus>(["auth", "status"], { authenticated: true, user: data.user }),
+  });
+}
+
+export function useChangePassword() {
+  return useMutation({
+    mutationFn: (input: { currentPassword: string; newPassword: string }) =>
+      apiFetch<{ ok: true }>("/account/password", { method: "PATCH", body: JSON.stringify(input) }),
+  });
+}
 
 // Clears this account's own data (weights, logs, check-ins, goals,
 // programs, photos, profile) — see backend/src/routes/account.ts for exact
