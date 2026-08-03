@@ -29,6 +29,21 @@ export interface VisualViewportMetrics {
 // expose Layer 1 (the plate view) behind it. Reverted to applying every
 // event immediately, keeping this hook's own state in lockstep with
 // everything else that changes synchronously (like a tab switch).
+//
+// The `scroll` listener isn't just for iOS: traced 2026-08-03 on Android
+// Chrome, `offsetTop` climbed continuously (with `height` unchanged, so not
+// a real keyboard transition) while the user dragged inside AddFoodSheet's
+// search results with the keyboard open and the list too short to actually
+// need scrolling — window.scrollY and this app's own body-scroll lock never
+// moved, confirming the document itself wasn't scrolling. Android was
+// interpreting the unclaimed drag as a visual-viewport *pan* instead
+// (browser behavior for revealing content otherwise hidden behind an open
+// keyboard), and this hook faithfully followed it, which is what read as
+// AddFoodSheet "jittering." The real fix was in AddFoodSheet (blur the
+// focused input when a drag starts on its scrollable content, so there's no
+// open keyboard left for Android to pan around) — not here; this hook is
+// correctly tracking `offsetTop`, the input to it was just wrong on that
+// device for a moment.
 export function useVisualViewportMetrics(): VisualViewportMetrics {
   const [metrics, setMetrics] = useState<VisualViewportMetrics>(() => ({
     height: typeof window !== "undefined" ? window.innerHeight : 0,

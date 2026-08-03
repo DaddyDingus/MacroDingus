@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Copy } from "lucide-react";
+import { Copy, ChevronLeft, ChevronRight } from "lucide-react";
 import type { LogEntry } from "../api/types";
 import { useDayLog, useDeleteLog, useMoveLogEntries, useLoggedDates } from "../api/logs";
 import { useAuthStatus } from "../api/auth";
@@ -14,7 +14,7 @@ import CopyDaySheet from "../components/CopyDaySheet";
 import CalendarJumpSheet from "../components/CalendarJumpSheet";
 import LogActionBar, { type LogSelection } from "../components/LogActionBar";
 import ConfirmDeleteSheet from "../components/ConfirmDeleteSheet";
-import ShortcutsBar from "../components/ShortcutsBar";
+import { useHideShortcutsBar } from "../lib/navVisibility";
 import { staggerStyle } from "../lib/stagger";
 import { useAnnounceViewedDate } from "../lib/viewedDate";
 
@@ -58,6 +58,10 @@ export default function TodayScreen() {
   const [pendingDeleteEntry, setPendingDeleteEntry] = useState<LogEntry | null>(null);
   const loggedDates = useLoggedDates(calendarOpen);
   const [selection, setSelection] = useState<LogSelection | null>(null);
+  // ShortcutsBar takes its same fixed slot above BottomNav for LogActionBar
+  // while a selection is active — see useHideShortcutsBar's own comment for
+  // why this goes through context now rather than just not rendering it.
+  useHideShortcutsBar(!!selection);
 
   function openEdit(entry: LogEntry) {
     setEditingEntry(entry);
@@ -75,26 +79,40 @@ export default function TodayScreen() {
     setQuickAddLoggedAt(null);
   }
 
-  // Tapping a food row selects it (showing LogActionBar's Edit/Copy/Move/
-  // Modify-timestamp shortcuts) rather than jumping straight to editing —
-  // tapping the same entry again deselects. Tapping a group's shared
-  // timestamp selects the whole group instead (Copy/Move/Modify
-  // timestamp/Create recipe, no Edit — see LogActionBar).
+  // Tapping a food row toggles its selection in our multi-select list.
   function selectEntry(entry: LogEntry) {
-    setSelection((prev) => (prev?.kind === "entry" && prev.entry.id === entry.id ? null : { kind: "entry", entry }));
-  }
-  function selectGroup(groupEntries: LogEntry[]) {
-    setSelection((prev) =>
-      prev?.kind === "group" && prev.entries[0]?.id === groupEntries[0]?.id ? null : { kind: "group", entries: groupEntries }
-    );
+    setSelection((prev) => {
+      const current = prev ?? [];
+      const exists = current.some((e) => e.id === entry.id);
+      const next = exists ? current.filter((e) => e.id !== entry.id) : [...current, entry];
+      return next.length > 0 ? next : null;
+    });
   }
 
-  // Tapping another group's arrow while a group is selected — moves the
-  // selected group's own entries onto the target group's shared timestamp,
-  // merging them into one group.
-  function mergeSelectedGroupInto(targetGroupEntries: LogEntry[]) {
-    if (selection?.kind !== "group") return;
-    moveEntries.mutate({ ids: selection.entries.map((e) => e.id), loggedAt: targetGroupEntries[0].loggedAt });
+  // Tapping a group's shared timestamp selects or deselects all entries in the group.
+  function selectGroup(groupEntries: LogEntry[]) {
+    setSelection((prev) => {
+      const current = prev ?? [];
+      const allSelected = groupEntries.every((ge) => current.some((c) => c.id === ge.id));
+      let next: LogEntry[];
+      if (allSelected) {
+        // Deselect the group
+        next = current.filter((c) => !groupEntries.some((ge) => ge.id === c.id));
+      } else {
+        // Select the group (add any entries that aren't already selected)
+        const toAdd = groupEntries.filter((ge) => !current.some((c) => c.id === ge.id));
+        next = [...current, ...toAdd];
+      }
+      return next.length > 0 ? next : null;
+    });
+  }
+
+  // Moves the selected entry or group of entries onto the target group's
+  // shared timestamp, merging them into that group.
+  function moveSelectedInto(targetGroupEntries: LogEntry[]) {
+    if (!selection) return;
+    const ids = selection.map((e) => e.id);
+    moveEntries.mutate({ ids, loggedAt: targetGroupEntries[0].loggedAt });
     setSelection(null);
   }
 
@@ -114,7 +132,7 @@ export default function TodayScreen() {
   const groups = groupLogEntriesByTime(entries);
 
   return (
-    <div className="min-h-dvh pb-24 bg-dashboardBg">
+    <div className="min-h-dvh pb-40 bg-dashboardBg">
       {/* Glass rather than the flat bg-dashboardBg this used to be — a fully
           opaque sticky header made content scrolling underneath disappear at
           a hard line right at its bottom edge instead of continuing softly
@@ -125,10 +143,10 @@ export default function TodayScreen() {
           <div className="grid grid-cols-3 items-center">
             <button
               onClick={() => setDate((d) => addDays(d, -1))}
-              className="justify-self-start text-white/60 text-xl leading-none px-2 py-1"
+              className="justify-self-start text-white/60 active:text-white p-1 -ml-1 flex items-center"
               aria-label="Previous day"
             >
-              ‹
+              <ChevronLeft size={18} strokeWidth={2.2} />
             </button>
             <button onClick={() => setCalendarOpen(true)} className="flex flex-col items-center leading-tight active:opacity-70">
               {authStatus.data?.user?.name && (
@@ -136,14 +154,14 @@ export default function TodayScreen() {
               )}
               <span className="text-sm font-medium text-white">{formatDayLabel(date)}</span>
             </button>
-            <div className="justify-self-end flex items-center gap-1">
+            <div className="justify-self-end flex items-center gap-1.5">
               <button
                 onClick={() => setDate((d) => addDays(d, 1))}
                 disabled={date === localDateString()}
-                className="text-white/60 text-xl leading-none px-2 py-1 disabled:opacity-30"
+                className="text-white/60 active:text-white p-1 flex items-center disabled:opacity-30 disabled:pointer-events-none"
                 aria-label="Next day"
               >
-                ›
+                <ChevronRight size={18} strokeWidth={2.2} />
               </button>
               <button
                 onClick={() => setCopyOpen(true)}
@@ -169,19 +187,19 @@ export default function TodayScreen() {
             {/* TimeBlockGroup's dot is w-2 (8px) flush to this container's right edge, so its
                 center sits 4px in from the edge. This 1px-wide line must start 0.5px further
                 out (right: 3.5px) so its own center lands on that same 4px point. */}
-            <div className="absolute top-2 bottom-2 w-px bg-dashboardDivider" style={{ right: "3.5px" }} />
+            <div className="absolute top-2 bottom-2 w-px bg-dashboardDivider" style={{ right: "27px" }} />
             <div className="space-y-6">
               {groups.map((group, i) => (
                 <div key={group.id} className="tile-enter" style={staggerStyle(i, 60, 5)}>
                   <TimeBlockGroup
                     entries={group.entries}
-                    selectedEntryId={selection?.kind === "entry" ? selection.entry.id : null}
-                    groupSelected={selection?.kind === "group" && selection.entries[0]?.id === group.entries[0]?.id}
-                    anyGroupSelected={selection?.kind === "group"}
+                    selectedEntryIds={selection ? selection.map((e) => e.id) : []}
+                    groupSelected={group.entries.length > 0 && group.entries.every((ge) => selection?.some((s) => s.id === ge.id) ?? false)}
+                    anySelected={!!selection}
                     onSelectEntry={selectEntry}
                     onSelectGroup={selectGroup}
                     onQuickAdd={openQuickAddToGroup}
-                    onMergeInto={mergeSelectedGroupInto}
+                    onMergeInto={moveSelectedInto}
                     onDelete={(entry) => setPendingDeleteEntry(entry)}
                   />
                 </div>
@@ -190,9 +208,6 @@ export default function TodayScreen() {
           </div>
         )}
       </main>
-
-      {/* Hidden during a selection — LogActionBar takes this same fixed slot above BottomNav */}
-      {!selection && <ShortcutsBar />}
 
       <AddFoodSheet
         open={sheetOpen}

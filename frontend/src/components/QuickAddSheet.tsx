@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useCreateFood } from "../api/foods";
 import { useAddLog } from "../api/logs";
-import { useEnergyUnit, kcalToUnit, unitToKcal, energyUnitLabel } from "../lib/energyUnit";
+import { useEnergyUnit, kcalToUnit, unitToKcal, energyUnitLabel, type EnergyUnit } from "../lib/energyUnit";
 import BottomSheet from "./BottomSheet";
 
 function NumberField({
@@ -54,7 +54,12 @@ export default function QuickAddSheet({
   const [carbs, setCarbs] = useState("");
   const [fat, setFat] = useState("");
   const [calories, setCalories] = useState("");
-  const { unit: energyUnit, setUnit: setEnergyUnit } = useEnergyUnit();
+  // Local, not the global preference: this toggle just changes which unit
+  // this one field is typed/read in, mirroring CreateFoodForm's toggle. It
+  // used to call the shared setUnit and so silently flipped the whole app's
+  // display unit (Dashboard, food details, everywhere) off one tap here.
+  const { unit: globalEnergyUnit } = useEnergyUnit();
+  const [energyUnit, setEnergyUnit] = useState<EnergyUnit>(globalEnergyUnit);
 
   const createFood = useCreateFood();
   const addLog = useAddLog(date);
@@ -71,7 +76,7 @@ export default function QuickAddSheet({
 
   // Same in-place conversion pattern as CreateFoodForm's toggle — whatever's
   // currently shown (typed directly or auto-filled from macros) converts to
-  // the new unit before the shared global preference actually flips.
+  // the new unit before this field's local unit actually flips.
   function toggleEnergyUnit() {
     const next = energyUnit === "kcal" ? "kj" : "kcal";
     if (calories.trim() !== "" && !isNaN(Number(calories))) {

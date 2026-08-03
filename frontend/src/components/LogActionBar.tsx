@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Pencil, Copy, Move, Clock, ChefHat, Trash2, ChevronLeft, X, type LucideIcon } from "lucide-react";
 import type { LogEntry } from "../api/types";
 import { useCopyLogEntries, useMoveLogEntries, useDeleteLogEntries } from "../api/logs";
@@ -8,7 +8,7 @@ import DateTimePickerSheet from "./DateTimePickerSheet";
 import CreateRecipeFromGroupSheet from "./CreateRecipeFromGroupSheet";
 import ConfirmDeleteSheet from "./ConfirmDeleteSheet";
 
-export type LogSelection = { kind: "entry"; entry: LogEntry } | { kind: "group"; entries: LogEntry[] };
+export type LogSelection = LogEntry[];
 
 type RootView = "root" | "copy" | "move";
 type PendingSheet = "copy" | "move" | "modifyTimestamp" | null;
@@ -51,8 +51,29 @@ export default function LogActionBar({
   const moveEntries = useMoveLogEntries();
   const deleteEntries = useDeleteLogEntries();
 
-  const entries = selection.kind === "entry" ? [selection.entry] : selection.entries;
-  const isGroup = selection.kind === "group";
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const [showLeftFade, setShowLeftFade] = useState(false);
+  const [showRightFade, setShowRightFade] = useState(true);
+
+  // Monitor scroll positioning to dynamically toggle overlays
+  function handleScroll() {
+    const el = scrollerRef.current;
+    if (!el) return;
+    setShowLeftFade(el.scrollLeft > 0);
+    setShowRightFade(el.scrollLeft < el.scrollWidth - el.clientWidth - 1);
+  }
+
+  // Reset scroll and shadows when switching views
+  useEffect(() => {
+    setShowLeftFade(false);
+    setShowRightFade(true);
+    if (scrollerRef.current) {
+      scrollerRef.current.scrollLeft = 0;
+    }
+  }, [view]);
+
+  const entries = selection;
+  const isGroup = entries.length > 1;
   // The group's own display already collapses every entry under one shared
   // timestamp (TimeBlockGroup shows only entries[0].loggedAt) — copy/move/
   // modify-timestamp on a group follows that same convention and lands every
@@ -108,17 +129,29 @@ export default function LogActionBar({
   return (
     <>
       <div className="fixed inset-x-0 z-30" style={{ bottom: navHeight }}>
-        <div className="bg-dashboardBg border-t border-dashboardDivider flex items-center gap-2 px-3 py-2">
-          {view !== "root" && (
+        <div className="bg-dashboardBg border-t border-dashboardDivider flex items-center gap-1 px-3 py-2">
+          {view !== "root" ? (
             <button
               type="button"
               onClick={() => setView("root")}
               aria-label="Back"
-              className="shrink-0 text-white/70 active:text-white p-1"
+              className="shrink-0 text-white/75 active:text-white p-1.5 -ml-1 flex items-center"
             >
-              <ChevronLeft size={18} strokeWidth={2} />
+              <ChevronLeft size={18} strokeWidth={2.2} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Cancel selection"
+              className="shrink-0 text-white/60 active:text-white p-1.5 -ml-1 flex items-center"
+            >
+              <X size={18} strokeWidth={2.2} />
             </button>
           )}
+
+          {/* Thin vertical separator dividing navigation from actions, matching MacroFactor layout */}
+          <div className="w-px h-5 bg-dashboardDivider shrink-0 mx-1.5" />
 
           {/* touch-action: pan-x + data-no-rubber-band — same fix
               MacroSummaryBar's own horizontal scroller needed. This bar is
@@ -129,50 +162,58 @@ export default function LogActionBar({
               vertical wobble by useRubberBandScroll's global touchmove
               listener and dragged the whole page into its pull-to-refresh
               stretch instead of just scrolling this row. */}
-          <div
-            className="flex-1 min-w-0 overflow-x-auto no-scrollbar overscroll-x-contain flex items-center gap-2"
-            data-no-rubber-band
-            style={{ touchAction: "pan-x" }}
-          >
-            {view === "root" && (
-              <>
-                {!isGroup && (
-                  <Chip
-                    icon={Pencil}
-                    label="Edit"
-                    onClick={() => {
-                      onEdit(entries[0]);
-                      onClose();
-                    }}
-                  />
-                )}
-                <Chip icon={Copy} label="Copy" onClick={() => setView("copy")} />
-                <Chip icon={Move} label="Move" onClick={() => setView("move")} />
-                <Chip icon={Clock} label="Modify timestamp" onClick={() => setPendingSheet("modifyTimestamp")} />
-                {isGroup && (
-                  <Chip icon={ChefHat} label="Create recipe" onClick={() => setRecipeSheetOpen(true)} />
-                )}
-                <Chip icon={Trash2} label="Delete" onClick={() => setConfirmingDelete(true)} />
-              </>
-            )}
-            {(view === "copy" || view === "move") && (
-              <>
-                <Chip icon={Clock} label="To now" onClick={toNow} />
-                <Chip icon={Clock} label="To today" onClick={toToday} />
-                <Chip icon={Clock} label="To tomorrow" onClick={toTomorrow} />
-                <Chip icon={Clock} label="To date & time" onClick={toDateAndTime} />
-              </>
-            )}
-          </div>
+          <div className="flex-1 min-w-0 relative">
+            {/* Smooth left-edge fade mask, active only when scrolled in */}
+            <div
+              className={`absolute top-0 bottom-0 left-0 w-8 bg-gradient-to-r from-dashboardBg via-dashboardBg/60 to-transparent pointer-events-none z-10 transition-opacity duration-200 ${
+                showLeftFade ? "opacity-100" : "opacity-0"
+              }`}
+            />
 
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Cancel selection"
-            className="shrink-0 text-white/70 active:text-white p-1"
-          >
-            <X size={18} strokeWidth={2} />
-          </button>
+            <div
+              ref={scrollerRef}
+              onScroll={handleScroll}
+              className="overflow-x-auto no-scrollbar overscroll-x-contain flex items-center gap-2 pr-10"
+              data-no-rubber-band
+              style={{ touchAction: "pan-x" }}
+            >
+              {view === "root" && (
+                <>
+                  {!isGroup && (
+                    <Chip
+                      icon={Pencil}
+                      label="Edit"
+                      onClick={() => {
+                        onEdit(entries[0]);
+                        onClose();
+                      }}
+                    />
+                  )}
+                  <Chip icon={Copy} label="Copy" onClick={() => setView("copy")} />
+                  <Chip icon={Move} label="Move" onClick={() => setView("move")} />
+                  <Chip icon={Clock} label="Modify timestamp" onClick={() => setPendingSheet("modifyTimestamp")} />
+                  {isGroup && (
+                    <Chip icon={ChefHat} label="Create recipe" onClick={() => setRecipeSheetOpen(true)} />
+                  )}
+                  <Chip icon={Trash2} label="Delete" onClick={() => setConfirmingDelete(true)} />
+                </>
+              )}
+              {(view === "copy" || view === "move") && (
+                <>
+                  <Chip icon={Clock} label="To now" onClick={toNow} />
+                  <Chip icon={Clock} label="To today" onClick={toToday} />
+                  <Chip icon={Clock} label="To tomorrow" onClick={toTomorrow} />
+                  <Chip icon={Clock} label="To date & time" onClick={toDateAndTime} />
+                </>
+              )}
+            </div>
+            {/* Smooth right-edge fade mask, active until scrolled to the end */}
+            <div
+              className={`absolute top-0 bottom-0 right-0 w-10 bg-gradient-to-l from-dashboardBg via-dashboardBg/60 to-transparent pointer-events-none z-10 transition-opacity duration-200 ${
+                showRightFade ? "opacity-100" : "opacity-0"
+              }`}
+            />
+          </div>
         </div>
       </div>
 

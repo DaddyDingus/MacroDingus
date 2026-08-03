@@ -20,13 +20,13 @@ export default function FoodItemCard({
   const { unit: energyUnit } = useEnergyUnit();
   return (
     <div
-      className={`flex items-center gap-2.5 rounded-2xl px-3 py-2 transition-colors ${
-        selected ? "bg-accent/10" : "bg-dashboardCard"
+      className={`flex items-center gap-2.5 rounded-2xl px-3 py-2 border transition-all duration-150 ${
+        selected ? "bg-accent/[0.12] border-accent/25" : "bg-dashboardCard border-transparent"
       }`}
     >
       <FoodIconAvatar name={entry.food.name} icon={entry.food.icon} />
       <button onClick={onSelect} className="flex-1 min-w-0 text-left active:opacity-70">
-        <span className="block text-sm text-white leading-tight line-clamp-2">{entry.food.name}</span>
+        <span className="block text-sm text-white leading-tight truncate">{entry.food.name}</span>
         <span className="block text-xs text-muted tabular leading-tight truncate -mt-0.5">
           {fmt(entry.quantityGrams)} g · {fmt(entry.nutrition.protein)}P {fmt(entry.nutrition.fat)}F{" "}
           {fmt(entry.nutrition.carbs)}C

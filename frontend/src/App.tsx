@@ -6,6 +6,7 @@ import LoginScreen from "./screens/LoginScreen";
 import DashboardScreen from "./screens/DashboardScreen";
 import TodayScreen from "./screens/TodayScreen";
 import BottomNav from "./components/BottomNav";
+import ShortcutsBar from "./components/ShortcutsBar";
 import { WeightUnitProvider } from "./lib/weightUnit";
 import { EnergyUnitProvider } from "./lib/energyUnit";
 import { ShortcutsProvider } from "./lib/shortcuts";
@@ -271,6 +272,20 @@ function AppRoutes() {
           </Routes>
         </Suspense>
       </div>
+      {/* Rendered once here rather than separately by DashboardScreen and
+          TodayScreen (each used to mount its own instance) — same reasoning
+          as BottomNav living here: a route swap between "/" and "/log" fully
+          unmounts and remounts whichever screen owned it, so a
+          per-screen-owned instance was destroyed and recreated fresh on
+          every tab switch. Traced 2026-08-03: that's a real DOM
+          teardown/rebuild each time (fresh mount ids observed on every
+          switch, not a `visible` state flicker — see useHideOnScroll), which
+          is what read as the icons "flashing." Gated on route the same way
+          BottomNav is (see its own `location.pathname` checks) rather than
+          conditionally rendered per-screen; TodayScreen's own selection-mode
+          hide now goes through useHideShortcutsBar instead of just not
+          rendering it. */}
+      {(location.pathname === "/" || location.pathname === "/log") && <ShortcutsBar />}
       <BottomNav />
     </>
   );

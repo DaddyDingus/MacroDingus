@@ -23,6 +23,7 @@ export default function RecipeEditSheet({ id, onClose }: { id: string; onClose: 
             {detail.data && (
               <RecipeForm
                 initialName={detail.data.name}
+                editingExisting
                 initial={{
                   name: detail.data.name,
                   icon: detail.data.food.icon,

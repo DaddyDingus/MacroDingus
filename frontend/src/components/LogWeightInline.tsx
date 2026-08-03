@@ -42,20 +42,10 @@ export default function LogWeightInline({ onLogged, autoFocus }: { onLogged?: ()
   }
 
   return (
-    // Wrapping in a real <form autoComplete="off">, not just per-input
-    // autoComplete="off" — Chrome's keyboard accessory bar kept showing a
-    // "Passwords" autofill chip over the (type=number, autoComplete=off)
-    // weight input regardless of the data-*ignore attributes above; Chrome's
-    // form-boundary/credential-field heuristic operates at the form-scope
-    // level and appears to give a stray, form-less input less benefit of the
-    // doubt than one explicitly scoped inside a non-login form. Not
-    // guaranteed to fully suppress it either — this is a known, filed
-    // Chromium bug (issues.chromium.org/issues/40856139) the browser side
-    // doesn't consider fully controllable by page authors — but it's the
-    // most legitimate remaining lever. onSubmit/type="button" below exist
-    // only to stop the form's native submit (page reload) from firing
-    // alongside the manual submit() calls now that a real <form> exists.
-    <form className="flex flex-col gap-2" autoComplete="off" onSubmit={(e) => e.preventDefault()}>
+    // Wrapping in a form previously tried to defeat Chrome's heuristics, but 
+    // single-input forms often get flagged as login forms anyway. We've switched
+    // to type="text" and removed the name attribute instead.
+    <div className="flex flex-col gap-2">
       <button
         type="button"
         onClick={(e) => {
@@ -76,9 +66,8 @@ export default function LogWeightInline({ onLogged, autoFocus }: { onLogged?: ()
       </button>
       <div className="border border-line bg-surface rounded-2xl p-4 flex items-center gap-2 focus-within:border-accent">
         <input
-          type="number"
+          type="search"
           inputMode="decimal"
-          name="weight-value"
           autoComplete="off"
           // Chrome's keyboard accessory bar shows a "Passwords" autofill chip
           // over this field despite autoComplete="off" — a known Chrome
@@ -115,9 +104,8 @@ export default function LogWeightInline({ onLogged, autoFocus }: { onLogged?: ()
         <div className="border border-line bg-surface rounded-2xl p-4 flex items-center gap-2 focus-within:border-accent">
           <input
             ref={bodyFatRef}
-            type="number"
+            type="search"
             inputMode="decimal"
-            name="body-fat-value"
             autoComplete="off"
             data-lpignore="true"
             data-1p-ignore=""
@@ -151,6 +139,6 @@ export default function LogWeightInline({ onLogged, autoFocus }: { onLogged?: ()
           onClose={() => setCalendarOpen(false)}
         />
       )}
-    </form>
+    </div>
   );
 }

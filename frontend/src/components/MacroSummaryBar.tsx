@@ -160,12 +160,12 @@ export default function MacroSummaryBar({ totals, targets }: { totals: Nutrition
         className="flex overflow-x-auto no-scrollbar overscroll-x-contain py-2 select-none"
         style={{ scrollSnapType: "x mandatory", touchAction: "pan-x" }}
       >
-        <MacroPage mode="consumed" totals={totals} targets={targets} energyUnit={energyUnit} />
         <MacroPage mode="remaining" totals={totals} targets={targets} energyUnit={energyUnit} />
+        <MacroPage mode="consumed" totals={totals} targets={targets} energyUnit={energyUnit} />
       </div>
       <div className="flex justify-center gap-1.5 mt-2">
         {([0, 1] as const).map((p) => (
-          <button key={p} onClick={() => goTo(p)} aria-label={p === 0 ? "Show consumed" : "Show remaining"} className="p-1 -m-1">
+          <button key={p} onClick={() => goTo(p)} aria-label={p === 0 ? "Show remaining" : "Show consumed"} className="p-1 -m-1">
             <span
               className={`block h-1.5 rounded-full transition-all duration-300 ${page === p ? "w-4 bg-accent" : "w-1.5 bg-dashboardTrack"}`}
             />

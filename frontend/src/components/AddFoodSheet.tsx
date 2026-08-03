@@ -20,12 +20,12 @@ import type { Food, LogEntry, Nutrition } from "../api/types";
 import type { MacroTargets } from "./MacroSummaryBar";
 import { useFoodSearch, useCreateFood, useCustomFoods, useBarcodeLookup, useDeleteFood, useDescribeMeal } from "../api/foods";
 import { useFavorites, useAddFavorite, useRemoveFavorite } from "../api/favorites";
-import { useRecipes, useCreateRecipe, useImportRecipeUrl, type RecipeSummary } from "../api/recipes";
+import { useRecipes, useRecipeDetail, useCreateRecipe, useUpdateRecipe, useDeleteRecipe, useImportRecipeUrl, type RecipeSummary } from "../api/recipes";
 import { useAddLog, useBulkAddLog, useUpdateLogQuantity, useDeleteLog, useSmartHistory } from "../api/logs";
 import { scaleNutrition, sumNutrition, subtractNutrition } from "../lib/nutrition";
 import { localTimeString, localIsoNoTz, formatLogTime, loggedAtTimeString, buildLoggedAt } from "../lib/date";
 import { usePlateState, type PlateItem } from "../lib/quickAddPlate";
-import { useEnergyUnit, kcalToUnit, unitToKcal, energyUnitLabel, formatEnergy } from "../lib/energyUnit";
+import { useEnergyUnit, kcalToUnit, unitToKcal, energyUnitLabel, formatEnergy, type EnergyUnit } from "../lib/energyUnit";
 import { useVisualViewportMetrics } from "../lib/useVisualViewportMetrics";
 import { useBackDismissDepth } from "../lib/useBackDismiss";
 import FoodIconAvatar from "./FoodIconAvatar";
@@ -44,7 +44,7 @@ import DiscardWarningSheet from "./DiscardWarningSheet";
 // so it doesn't weigh down the initial load.
 const BarcodeScanner = lazy(() => import("./BarcodeScanner"));
 
-type Step = "browse" | "quantity" | "create" | "scan" | "recipe" | "recipeChoice" | "recipeImportUrl" | "detail";
+type Step = "browse" | "create" | "scan" | "recipe" | "recipeChoice" | "recipeImportUrl" | "detail";
 // Where a hardware/gesture back press from each sub-step should land — reads
 // the same as each step's own visible back button, since requestClose()
 // below drives both from this one map. Most steps are one hop from "browse"
@@ -52,8 +52,18 @@ type Step = "browse" | "quantity" | "create" | "scan" | "recipe" | "recipeChoice
 // behind "recipeChoice" — collapsing it straight to "browse" (the old flat
 // Set version of this) would skip the chooser screen on a single back press,
 // same class of bug the Goal/Program wizards had before their own
-// useBackDismiss wiring. Steps absent here (browse/quantity) aren't
-// "sub-steps" — requestClose treats those as a real dismissal instead.
+// useBackDismiss wiring. Steps absent here (browse) aren't "sub-steps" —
+// requestClose treats those as a real dismissal instead. "detail" is
+// deliberately absent too, unlike every other step that fully replaces this
+// sheet's own header/body: FoodDetailScreen owns its own back-dismiss
+// trap(s) internally (one for the screen itself, nested with a second for
+// its own custom keypad — see FoodDetailScreen's own useBackDismiss calls),
+// so this sheet must contribute zero extra depth for it or its trap ends up
+// on top of FoodDetailScreen's, swallowing the first press before either of
+// its traps ever sees it. This is the same reason editingEntry forces
+// subStepDepth to 0 below regardless of step — that path already relied on
+// FoodDetailScreen owning its own dismissal; this just makes every path
+// into "detail" consistent with it, not only that one.
 // How many back presses it takes to walk `step` back to "browse" — i.e. how
 // many history entries this sheet needs on top of the one for the sheet
 // itself. Follows the same chain requestClose does, so the two can't drift.
@@ -68,7 +78,6 @@ function subStepDepth(step: Step): number {
 }
 
 const SHEET_SUB_STEP_BACK: Partial<Record<Step, Step>> = {
-  detail: "browse",
   create: "browse",
   scan: "browse",
   recipe: "browse",
@@ -210,7 +219,12 @@ export default function AddFoodSheet({
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [selectedFood, setSelectedFood] = useState<Food | null>(null);
-  const [grams, setGrams] = useState(100);
+  // True only for the initialFood open path (QuickActionFlow's recipe
+  // picker) — Food Detail's "Add" commits immediately there instead of
+  // staging, same as this screen's "Log Foods" already does, since a food
+  // staged-but-not-logged is silently dropped on close (see quickAddPlate.tsx)
+  // and this entry point's old single-button screen never had that footgun.
+  const [quickLogInitialFood, setQuickLogInitialFood] = useState(false);
   const [scannedBarcode, setScannedBarcode] = useState<string | undefined>(undefined);
   // Set only by Food Detail's "To custom" button — seeds the "create" step's
   // form with an existing food's nutrition data so editing-then-saving
@@ -227,6 +241,19 @@ export default function AddFoodSheet({
   const [recipeImportUrlInput, setRecipeImportUrlInput] = useState("");
   const [recipeImportError, setRecipeImportError] = useState<string | null>(null);
   const [recipeImportInitial, setRecipeImportInitial] = useState<RecipeFormInitial | null>(null);
+  // Set only by Food Detail's recipe "Edit" action — reuses the same
+  // "recipe" step/RecipeForm/recipeImportInitial prefill machinery as
+  // create-from-scratch and URL import, but with a real recipe id behind it
+  // so the step's onCreated PATCHes in place instead of POSTing a new
+  // recipe. Must be cleared on every other path into the "recipe" step
+  // (From scratch, URL import, every open) or a stale id would silently
+  // turn the next unrelated recipe creation into an update of this one.
+  const [editingRecipeId, setEditingRecipeId] = useState<string | null>(null);
+  // Food Detail's recipe Edit/Explode/Duplicate actions all need the full
+  // ingredient breakdown, which FoodDetailScreen never has (it only knows
+  // the materialized `foods` row) — this drives a one-shot useRecipeDetail
+  // fetch by id, consumed by the effect below once it resolves.
+  const [pendingRecipeAction, setPendingRecipeAction] = useState<{ recipeId: string; action: "edit" | "explode" | "duplicate" } | null>(null);
   // Which snap point the Search sheet (Layer 2) is at — expanded by default
   // whenever the modal opens (see the reset effect below), toggled by the
   // header's chevron, a drag on the sheet's own grabber, or tapping a tab
@@ -380,16 +407,20 @@ export default function AddFoodSheet({
       // this drives instead of Log Foods/Add.
       setSelectedFood(editingEntry.food);
       setStep("detail");
+      setQuickLogInitialFood(false);
     } else if (initialFood) {
+      // Same "detail" step editingEntry uses above, not a dedicated
+      // single-item screen — see openFoodDetail's identical wiring for the
+      // Library/Search tap path this now matches.
       setSelectedFood(initialFood);
-      setGrams(initialFood.servingSizeGrams ?? 100);
-      setStep("quantity");
+      setStep("detail");
+      setQuickLogInitialFood(true);
     } else {
       setSelectedFood(null);
-      setGrams(100);
       setStep(initialStep === "scan" ? "scan" : initialStep === "create" ? "create" : initialStep === "recipe" ? "recipeChoice" : "browse");
       setActiveTab(initialStep === "describe" ? "describe" : "search");
       setPendingSearchFocus(initialStep === "search");
+      setQuickLogInitialFood(false);
     }
     setQuery("");
     setDebouncedQuery("");
@@ -398,6 +429,8 @@ export default function AddFoodSheet({
     setRecipeImportUrlInput("");
     setRecipeImportError(null);
     setRecipeImportInitial(null);
+    setEditingRecipeId(null);
+    setPendingRecipeAction(null);
     setSheetExpanded(true);
     setLoggedAtOverride(forcedLoggedAt ?? localIsoNoTz());
     setShowTimePicker(false);
@@ -450,10 +483,16 @@ export default function AddFoodSheet({
   const createFood = useCreateFood();
   const deleteFood = useDeleteFood();
   const createRecipe = useCreateRecipe();
+  // Empty-string fallback when nothing's being edited — safe since a
+  // mutation hook doesn't do anything until .mutate() is actually called,
+  // and editingRecipeId is only ever set right before that happens.
+  const updateRecipe = useUpdateRecipe(editingRecipeId ?? "");
+  const deleteRecipe = useDeleteRecipe();
   const importRecipeUrl = useImportRecipeUrl();
   const barcodeLookup = useBarcodeLookup();
   const favorites = useFavorites();
   const recipes = useRecipes();
+  const pendingRecipeDetail = useRecipeDetail(pendingRecipeAction?.recipeId ?? null);
   const customFoods = useCustomFoods();
   const addFavorite = useAddFavorite();
   const removeFavorite = useRemoveFavorite();
@@ -467,14 +506,92 @@ export default function AddFoodSheet({
   // hijacked mid-gesture into a rubber-band pull on `document.body` (which,
   // being `position: fixed`, doesn't even visually move), silently eating
   // the touch and making the reverse-scroll direction feel dead.
+  // `overflow: hidden` alone doesn't reliably block touch-driven scroll of
+  // the document on mobile Chrome/Safari (it stops wheel/keyboard scroll,
+  // but a finger drag can still walk the document a few px per event even
+  // with the ancestor `overflow: hidden`) — pinning body to the current
+  // scroll offset via `position: fixed` is what actually prevents it, since
+  // there's then no scrollable box left for the touch to move at all. Losing
+  // this lock is what let the real background document scroll behind this
+  // full-screen modal, which (via useVisualViewportMetrics reacting to the
+  // resulting browser-chrome show/hide) made this modal's own
+  // viewport-tracked top/height jitter in step with it.
   useEffect(() => {
     if (!open) return;
-    const previous = document.body.style.overflow;
+    const scrollY = window.scrollY;
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    const prevBodyPosition = document.body.style.position;
+    const prevBodyTop = document.body.style.top;
+    const prevBodyWidth = document.body.style.width;
     document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.position = "fixed";
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.width = "100%";
     return () => {
-      document.body.style.overflow = previous;
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overflow = prevHtmlOverflow;
+      document.body.style.position = prevBodyPosition;
+      document.body.style.top = prevBodyTop;
+      document.body.style.width = prevBodyWidth;
+      window.scrollTo(0, scrollY);
     };
   }, [open]);
+
+  // Fires once the id set by requestRecipeAction above actually resolves to
+  // a full ingredient breakdown (FoodDetailScreen only ever has the
+  // materialized `foods` row, never the recipe's own ingredients/servings).
+  // Must stay above the `if (!open) return null` below — it used to sit
+  // after it, which is a real Rules-of-Hooks violation (not just a lint
+  // nit): this whole component returns null whenever `open` is false, so
+  // any hook declared after that line is skipped entirely on a closed
+  // render and only registered once `open` flips true, changing this
+  // instance's hook count between renders. React's real (unminified)
+  // error for that is "Rendered more hooks than during the previous
+  // render" — in production this throws Minified React error #310, and
+  // since this app has no error boundary anywhere, that uncaught throw
+  // unmounts the whole tree: a blank screen with no way back except
+  // reloading. Concretely reproduced via RecipeForm's own nested
+  // AddFoodSheet (its "Add ingredient" button) instance, whose `open`
+  // prop is a plain toggled boolean — exactly the false→true transition
+  // that hits this.
+  useEffect(() => {
+    if (!pendingRecipeAction || !pendingRecipeDetail.data) return;
+    const detail = pendingRecipeDetail.data;
+    const { action, recipeId } = pendingRecipeAction;
+    if (action === "explode") {
+      // "Single serving size" per the recipe's own servings count — not
+      // whatever quantity happens to be dialed into the detail screen's
+      // input, which Explode ignores entirely.
+      const perServing = 1 / Math.max(1, detail.servings);
+      for (const ing of detail.ingredients) {
+        addToPlate(ing.food, ing.quantityGrams * perServing);
+      }
+      changeStep("browse");
+      setSheetExpanded(false);
+    } else {
+      // Edit and Duplicate both land on the same "recipe" step RecipeForm
+      // already handles for create-from-scratch/URL-import, prefilled from
+      // this recipe's real data — editingRecipeId is what tells that step's
+      // onCreated to PATCH in place (Edit) instead of POSTing a new recipe
+      // (Duplicate leaves it null, same as every other create path).
+      setEditingRecipeId(action === "edit" ? recipeId : null);
+      setRecipeImportInitial({
+        name: detail.name,
+        icon: detail.food.icon,
+        servings: detail.servings,
+        totalWeightGrams: detail.totalWeightGrams,
+        ingredients: detail.ingredients.map((i) => ({ food: i.food, quantityGrams: i.quantityGrams })),
+      });
+      changeStep("recipe");
+    }
+    setPendingRecipeAction(null);
+    // pendingRecipeDetail.data deliberately the only dep that matters here —
+    // this should fire exactly once per requestRecipeAction call, right when
+    // its fetch resolves, not on every unrelated re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingRecipeDetail.data]);
 
   if (!open) return null;
 
@@ -535,8 +652,8 @@ export default function AddFoodSheet({
   // also dismisses the fullscreen scanner, since that's driven by `step`).
   // Editing an existing log entry or logging a preselected recipe
   // (initialFood, from QuickActionFlow's recipe picker) never goes through
-  // here — both start the sheet directly on the old single-item
-  // QuantityStep instead, since neither fits the multi-item staging model.
+  // here — both start the sheet directly on the "detail" step instead,
+  // since neither fits the multi-item staging model.
   function pickFood(food: Food) {
     // A search result from OpenFoodFacts (not yet a real row — see
     // GET /api/foods on the backend) has a synthetic `off:<barcode>` id.
@@ -563,6 +680,7 @@ export default function AddFoodSheet({
       return;
     }
     setSelectedFood(food);
+    setQuickLogInitialFood(false);
     changeStep("detail");
   }
 
@@ -575,13 +693,17 @@ export default function AddFoodSheet({
     changeStep("create");
   }
 
-  // Only reachable via initialFood now (a preselected recipe/food logged
-  // through the old single-item QuantityStep) — editing an existing entry
-  // goes through FoodDetailScreen's `editing.onSave` below instead.
-  function confirmQuantity() {
-    if (!selectedFood) return;
-    addLog.mutate({ food: selectedFood, quantityGrams: grams, loggedAt: loggedAtOverride });
-    onClose();
+  // Food Detail's Edit/Explode/Duplicate actions, shown only for a
+  // food.source === "recipe" — resolved against the already-fetched
+  // recipes summary list (recipe id, distinct from this food's own id, see
+  // schema.ts's recipes.foodId) rather than a second lookup endpoint.
+  function recipeIdForFood(foodId: string): string | undefined {
+    return recipes.data?.find((r) => r.food.id === foodId)?.id;
+  }
+
+  function requestRecipeAction(food: Food, action: "edit" | "explode" | "duplicate") {
+    const recipeId = recipeIdForFood(food.id);
+    if (recipeId) setPendingRecipeAction({ recipeId, action });
   }
 
   function saveEditedQuantity(quantityGrams: number) {
@@ -616,6 +738,7 @@ export default function AddFoodSheet({
     setRecipeImportError(null);
     importRecipeUrl.mutate(url, {
       onSuccess: (result) => {
+        setEditingRecipeId(null);
         setRecipeImportInitial({
           name: result.name,
           servings: result.servings,
@@ -809,7 +932,7 @@ export default function AddFoodSheet({
                 className="absolute inset-0 overflow-y-auto"
                 style={{ paddingBottom: SHEET_COLLAPSED_PEEK_PX }}
               >
-                {stagedPlate.length > 0 && !onPickItems ? (
+                {!onPickItems ? (
                   <StagedPlateSection
                     stagedPlate={stagedPlate}
                     plateTotals={plateTotals}
@@ -889,8 +1012,34 @@ export default function AddFoodSheet({
 
                     {/* pb-4, not pb-2 — there's no longer an in-sheet search
                         footer sitting right below this to lean on for
-                        breathing room; the last row needs its own. */}
-                    <div className="flex-1 overflow-y-auto pb-4">
+                        breathing room; the last row needs its own.
+                        onTouchStart blurs the search input (or Quick
+                        Add/Describe's own field) the moment a touch lands
+                        here — traced 2026-08-03: with the keyboard open and
+                        this list short enough to have nothing to natively
+                        scroll (e.g. an empty query with only a couple of
+                        Recent items), Android Chrome was interpreting the
+                        drag as a visual-viewport *pan* instead of a content
+                        scroll — `visualViewport.offsetTop` climbing every
+                        touchmove even though `window.scrollY` and this
+                        modal's own body-scroll lock never moved. This
+                        modal's outer wrapper deliberately tracks that same
+                        offsetTop (needed for real iOS keyboard transitions),
+                        so it was faithfully following the pan and jittering
+                        up and down in lockstep. Dismissing the keyboard
+                        before the drag can be reinterpreted that way is what
+                        actually stops it — same "scroll list closes
+                        keyboard" behavior most apps already have, not just a
+                        workaround. */}
+                    <div
+                      className="flex-1 overflow-y-auto pb-4"
+                      onTouchStart={() => {
+                        const active = document.activeElement;
+                        if (active instanceof HTMLElement && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) {
+                          active.blur();
+                        }
+                      }}
+                    >
                       {activeTab === "search" && (
                         <div>
                           {!!favorites.data?.length && (
@@ -989,7 +1138,7 @@ export default function AddFoodSheet({
                   against SHEET_COLLAPSED_PEEK_PX directly (not a measured
                   ref) since the collapsed sheet's own height is that same
                   constant, not something that needs runtime measurement. */}
-              {!sheetExpanded && !editingPlateKey && (
+              {!sheetExpanded && !editingPlateKey && stagedPlate.length > 0 && (
                 <button
                   onClick={confirmPlate}
                   disabled={commitDisabled}
@@ -1056,10 +1205,6 @@ export default function AddFoodSheet({
           </>
         )}
 
-        {step === "quantity" && selectedFood && (
-          <QuantityStep food={selectedFood} grams={grams} setGrams={setGrams} onBack={() => changeStep("browse")} onConfirm={confirmQuantity} />
-        )}
-
         {step === "detail" && selectedFood && (
           <FoodDetailScreen
             food={selectedFood}
@@ -1071,6 +1216,16 @@ export default function AddFoodSheet({
             backLabel={editingEntry ? "Close" : "Back to search results"}
             onBack={() => (editingEntry ? onClose() : changeStep("browse"))}
             onAdd={(food, quantityGrams) => {
+              // Quick-log mode (QuickActionFlow's recipe picker): "Add"
+              // commits immediately and closes, same as "Log Foods" — this
+              // entry point's old single-button screen always logged
+              // immediately, and staging here instead would risk silently
+              // losing the pick if the sheet gets closed before a second,
+              // separate "Log Foods" tap (see quickAddPlate.tsx).
+              if (quickLogInitialFood) {
+                confirmPlateWithExtra(food, quantityGrams);
+                return;
+              }
               // Recipe-picker mode: Food Detail's "Add" commits straight to
               // the recipe rather than onto this sheet's own local staging
               // plate — unlike the row's quick-"+" (still staged, reviewable
@@ -1092,10 +1247,27 @@ export default function AddFoodSheet({
             isFavorite={favoriteFoodIds.has(selectedFood.id)}
             onToggleFavorite={toggleFavorite}
             editing={editingEntry ? { onSave: saveEditedQuantity, onDelete: () => setShowDeleteConfirm(true) } : undefined}
+            // Not shown while editing an already-logged entry: Edit/Duplicate
+            // land on the "recipe" step and Explode lands on "browse", and
+            // editingEntry mode has no path back to either — it opens
+            // straight into "detail" with no browse state behind it (see
+            // onBack just above) and its own Delete/Save footer already
+            // covers the "change what's logged" case some other way.
+            recipeActions={
+              !editingEntry && selectedFood.source === "recipe" && recipeIdForFood(selectedFood.id)
+                ? {
+                    onEdit: () => requestRecipeAction(selectedFood, "edit"),
+                    onExplode: () => requestRecipeAction(selectedFood, "explode"),
+                    onDuplicate: () => requestRecipeAction(selectedFood, "duplicate"),
+                  }
+                : undefined
+            }
             onDeleteFood={
               selectedFood.source === "custom" || selectedFood.source === "ai_estimate" || selectedFood.source === "afcd"
                 ? () => deleteFood.mutate(selectedFood.id, { onSuccess: () => changeStep("browse") })
-                : undefined
+                : selectedFood.source === "recipe" && recipeIdForFood(selectedFood.id)
+                  ? () => deleteRecipe.mutate(recipeIdForFood(selectedFood.id)!, { onSuccess: () => changeStep("browse") })
+                  : undefined
             }
             timeLabel={editingEntry ? undefined : formatLogTime(loggedAtOverride)}
             onTimeClick={editingEntry ? undefined : () => setShowTimePicker(true)}
@@ -1135,7 +1307,10 @@ export default function AddFoodSheet({
             </div>
             <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
               <button
-                onClick={() => changeStep("recipe")}
+                onClick={() => {
+                  setEditingRecipeId(null);
+                  changeStep("recipe");
+                }}
                 className="w-full flex items-center gap-3 rounded-2xl bg-surface p-4 text-left active:bg-surface-raised"
               >
                 <span className="h-11 w-11 rounded-full bg-dashboardChip flex items-center justify-center shrink-0">
@@ -1224,14 +1399,35 @@ export default function AddFoodSheet({
           <div className="flex-1 flex flex-col min-h-0 step-enter">
             <RecipeForm
               initialName={query.trim()}
-              // Set only when this step was reached via a successful URL
-              // import (recipeChoice's "From scratch" option leaves this
-              // null) — same "prefilled but not yet persisted" contract as
-              // CreateRecipeFromGroupSheet's own `initial` usage, not "this
-              // is an existing saved recipe."
+              // Set for a successful URL import, Food Detail's recipe Edit,
+              // or its Duplicate (recipeChoice's "From scratch" option
+              // leaves this null) — same "prefilled but not yet persisted"
+              // contract as CreateRecipeFromGroupSheet's own `initial` usage.
               initial={recipeImportInitial ?? undefined}
-              onCancel={() => changeStep("browse")}
+              // Only Edit is a real existing recipe — URL import/Duplicate
+              // are prefilled but still new, same as CreateRecipeFromGroupSheet.
+              editingExisting={!!editingRecipeId}
+              // Cancelling an in-place Edit returns to the recipe's own
+              // detail view (still the current selectedFood throughout) —
+              // every other path here has no such screen to go back to.
+              onCancel={() => changeStep(editingRecipeId ? "detail" : "browse")}
               onCreated={(input) => {
+                if (editingRecipeId) {
+                  updateRecipe.mutate(
+                    {
+                      name: input.name,
+                      icon: input.icon,
+                      servings: input.servings,
+                      totalWeightGrams: input.totalWeightGrams,
+                      ingredients: input.ingredients.map((i) => ({
+                        foodId: i.food.id,
+                        quantityGrams: i.quantityGrams,
+                      })),
+                    },
+                    { onSuccess: onClose }
+                  );
+                  return;
+                }
                 createRecipe.mutate(
                   {
                     name: input.name,
@@ -1643,9 +1839,9 @@ function ActionBar({
 }
 
 // Quick-pick serving chips shown in ActionBar's own pinned slot while a
-// staged plate item's quantity is being edited — same amounts as
-// QuantityStep's own chips (1 serving, 50/100/150g), surfaced here too since
-// typing an exact gram figure by hand isn't always the fastest correction.
+// staged plate item's quantity is being edited (1 serving, 50/100/150g),
+// surfaced here too since typing an exact gram figure by hand isn't always
+// the fastest correction.
 // Reusing ActionBar's slot (rather than inventing a second pinned element)
 // is what puts this right above the on-screen keyboard for free — that
 // position already tracks real visual-viewport metrics for ActionBar's own
@@ -1713,55 +1909,61 @@ function StagedPlateSection({
   return (
     <div>
       <h2 className="px-4 pt-4 pb-2 text-base font-bold text-white">Your Plate</h2>
-      {stagedPlate.map((item) => {
-        const n = scaleNutrition(item.food, item.quantityGrams);
-        const isEditingQty = editingPlateKey === item.key;
-        return (
-          <div
-            key={item.key}
-            className="w-full flex items-center gap-3 px-4 py-2.5 border-b border-dashboardDivider/60"
-          >
-            <FoodIconAvatar name={item.food.name} icon={item.food.icon} />
-            <span className="flex-1 min-w-0">
-              <span className="block text-sm text-white truncate">{item.food.name}</span>
-              <span className="block text-[11px] text-muted truncate mt-1 tabular">
-                {fmt(n.protein)}P {fmt(n.fat)}F {fmt(n.carbs)}C · {formatEnergy(n.calories, energyUnit)}
-              </span>
-            </span>
-            {isEditingQty ? (
-              <input
-                type="search"
-                inputMode="decimal"
-                autoComplete="off"
-                autoFocus
-                defaultValue={item.quantityGrams}
-                onBlur={(e) => {
-                  updatePlateItemQuantity(item.key, Math.max(0, Number(e.target.value) || 0));
-                  setEditingPlateKey(null);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") e.currentTarget.blur();
-                }}
-                className="w-16 shrink-0 tabular text-sm text-white bg-dashboardChip rounded-full px-3 py-1.5 text-center focus:outline-none"
-              />
-            ) : (
-              <button
-                onClick={() => setEditingPlateKey(item.key)}
-                className="shrink-0 tabular text-xs text-white rounded-full bg-dashboardChip px-3 py-1.5"
-              >
-                {fmt(item.quantityGrams)} g
-              </button>
-            )}
-            <button
-              onClick={() => removeFromPlate(item.key)}
-              aria-label={`Remove ${item.food.name}`}
-              className="text-muted text-lg leading-none px-1 shrink-0 active:text-white"
+      {stagedPlate.length === 0 ? (
+        <p className="px-4 py-3 text-sm text-muted">
+          Your plate is empty. Search for foods to add them.
+        </p>
+      ) : (
+        stagedPlate.map((item) => {
+          const n = scaleNutrition(item.food, item.quantityGrams);
+          const isEditingQty = editingPlateKey === item.key;
+          return (
+            <div
+              key={item.key}
+              className="w-full flex items-center gap-3 px-4 py-2.5 border-b border-dashboardDivider/60"
             >
-              ×
-            </button>
-          </div>
-        );
-      })}
+              <FoodIconAvatar name={item.food.name} icon={item.food.icon} />
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm text-white truncate">{item.food.name}</span>
+                <span className="block text-[11px] text-muted truncate mt-1 tabular">
+                  {fmt(n.protein)}P {fmt(n.fat)}F {fmt(n.carbs)}C · {formatEnergy(n.calories, energyUnit)}
+                </span>
+              </span>
+              {isEditingQty ? (
+                <input
+                  type="search"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  autoFocus
+                  defaultValue={item.quantityGrams}
+                  onBlur={(e) => {
+                    updatePlateItemQuantity(item.key, Math.max(0, Number(e.target.value) || 0));
+                    setEditingPlateKey(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") e.currentTarget.blur();
+                  }}
+                  className="w-16 shrink-0 tabular text-sm text-white bg-dashboardChip rounded-full px-3 py-1.5 text-center focus:outline-none"
+                />
+              ) : (
+                <button
+                  onClick={() => setEditingPlateKey(item.key)}
+                  className="shrink-0 tabular text-xs text-white rounded-full bg-dashboardChip px-3 py-1.5"
+                >
+                  {fmt(item.quantityGrams)} g
+                </button>
+              )}
+              <button
+                onClick={() => removeFromPlate(item.key)}
+                aria-label={`Remove ${item.food.name}`}
+                className="text-muted text-lg leading-none px-1 shrink-0 active:text-white"
+              >
+                ×
+              </button>
+            </div>
+          );
+        })
+      )}
 
       <div className="px-4 pt-4 pb-2 flex items-center justify-between">
         <p className="text-[11px] tracking-widest uppercase text-muted">Nutrition</p>
@@ -1871,7 +2073,9 @@ function QuickAddTab({
   const [carbs, setCarbs] = useState("");
   const [fat, setFat] = useState("");
   const [calories, setCalories] = useState("");
-  const { unit: energyUnit, setUnit: setEnergyUnit } = useEnergyUnit();
+  // Local, not the global preference — see QuickAddSheet's identical comment.
+  const { unit: globalEnergyUnit } = useEnergyUnit();
+  const [energyUnit, setEnergyUnit] = useState<EnergyUnit>(globalEnergyUnit);
 
   useEffect(() => {
     if (!protein.trim() && !carbs.trim() && !fat.trim()) return;
@@ -2264,119 +2468,5 @@ function QuickAddField({
         {suffix && <span className="shrink-0 flex items-center leading-none text-xs text-muted">{suffix}</span>}
       </div>
     </label>
-  );
-}
-
-// Single-item precise quantity entry — only reachable now via a preselected
-// recipe/food (QuickActionFlow's recipe picker's initialFood), which never
-// goes through the plate. Editing an already-logged entry used to land here
-// too, but now opens FoodDetailScreen instead (see AddFoodSheet's reset
-// effect and its "detail" step render) for the full nutrition breakdown and
-// a Delete/Save footer. Everything else (Search/Scan/Quick Add/Custom taps)
-// stages onto stagedPlate instead and adjusts quantity later via the Plate
-// Review's quantity pill.
-function QuantityStep({
-  food,
-  grams,
-  setGrams,
-  onBack,
-  onConfirm,
-}: {
-  food: Food;
-  grams: number;
-  setGrams: (g: number) => void;
-  onBack: () => void;
-  onConfirm: () => void;
-}) {
-  const nutrition = scaleNutrition(food, grams);
-  const { unit: energyUnit } = useEnergyUnit();
-  const chips = [
-    food.servingSizeGrams && { label: `1 serving (${food.servingSizeGrams}g)`, value: food.servingSizeGrams },
-    { label: "50 g", value: 50 },
-    { label: "100 g", value: 100 },
-    { label: "150 g", value: 150 },
-  ].filter(Boolean) as { label: string; value: number }[];
-
-  return (
-    <>
-      <div className="px-4 pt-4 pb-2 flex items-center gap-3 shrink-0">
-        <button onClick={onBack} className="text-muted text-lg leading-none px-1">
-          ‹
-        </button>
-        <span className="text-sm font-medium truncate">{food.name}</span>
-      </div>
-
-      <div className="flex-1 overflow-y-auto px-4 pb-2">
-        <div className="flex items-center justify-center gap-4 py-4">
-          <button
-            onClick={() => setGrams(Math.max(1, grams - 10))}
-            className="h-10 w-10 rounded-full border border-line text-lg active:bg-surface-raised"
-          >
-            −
-          </button>
-          <div className="flex items-baseline gap-1">
-            <input
-              type="search"
-              inputMode="decimal"
-              autoComplete="off"
-              value={grams}
-              onChange={(e) => setGrams(Math.max(0, Number(e.target.value) || 0))}
-              className="tabular w-24 bg-transparent text-3xl text-center border-b-2 border-transparent focus:outline-none focus:border-accent"
-            />
-            <span className="text-sm text-muted">g</span>
-          </div>
-          <button
-            onClick={() => setGrams(grams + 10)}
-            className="h-10 w-10 rounded-full border border-line text-lg active:bg-surface-raised"
-          >
-            +
-          </button>
-        </div>
-
-        <div className="flex flex-wrap gap-2 justify-center pb-4">
-          {chips.map((chip) => (
-            <button
-              key={chip.label}
-              onClick={() => setGrams(chip.value)}
-              className={`text-xs px-3 py-1.5 rounded-full border ${
-                grams === chip.value ? "border-accent text-accent" : "border-line text-muted"
-              }`}
-            >
-              {chip.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="border border-line rounded-md px-4 py-3 grid grid-cols-4 gap-2 text-center">
-          <div>
-            <div className="tabular text-sm">{Math.round(kcalToUnit(nutrition.calories, energyUnit))}</div>
-            <div className="text-[11px] text-muted">{energyUnitLabel(energyUnit)}</div>
-          </div>
-          <div>
-            <div className="tabular text-sm text-protein">{nutrition.protein.toFixed(1)}</div>
-            <div className="text-[11px] text-muted">protein</div>
-          </div>
-          <div>
-            <div className="tabular text-sm text-carbs">{nutrition.carbs.toFixed(1)}</div>
-            <div className="text-[11px] text-muted">carbs</div>
-          </div>
-          <div>
-            <div className="tabular text-sm text-fat">{nutrition.fat.toFixed(1)}</div>
-            <div className="text-[11px] text-muted">fat</div>
-          </div>
-        </div>
-      </div>
-
-      <div className="p-4 shrink-0 flex gap-2">
-        <button
-          onClick={onConfirm}
-          disabled={grams <= 0}
-          className="flex-1 py-3 rounded-md bg-accent text-base disabled:opacity-40 font-medium"
-          style={{ color: "#0B1210" }}
-        >
-          Add
-        </button>
-      </div>
-    </>
   );
 }

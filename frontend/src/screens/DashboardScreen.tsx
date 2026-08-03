@@ -8,7 +8,6 @@ import { localDateString, daysBetween } from "../lib/date";
 import { targetsForDate } from "../lib/programTargets";
 import { forceRefreshApp } from "../lib/forceRefreshApp";
 import { saveDashboardScroll } from "../lib/dashboardScroll";
-import ShortcutsBar from "../components/ShortcutsBar";
 import DashboardTotalsArcCard from "../components/DashboardTotalsArcCard";
 import CheckInResultSheet from "../components/CheckInResultSheet";
 import WizardIllustration from "../components/WizardIllustration";
@@ -214,8 +213,6 @@ export default function DashboardScreen() {
           Customise dashboard
         </button>
       </main>
-
-      <ShortcutsBar />
 
       {checkInResult?.checkin && (
         <CheckInResultSheet checkin={checkInResult.checkin} usedAdaptiveTdee={checkInResult.usedAdaptiveTdee} onClose={() => setCheckInResult(null)} />

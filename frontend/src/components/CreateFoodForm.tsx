@@ -1,7 +1,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import { Camera, ChevronLeft, Loader2, Pencil } from "lucide-react";
 import type { CreateFoodInput, Food, LabelScanResult } from "../api/types";
-import { useEnergyUnit, kcalToUnit, unitToKcal, energyUnitLabel } from "../lib/energyUnit";
+import { useEnergyUnit, kcalToUnit, unitToKcal, energyUnitLabel, type EnergyUnit } from "../lib/energyUnit";
 import { getFoodIcon } from "../lib/foodEmoji";
 import IconPickerModal from "./IconPickerModal";
 import PhotoSourceSheet from "./PhotoSourceSheet";
@@ -155,7 +155,11 @@ export default function CreateFoodForm({
   onCancel: () => void;
   onCreated: (food: CreateFoodInput) => void;
 }) {
-  const { unit: energyUnit, setUnit: setEnergyUnit } = useEnergyUnit();
+  // Local, not the global preference: the in-form toggle below just changes
+  // which unit the Calories field is typed/read in, so switching it here
+  // doesn't silently flip the whole app's display unit off one tap.
+  const { unit: globalEnergyUnit } = useEnergyUnit();
+  const [energyUnit, setEnergyUnit] = useState<EnergyUnit>(globalEnergyUnit);
   const parsedPrefillMicros = prefillFood ? parseMicrosJson(prefillFood.microsJson) : {};
   const [name, setName] = useState(prefillFood?.name ?? initialName);
   const [icon, setIcon] = useState<string | null>(prefillFood?.icon ?? null);
@@ -265,7 +269,7 @@ export default function CreateFoodForm({
   const autoIcon = getFoodIcon(name.trim() || "?");
 
   // Converts whatever's currently typed in the Calories field in place, then
-  // flips the shared global preference — so switching units here doesn't
+  // flips this field's local unit — so switching units here doesn't
   // silently reinterpret an already-entered number in the new unit.
   function toggleEnergyUnit() {
     const next = energyUnit === "kcal" ? "kj" : "kcal";

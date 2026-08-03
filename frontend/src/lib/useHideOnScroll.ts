@@ -5,6 +5,15 @@ import { useEffect, useRef, useState } from "react";
 // built from scratch, rAF-throttled with a small dead zone so ordinary
 // touch-scroll jitter doesn't flicker it.
 export default function useHideOnScroll(threshold = 8) {
+  // Always starts visible rather than reading window.scrollY at mount:
+  // ShortcutsBar (this hook's only caller) used to be mounted fresh by every
+  // screen that rendered it, and its initial render happened before
+  // AppRoutes' own scroll-to-top layout effect ran — reading scrollY here
+  // could pick up the *previous* screen's position and mount already
+  // hidden, only to pop back visible a frame later. ShortcutsBar is now
+  // rendered once by App.tsx (see its own comment) so this can no longer
+  // happen via a remount, but starting visible is still the simplest
+  // correct default regardless.
   const [visible, setVisible] = useState(true);
   const lastY = useRef(typeof window !== "undefined" ? window.scrollY : 0);
   const frame = useRef<number | null>(null);

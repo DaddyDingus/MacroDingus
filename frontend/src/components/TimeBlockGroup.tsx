@@ -1,4 +1,4 @@
-import { Flame, Plus, ArrowRight } from "lucide-react";
+import { Flame, Plus, ArrowRight, Check } from "lucide-react";
 import type { LogEntry } from "../api/types";
 import { formatLogTime } from "../lib/date";
 import { sumGroupTotals } from "../lib/logGrouping";
@@ -19,9 +19,9 @@ function fmt(n: number): string {
 // time-string length ("7 AM" vs "12:45 PM").
 export default function TimeBlockGroup({
   entries,
-  selectedEntryId,
+  selectedEntryIds,
   groupSelected,
-  anyGroupSelected,
+  anySelected,
   onSelectEntry,
   onSelectGroup,
   onQuickAdd,
@@ -29,13 +29,12 @@ export default function TimeBlockGroup({
   onDelete,
 }: {
   entries: LogEntry[];
-  selectedEntryId: string | null;
+  selectedEntryIds: string[];
   groupSelected: boolean;
-  // True while some group (this one or another) is selected — every group's
+  // True while some group or entry is selected — every group's
   // left-of-timestamp button switches from "+" to a move/merge arrow while
-  // this is true, per TodayScreen's "select a group, then tap another
-  // group's arrow to merge them" flow.
-  anyGroupSelected: boolean;
+  // this is true.
+  anySelected: boolean;
   onSelectEntry: (entry: LogEntry) => void;
   onSelectGroup: (entries: LogEntry[]) => void;
   // "+" tap (only shown when no group is selected) — opens the add-food
@@ -43,12 +42,16 @@ export default function TimeBlockGroup({
   // to this meal with zero extra friction.
   onQuickAdd: (entries: LogEntry[]) => void;
   // Arrow tap on a *different* group while one is selected — moves the
-  // selected group's entries to this group's time, merging them together.
+  // selected items (group or single entry) to this group's time, merging them.
   onMergeInto: (entries: LogEntry[]) => void;
   onDelete: (entry: LogEntry) => void;
 }) {
   const totals = sumGroupTotals(entries);
   const { unit: energyUnit } = useEnergyUnit();
+
+  // Disable the merge/move target button if this group is either the selected group
+  // or contains any of the selected entries (since moving them here is a no-op).
+  const isOrigin = groupSelected || entries.some((e) => selectedEntryIds.includes(e.id));
 
   return (
     // A soft low-opacity fill on this whole container (rather than a ring/
@@ -63,8 +66,8 @@ export default function TimeBlockGroup({
     // (see selected prop below) — only a genuinely single-selected entry
     // gets its own wash.
     <div
-      className={`rounded-2xl -mx-2 px-2 transition-[background-color,padding] duration-150 ${
-        groupSelected ? "bg-accent/[0.14] py-2" : ""
+      className={`rounded-2xl -mx-2 px-2 border transition-all duration-150 ${
+        groupSelected ? "bg-accent/[0.08] border-accent/15 py-2" : "border-transparent"
       }`}
     >
       <div className="flex items-center gap-2">
@@ -78,13 +81,15 @@ export default function TimeBlockGroup({
           <span className="shrink-0">{fmt(totals.carbs)}C</span>
         </div>
         <div className="flex-1" />
-        {anyGroupSelected ? (
+        {anySelected ? (
           <button
             type="button"
-            onClick={() => !groupSelected && onMergeInto(entries)}
-            disabled={groupSelected}
-            aria-label={groupSelected ? "This is the selected time group" : "Move selected foods here"}
-            className={`shrink-0 p-1.5 -m-0.5 rounded-full ${groupSelected ? "text-white/15" : "bg-white/5 text-muted active:text-white"}`}
+            onClick={() => !isOrigin && onMergeInto(entries)}
+            disabled={isOrigin}
+            aria-label={isOrigin ? "Origin group" : "Move selected foods here"}
+            className={`shrink-0 p-1.5 -m-0.5 rounded-full ${
+              isOrigin ? "text-white opacity-[0.15] pointer-events-none" : "bg-white/5 text-muted active:text-white"
+            }`}
           >
             <ArrowRight className="w-[18px] h-[18px]" strokeWidth={2.5} />
           </button>
@@ -102,32 +107,48 @@ export default function TimeBlockGroup({
           type="button"
           onClick={() => onSelectGroup(entries)}
           aria-label="Select this time group"
-          className="relative z-10 shrink-0 flex items-center gap-1.5 -m-1 p-1"
+          className="relative z-10 shrink-0 w-[54px] flex items-center justify-center -my-1 py-1"
         >
           <span
-            className={`text-[9px] whitespace-nowrap rounded-full px-2 py-1 ${
-              groupSelected ? "bg-accent/15 text-white" : "bg-white/5 text-muted"
+            className={`text-[9px] font-semibold whitespace-nowrap rounded-full px-2 py-1 transition-all ${
+              groupSelected ? "bg-accent text-white" : "bg-dashboardChip text-muted"
             }`}
           >
             {formatLogTime(entries[0].loggedAt)}
           </span>
-          <span
-            className={`h-2 w-2 rounded-full ring-4 ring-dashboardBg shrink-0 ${
-              groupSelected ? "bg-accent" : "bg-muted"
-            }`}
-          />
         </button>
       </div>
-      <div className="space-y-1 mt-1.5 pr-4">
-        {entries.map((entry) => (
-          <FoodItemCard
-            key={entry.id}
-            entry={entry}
-            selected={selectedEntryId === entry.id}
-            onSelect={() => onSelectEntry(entry)}
-            onDelete={() => onDelete(entry)}
-          />
-        ))}
+      <div className="space-y-1 mt-1.5 pr-14">
+        {entries.map((entry) => {
+          const isChecked = selectedEntryIds.includes(entry.id);
+          return (
+            <div key={entry.id} className="relative">
+              <FoodItemCard
+                entry={entry}
+                selected={isChecked}
+                onSelect={() => onSelectEntry(entry)}
+                onDelete={() => onDelete(entry)}
+              />
+              {anySelected && (
+                <button
+                  type="button"
+                  onClick={() => onSelectEntry(entry)}
+                  className="absolute top-1/2 -translate-y-1/2 flex items-center justify-center"
+                  style={{ right: "-29px", transform: "translate(50%, -50%)" }}
+                  aria-label={isChecked ? "Deselect this food" : "Select this food"}
+                >
+                  {isChecked ? (
+                    <div className="w-[18px] h-[18px] rounded-full bg-accent flex items-center justify-center text-white ring-2 ring-dashboardBg shadow-md">
+                      <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />
+                    </div>
+                  ) : (
+                    <div className="w-[18px] h-[18px] rounded-full border border-white/20 bg-dashboardBg ring-2 ring-dashboardBg hover:border-white/40 transition-colors" />
+                  )}
+                </button>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

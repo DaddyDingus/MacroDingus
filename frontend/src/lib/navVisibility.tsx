@@ -4,6 +4,9 @@ interface NavVisibilityContextValue {
   hidden: boolean;
   push: () => void;
   pop: () => void;
+  shortcutsHidden: boolean;
+  pushShortcuts: () => void;
+  popShortcuts: () => void;
 }
 
 const NavVisibilityContext = createContext<NavVisibilityContextValue | null>(null);
@@ -11,6 +14,8 @@ const NavVisibilityContext = createContext<NavVisibilityContextValue | null>(nul
 export function NavVisibilityProvider({ children }: { children: ReactNode }) {
   const countRef = useRef(0);
   const [hidden, setHidden] = useState(false);
+  const shortcutsCountRef = useRef(0);
+  const [shortcutsHidden, setShortcutsHidden] = useState(false);
 
   function push() {
     countRef.current++;
@@ -20,8 +25,20 @@ export function NavVisibilityProvider({ children }: { children: ReactNode }) {
     countRef.current = Math.max(0, countRef.current - 1);
     setHidden(countRef.current > 0);
   }
+  function pushShortcuts() {
+    shortcutsCountRef.current++;
+    setShortcutsHidden(true);
+  }
+  function popShortcuts() {
+    shortcutsCountRef.current = Math.max(0, shortcutsCountRef.current - 1);
+    setShortcutsHidden(shortcutsCountRef.current > 0);
+  }
 
-  return <NavVisibilityContext.Provider value={{ hidden, push, pop }}>{children}</NavVisibilityContext.Provider>;
+  return (
+    <NavVisibilityContext.Provider value={{ hidden, push, pop, shortcutsHidden, pushShortcuts, popShortcuts }}>
+      {children}
+    </NavVisibilityContext.Provider>
+  );
 }
 
 // Counter-based (not a plain boolean) so two overlays opting in at once —
@@ -41,6 +58,22 @@ export function useHideBottomNav(active: boolean) {
     if (!active || !ctx) return;
     ctx.push();
     return ctx.pop;
+  }, [active, ctx]);
+}
+
+// Same counter-based reasoning as useHideBottomNav, for the other piece of
+// fixed bottom chrome: TodayScreen's multi-select mode swaps ShortcutsBar
+// out for LogActionBar in the same slot, without hiding BottomNav itself.
+// Needed once ShortcutsBar was lifted to render once in App.tsx (see its own
+// comment) instead of being mounted separately by every screen that shows
+// it — a screen-local condition like `selection` can no longer just
+// conditionally render it away.
+export function useHideShortcutsBar(active: boolean) {
+  const ctx = useContext(NavVisibilityContext);
+  useEffect(() => {
+    if (!active || !ctx) return;
+    ctx.pushShortcuts();
+    return ctx.popShortcuts;
   }, [active, ctx]);
 }
 

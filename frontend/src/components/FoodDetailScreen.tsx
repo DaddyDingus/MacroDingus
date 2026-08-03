@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Plus, Heart } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Plus, Heart, ChevronLeft, ChevronDown, Pencil, PackageOpen, Copy, Trash2, Delete } from "lucide-react";
 import ConfirmDeleteSheet from "./ConfirmDeleteSheet";
 import type { Food, Nutrition } from "../api/types";
 import type { MacroTargets } from "./MacroSummaryBar";
@@ -176,8 +176,8 @@ const RING_CIRC = 2 * Math.PI * RING_R;
 // budget" glance rather than a second copy of the summary row's numbers.
 function Ring({ pctValue, colorClass, label }: { pctValue: number; colorClass: string; label: string }) {
   return (
-    <div className="flex flex-col items-center gap-1.5">
-      <div className="relative w-16 h-16">
+    <div className="flex flex-col items-center gap-1">
+      <div className="relative w-13 h-13">
         <svg viewBox="0 0 64 64" className="w-full h-full -rotate-90">
           <circle cx="32" cy="32" r={RING_R} strokeWidth={3} className="fill-none stroke-dashboardTrack" />
           <circle
@@ -193,11 +193,40 @@ function Ring({ pctValue, colorClass, label }: { pctValue: number; colorClass: s
           />
         </svg>
         <div className="absolute inset-0 flex items-center justify-center">
-          <span className="tabular text-xs font-semibold text-white">{fmt(pctValue)}%</span>
+          <span className="tabular text-[10px] font-semibold text-white">{fmt(pctValue)}%</span>
         </div>
       </div>
-      <span className="text-[10px] tracking-widest uppercase text-white/60">{label}</span>
+      <span className="text-[9px] tracking-widest uppercase text-white/60">{label}</span>
     </div>
+  );
+}
+
+// One icon-over-label button in the action row above — MacroFactor-style
+// (see this feature's own reference screenshot), swapped in for the old
+// two-pill row once a recipe needed up to six actions here, more than a
+// pill row could hold without wrapping badly.
+function ActionIconButton({
+  icon,
+  label,
+  onClick,
+  active = false,
+}: {
+  icon: ReactNode;
+  label: string;
+  onClick: () => void;
+  active?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={active}
+      className={`shrink-0 flex items-center gap-1.5 h-8 px-3.5 rounded-full text-[13px] font-medium whitespace-nowrap active:scale-[0.96] transition-all duration-75 select-none ${
+        active ? "bg-white text-black" : "bg-white/10 text-white/90 active:bg-white/20"
+      }`}
+    >
+      <span className={active ? "" : "opacity-80 scale-90"}>{icon}</span>
+      <span>{label}</span>
+    </button>
   );
 }
 
@@ -247,12 +276,17 @@ function BreakdownRow({
 }
 
 
+let lastVibrateTime = 0;
 // Short vibration on every key tap (including Log Foods/Add) — a no-op
-// wherever the Vibration API isn't supported (notably iOS Safari), so this
-// is a bonus on top of the visual feedback, never depended on.
+// wherever the Vibration API isn't supported (notably iOS Safari).
+// Includes an 80ms debounce to prevent double-vibration when triggered on both touchstart and click.
 function triggerHaptic(durationMs = 10) {
   if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
-    navigator.vibrate(durationMs);
+    const now = Date.now();
+    if (now - lastVibrateTime > 80) {
+      navigator.vibrate(durationMs);
+      lastVibrateTime = now;
+    }
   }
 }
 
@@ -287,12 +321,13 @@ function ActionButtons({
           "active and interactive" the same explicit way the right key
           already does with its own white/chip swap. */}
       <button
+        onTouchStart={() => triggerHaptic(12)}
         onClick={() => {
-          triggerHaptic(15);
+          triggerHaptic(12);
           onLeft();
         }}
         disabled={leftDisabled}
-        className={`rounded-lg text-sm font-semibold py-3.5 border ${
+        className={`rounded-full text-sm font-semibold h-11 flex items-center justify-center border active:scale-[0.98] transition-all duration-75 select-none ${
           leftDisabled
             ? "bg-dashboardChip text-muted border-transparent opacity-40"
             : "bg-white/10 text-white border-accent/40"
@@ -306,12 +341,15 @@ function ActionButtons({
           so the state change reads clearly rather than as a faded version
           of the same look. */}
       <button
+        onTouchStart={() => triggerHaptic(12)}
         onClick={() => {
-          triggerHaptic(15);
+          triggerHaptic(12);
           onRight();
         }}
         disabled={rightDisabled}
-        className={`rounded-lg text-sm font-bold py-3.5 ${rightDisabled ? "bg-dashboardChip text-muted" : "bg-white text-black"}`}
+        className={`rounded-full text-sm font-bold h-11 flex items-center justify-center active:scale-[0.98] transition-all duration-75 select-none ${
+          rightDisabled ? "bg-dashboardChip text-muted" : "bg-white text-black"
+        }`}
       >
         {rightLabel}
       </button>
@@ -335,6 +373,7 @@ export default function FoodDetailScreen({
   onToggleFavorite,
   editing,
   onDeleteFood,
+  recipeActions,
   timeLabel,
   onTimeClick,
   commitLabel = "Log Foods",
@@ -378,6 +417,15 @@ export default function FoodDetailScreen({
     onDelete: () => void;
   };
   onDeleteFood?: () => void;
+  // Set only for food.source === "recipe" — AddFoodSheet resolves this
+  // food's real recipe id (distinct from food.id, see schema.ts's
+  // recipes.foodId) and fetches its full ingredient breakdown behind each
+  // of these, since this screen only ever has the materialized `foods` row.
+  recipeActions?: {
+    onEdit: () => void;
+    onExplode: () => void;
+    onDuplicate: () => void;
+  };
   // Same "9:20 PM"-style label + tap handler BrowseHeader wires on the
   // browse step — passed through here too so the persistent status bar stays
   // interactive regardless of which of the two steps happens to be showing.
@@ -395,17 +443,86 @@ export default function FoodDetailScreen({
   // recipe has no daily target and no "today" to be remaining against.
   hideTargetsUi?: boolean;
 }) {
-  // Nested on top of AddFoodSheet's own outer back-dismiss trap — the real
-  // quantity input below pops the system keyboard, and this consumes
-  // gesture-back's first press to close that (same as the `‹` header
-  // button) before a second press reaches the outer trap.
+  // Outer trap for this whole screen — closes it (same as the `‹` header
+  // button) on whichever back press reaches this level. See the second
+  // useBackDismiss below, right after keypadOpen, for the nested trap that
+  // has to sit on top of this one.
   useBackDismiss(true, onBack);
 
   const hasServing = food.servingSizeGrams != null;
   const [unit, setUnit] = useState<Unit>("g");
   const [quantityInput, setQuantityInput] = useState(String(initialQuantityGrams ?? 100));
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [quantityFocused, setQuantityFocused] = useState(false);
+  // Quantity entry is a custom keypad, not a real <input> — a real one was
+  // tried here before and reverted specifically because a back press had
+  // nothing keyboard-shaped to close first, so it exited this whole screen
+  // in one press instead of dismissing the keypad. A genuine system
+  // keyboard gets "first back press closes the IME" for free from the OS,
+  // before any JS ever sees a popstate; a custom on-page keypad gets
+  // nothing for free, so this second, nested useBackDismiss trap (stacked
+  // on top of the one above — see lib/useBackDismiss.ts's own doc on nested
+  // traps) replicates it by hand: the first back press while the keypad is
+  // open is consumed here and just closes the keypad, and only a second
+  // press reaches the outer trap above. Starts open (mirrors the old real
+  // input's autoFocus) — arming a trap at mount rather than from the tap
+  // that opened this screen is the same pattern the outer trap above
+  // already relies on, and it's been fine there.
+  const [keypadOpen, setKeypadOpen] = useState(true);
+  useBackDismiss(keypadOpen, () => setKeypadOpen(false));
+
+  // Mirrors a real numeric input's own "tap in, existing value is fully
+  // selected, first keystroke replaces it" — lets a quantity prefilled from
+  // history/editing be overwritten by just typing, no manual backspacing
+  // first. Re-arms every time the keypad (re)opens, including the initial
+  // mount (keypadOpen starts true), not just on a user tap — there's no
+  // real "focus event" to hang this off of since this isn't a real input.
+  const [allSelected, setAllSelected] = useState(true);
+  useEffect(() => {
+    if (keypadOpen) setAllSelected(true);
+  }, [keypadOpen]);
+
+  // Keeps Protein Breakdown (and everything after it) below the fold on
+  // first load, confirmed as the actual priority over a perfectly
+  // consistent gap size: the docked footer can't move up to meet Impact on
+  // Targets on its own (see its own comment below), so guaranteeing nothing
+  // but the rings and a small gap show above it means filling however much
+  // of the pane is actually left over — which varies by food (a longer name
+  // wraps to two lines, leaving less room) and by device. spacerMinPx is
+  // the floor for a short food/tall screen; spacerMaxPx is only a sanity
+  // net, not a real design target — don't shrink it back down to "fix"
+  // visual inconsistency between foods, that inconsistency is the tradeoff
+  // that was explicitly chosen here. Same ResizeObserver-measured-height
+  // idiom as AddFoodSheet's actionBarHeight; recomputes on any resize of
+  // either the pane or the above-the-fold block, including the pane's own
+  // height changing when the docked footer's keypad collapses/expands.
+  // hideTargetsUi mode (recipe-ingredient quantity editing) skips the rings
+  // entirely, so there's nothing here for a big gap to visually "protect" —
+  // filling leftover pane space in that mode just left a large dead void
+  // under the To custom/Favourite row for no reason. Only the rings case
+  // gets the dynamic fill; hideTargetsUi always gets the small floor.
+  const paneRef = useRef<HTMLDivElement>(null);
+  const aboveFoldRef = useRef<HTMLDivElement>(null);
+  const spacerMinPx = 12;
+  const spacerMaxPx = 32;
+  const [spacerHeight, setSpacerHeight] = useState(spacerMinPx);
+  useLayoutEffect(() => {
+    if (hideTargetsUi) {
+      setSpacerHeight(spacerMinPx);
+      return;
+    }
+    const paneEl = paneRef.current;
+    const foldEl = aboveFoldRef.current;
+    if (!paneEl || !foldEl) return;
+    const update = () => {
+      const available = paneEl.clientHeight - foldEl.offsetHeight;
+      setSpacerHeight(Math.min(spacerMaxPx, Math.max(spacerMinPx, available)));
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(paneEl);
+    observer.observe(foldEl);
+    return () => observer.disconnect();
+  }, [hideTargetsUi]);
 
   // Prefills a *new* log's quantity from this food's own log history — only
   // when there's no already-known quantity to seed from (i.e. not editing;
@@ -428,6 +545,43 @@ export default function FoodDetailScreen({
   const gramsPerUnit = unit === "oz" ? GRAMS_PER_OZ : unit === "lb" ? GRAMS_PER_LB : unit === "serving" ? food.servingSizeGrams ?? 100 : 1;
   const quantity = Number(quantityInput) || 0;
   const quantityGrams = Math.max(0, quantity * gramsPerUnit);
+
+  // The custom keypad's own edit ops — plain string-append/trim on
+  // quantityInput, same as typing into a real numeric input would produce.
+  // A leading "0" is replaced rather than appended to (typing "5" after "0"
+  // gives "5", not "05"), matching a real number input's own behavior.
+  // allSelected short-circuits all three the same way a real input's
+  // selected-range does: the first digit/decimal replaces the whole value
+  // instead of appending, and backspace clears it outright instead of
+  // trimming one character — either way, selection is consumed after one
+  // keystroke, same as a real input never re-selects itself mid-edit.
+  function tapDigit(d: string) {
+    triggerHaptic(10);
+    if (allSelected) {
+      setQuantityInput(d);
+      setAllSelected(false);
+      return;
+    }
+    setQuantityInput((prev) => (prev === "0" ? d : prev + d));
+  }
+  function tapDecimal() {
+    triggerHaptic(10);
+    if (allSelected) {
+      setQuantityInput("0.");
+      setAllSelected(false);
+      return;
+    }
+    setQuantityInput((prev) => (prev === "" ? "0." : prev.includes(".") ? prev : prev + "."));
+  }
+  function tapBackspace() {
+    triggerHaptic(12);
+    if (allSelected) {
+      setQuantityInput("");
+      setAllSelected(false);
+      return;
+    }
+    setQuantityInput((prev) => prev.slice(0, -1));
+  }
 
   const n = scaleNutrition(food, quantityGrams);
   const { unit: energyUnit } = useEnergyUnit();
@@ -500,11 +654,11 @@ export default function FoodDetailScreen({
           bar/notch the same way BrowseHeader's does, since this sits at the
           very top of the same full-screen modal once "detail" is the active
           step. */}
-      <div className="shrink-0" style={{ paddingTop: "calc(env(safe-area-inset-top) + 16px)" }}>
-        {/* pb-3 (12px) — matches BrowseHeader's flex-col gap-3 between its
+      <div className="shrink-0" style={{ paddingTop: "calc(env(safe-area-inset-top) + 8px)" }}>
+        {/* pb-1.5 (6px) — matches BrowseHeader's flex-col gap-3 between its
             own top row and NutrientStatusBar exactly, so the "Remaining
             Today" block lands at the same vertical offset on both screens. */}
-        <div className="px-4 pb-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+        <div className="px-4 pb-1.5 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
           {/* h-5 flex items-center matches BrowseHeader's X button box exactly
               (w-5 h-5 icon) — this glyph alone at text-lg/leading-none rendered
               a couple px shorter, which was enough to shift NutrientStatusBar
@@ -513,19 +667,19 @@ export default function FoodDetailScreen({
           <button
             onClick={onBack}
             aria-label={backLabel}
-            className="justify-self-start shrink-0 h-5 flex items-center text-muted text-lg leading-none px-1 -mx-1"
+            className="justify-self-start shrink-0 h-5 flex items-center text-muted active:text-white px-1 -mx-1"
           >
-            ‹
+            <ChevronLeft size={20} strokeWidth={2.2} />
           </button>
           <LogTimePill timeLabel={timeLabel} onTimeClick={onTimeClick} />
           <div />
         </div>
         {!hideTargetsUi && (
-          <div className="px-4 pb-3">
+          <div className="px-4 pb-1.5">
             <NutrientStatusBar totals={totals} plateTotals={plateTotals} extra={n} targets={targets} />
           </div>
         )}
-        <div className="px-4 pb-2 flex flex-col items-center text-center">
+        <div className="px-4 pb-1 flex flex-col items-center text-center">
           <span className="min-w-0 max-w-full">
             <span className="block text-base font-semibold text-white truncate">{food.name}</span>
             {food.brand && <span className="block text-[11px] text-muted truncate">{food.brand}</span>}
@@ -533,55 +687,67 @@ export default function FoodDetailScreen({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto pb-4">
+      <div ref={paneRef} className="flex-1 overflow-y-auto pb-4">
+        <div ref={aboveFoldRef}>
         {/* Summary row: strict per-column stack of badge (if any) -> large
             value -> muted label, sized so calories reads as primary without
             dwarfing protein/fat/carbs (2xl vs xl, not the previous 3xl vs
             lg). items-end bottom-aligns the four columns so calories'
             missing badge (there's nothing to take a caloric-ratio "% of
             itself") doesn't throw off the row. */}
-        <div className="px-4 pt-2 pb-4 grid grid-cols-4 gap-2 items-end">
+        <div className="px-4 pt-1 pb-1.5 grid grid-cols-4 gap-2 items-end">
           <div className="col-span-1">
             <p className="tabular text-2xl font-bold text-calories leading-none">{fmt(kcalToUnit(n.calories, energyUnit))}</p>
-            <p className="text-[10px] text-white/60 mt-1.5">{energyUnitLabel(energyUnit)}</p>
+            <p className="text-[10px] text-white/60 mt-0.5">{energyUnitLabel(energyUnit)}</p>
           </div>
           {/* Percentage-of-calories pills used to sit above each number here
               — removed as a duplicate of the Impact on Targets rings below,
               which already own percentage visualization for these same three
               macros; this row is now just the plain gram amounts. */}
-          {(["protein", "fat", "carbs"] as const).map((key) => (
-            <div key={key} className="text-center">
-              <p className="tabular text-xl font-semibold text-white leading-none">{fmt(n[key], 1)}</p>
-              <p className="text-[10px] text-white/60 mt-0.5 capitalize">{key}</p>
-            </div>
-          ))}
+          {(["protein", "fat", "carbs"] as const).map((key) => {
+            const colorClass = key === "protein" ? "text-protein" : key === "fat" ? "text-fat" : "text-carbs";
+            return (
+              <div key={key} className="text-center">
+                <p className={`tabular text-xl font-semibold leading-none ${colorClass}`}>{fmt(n[key], 1)}</p>
+                <p className="text-[10px] text-white/60 mt-0.5 capitalize">{key}</p>
+              </div>
+            );
+          })}
         </div>
 
-        {/* "To custom" duplicates this food into the create-food form (see
+        {/* Icon-grid action row (MacroFactor-style icon-over-label, not this
+            screen's old two equal-width pill buttons) — needed once a
+            recipe can carry up to six actions here (Edit/To custom/
+            Favourite/Explode/Duplicate/Delete), which never fit one pill
+            row. grid-cols-3 rather than flex-wrap so a partial last row
+            (e.g. a plain food's just To custom + Favourite) still lines up
+            under a full one instead of centering unevenly. "To custom"
+            duplicates this food into the create-food form (see
             CreateFoodForm's prefillFood) so a tweak-and-save produces a
             separate new food rather than editing this one; "Favourite" just
-            toggles membership in the per-user favorites list surfaced back on
-            the search sheet. Both are equal-width pill buttons, not full-width
-            stacked — neither needs to dominate the row the way Add/Log Foods
-            does in the footer. */}
-        <div className="px-4 pb-2 flex gap-2">
-          <button
-            onClick={() => onSaveAsCustom(food)}
-            className="flex-1 flex items-center justify-center gap-1.5 rounded-full bg-dashboardChip text-white text-xs font-medium py-2 active:bg-white/20"
-          >
-            <Plus className="w-3.5 h-3.5" strokeWidth={2.5} />
-            To custom
-          </button>
-          <button
+            toggles membership in the per-user favorites list surfaced back
+            on the search sheet; both apply to every food type. Edit/
+            Explode/Duplicate only render when recipeActions is set (i.e.
+            food.source === "recipe"); Delete only when onDeleteFood is
+            (custom/ai_estimate/afcd foods, or a recipe — see AddFoodSheet's
+            wiring), replacing the old standalone "Delete food" button that
+            used to sit at the bottom of the whole screen. */}
+        <div className="px-4 pb-3 pt-1 flex gap-2 overflow-x-auto no-scrollbar">
+          {recipeActions && <ActionIconButton icon={<Pencil className="w-4 h-4" strokeWidth={2.5} />} label="Edit" onClick={recipeActions.onEdit} />}
+          <ActionIconButton icon={<Plus className="w-4 h-4" strokeWidth={2.5} />} label="To custom" onClick={() => onSaveAsCustom(food)} />
+          <ActionIconButton
+            icon={<Heart className="w-4 h-4" strokeWidth={2.5} fill={isFavorite ? "currentColor" : "none"} />}
+            label="Favourite"
             onClick={() => onToggleFavorite(food)}
-            aria-pressed={isFavorite}
-            className={`flex-1 flex items-center justify-center gap-1.5 rounded-full text-xs font-medium py-2 ${
-              isFavorite ? "bg-white text-black" : "bg-dashboardChip text-white active:bg-white/20"
-            }`}
-          >
-            <Heart className="w-3.5 h-3.5" strokeWidth={2.5} fill={isFavorite ? "currentColor" : "none"} />
-            Favourite
-          </button>
+            active={isFavorite}
+          />
+          {recipeActions && (
+            <>
+              <ActionIconButton icon={<PackageOpen className="w-4 h-4" strokeWidth={2.5} />} label="Explode" onClick={recipeActions.onExplode} />
+              <ActionIconButton icon={<Copy className="w-4 h-4" strokeWidth={2.5} />} label="Duplicate" onClick={recipeActions.onDuplicate} />
+            </>
+          )}
+          {onDeleteFood && <ActionIconButton icon={<Trash2 className="w-4 h-4" strokeWidth={2.5} />} label="Delete" onClick={() => setConfirmingDelete(true)} />}
         </div>
 
         {/* Impact on Targets — skipped entirely in recipe-picker mode, not
@@ -589,8 +755,8 @@ export default function FoodDetailScreen({
             against, so even the "set up targets" fallback text is nonsense
             here. */}
         {!hideTargetsUi && (
-          <div className="px-4 pt-2 pb-4 border-t border-dashboardDivider">
-            <p className="text-[13px] font-semibold text-white/80 pt-3 pb-3">Impact on Targets</p>
+          <div className="px-4 pt-1.5 pb-3 border-t border-dashboardDivider">
+            <p className="text-[13px] font-semibold text-white/80 pt-1.5 pb-2">Impact on Targets</p>
             {targets ? (
               <div className="grid grid-cols-4 gap-2">
                 {ringData.map((r) => (
@@ -602,12 +768,17 @@ export default function FoodDetailScreen({
             )}
           </div>
         )}
+        </div>
+        {/* Height computed above (paneRef/aboveFoldRef) so Protein Breakdown
+            lands below the fold and the docked footer's quantity box sits
+            right after a small gap under the rings' own labels instead. */}
+        <div style={{ height: spacerHeight }} />
 
         {/* Detailed nutrient breakdown — plain label + amount rows, grouped
             into categories. Section headers are Title Case (as authored,
             not forced uppercase) with a heavier weight for readability. */}
-        <div className="px-4 pt-2 border-t border-dashboardDivider">
-          <p className="text-[13px] font-semibold text-white/80 pt-3">Protein Breakdown</p>
+        <div className="px-4 pt-3 border-t border-dashboardDivider">
+          <p className="text-[13px] font-semibold text-white/80">Protein Breakdown</p>
           <div className="divide-y divide-dashboardDivider/60">
             <BreakdownRow label="Protein" amount={n.protein} dailyValueRef={DAILY_VALUE_REF.protein} barColorClass="bg-protein" />
           </div>
@@ -618,8 +789,8 @@ export default function FoodDetailScreen({
             Minerals below — simply doesn't render for most foods rather than
             showing an empty or partial-looking list. */}
         {aminoAcids.length > 0 && (
-          <div className="px-4 pt-4 border-t border-dashboardDivider mt-4">
-            <p className="text-[13px] font-semibold text-white/80 pt-3">Amino Acids</p>
+          <div className="px-4 pt-3 border-t border-dashboardDivider mt-4">
+            <p className="text-[13px] font-semibold text-white/80">Amino Acids</p>
             <div className="divide-y divide-dashboardDivider/60">
               {aminoAcids.map((m) => (
                 <BreakdownRow key={m.key} label={m.label} amount={m.amount} unit={m.unit} dailyValueRef={m.dailyValue} />
@@ -628,8 +799,8 @@ export default function FoodDetailScreen({
           </div>
         )}
 
-        <div className="px-4 pt-4 border-t border-dashboardDivider mt-4">
-          <p className="text-[13px] font-semibold text-white/80 pt-3">Carb Breakdown</p>
+        <div className="px-4 pt-3 border-t border-dashboardDivider mt-4">
+          <p className="text-[13px] font-semibold text-white/80">Carb Breakdown</p>
           <div className="divide-y divide-dashboardDivider/60">
             <BreakdownRow label="Carbs" amount={n.carbs} dailyValueRef={DAILY_VALUE_REF.carbs} barColorClass="bg-carbs" />
             <BreakdownRow label="Fiber" amount={n.fiber} dailyValueRef={DAILY_VALUE_REF.fiber} barColorClass="bg-carbs" />
@@ -641,8 +812,8 @@ export default function FoodDetailScreen({
           </div>
         </div>
 
-        <div className="px-4 pt-4 border-t border-dashboardDivider mt-4">
-          <p className="text-[13px] font-semibold text-white/80 pt-3">Fat Breakdown</p>
+        <div className="px-4 pt-3 border-t border-dashboardDivider mt-4">
+          <p className="text-[13px] font-semibold text-white/80">Fat Breakdown</p>
           <div className="divide-y divide-dashboardDivider/60">
             <BreakdownRow label="Fat" amount={n.fat} dailyValueRef={DAILY_VALUE_REF.fat} barColorClass="bg-fat" />
             <BreakdownRow label="Saturated Fat" amount={n.saturatedFat} dailyValueRef={DAILY_VALUE_REF.saturatedFat} barColorClass="bg-fat" />
@@ -663,8 +834,8 @@ export default function FoodDetailScreen({
             food/recipe with nothing entered, just skips the section rather
             than showing an empty heading. */}
         {vitamins.length > 0 && (
-          <div className="px-4 pt-4 border-t border-dashboardDivider mt-4">
-            <p className="text-[13px] font-semibold text-white/80 pt-3">Vitamins</p>
+          <div className="px-4 pt-3 border-t border-dashboardDivider mt-4">
+            <p className="text-[13px] font-semibold text-white/80">Vitamins</p>
             <div className="divide-y divide-dashboardDivider/60">
               {vitamins.map((m) => (
                 <BreakdownRow key={m.key} label={m.label} amount={m.amount} unit={m.unit} dailyValueRef={m.dailyValue} />
@@ -674,8 +845,8 @@ export default function FoodDetailScreen({
         )}
 
         {minerals.length > 0 && (
-          <div className="px-4 pt-4 border-t border-dashboardDivider mt-4">
-            <p className="text-[13px] font-semibold text-white/80 pt-3">Minerals</p>
+          <div className="px-4 pt-3 border-t border-dashboardDivider mt-4">
+            <p className="text-[13px] font-semibold text-white/80">Minerals</p>
             <div className="divide-y divide-dashboardDivider/60">
               {minerals.map((m) => (
                 <BreakdownRow key={m.key} label={m.label} amount={m.amount} unit={m.unit} dailyValueRef={m.dailyValue} />
@@ -684,61 +855,62 @@ export default function FoodDetailScreen({
           </div>
         )}
 
-        <div className="px-4 pt-4 border-t border-dashboardDivider mt-4">
-          <p className="text-[13px] font-semibold text-white/80 pt-3">Other</p>
+        <div className="px-4 pt-3 border-t border-dashboardDivider mt-4">
+          <p className="text-[13px] font-semibold text-white/80">Other</p>
           <div className="divide-y divide-dashboardDivider/60">
             <BreakdownRow label="Sodium" amount={n.sodiumMg} unit="mg" dailyValueRef={DAILY_VALUE_REF.sodiumMg} />
             {cholesterolAmount !== null && <BreakdownRow label="Cholesterol" amount={cholesterolAmount} unit="mg" />}
           </div>
         </div>
 
-        {(food.source === "custom" || food.source === "ai_estimate" || food.source === "afcd") && onDeleteFood && (
-          <div className="px-4 pt-6 pb-2">
-            <button
-              onClick={() => setConfirmingDelete(true)}
-              className="w-full py-2.5 text-sm text-muted"
-            >
-              Delete food
-            </button>
-          </div>
-        )}
       </div>
 
-      {/* Docked footer, top to bottom: a real quantity input (pops the
-          phone's own system keyboard — a custom on-screen numpad used to
-          live here, but that meant there was never a real keyboard for a
-          back gesture to dismiss, so it always exited straight to browse in
-          one press instead of closing the keyboard first the way it does
-          everywhere else with a real input), a horizontally scrollable unit
-          carousel, then Log Foods/Add. */}
-      <div className="shrink-0 border-t border-white/10 bg-dashboardBg px-4 pt-3 pb-3">
-        <div className="rounded-xl bg-dashboardCard border border-white/30 px-4 py-3 mb-2.5 flex items-center justify-between gap-1.5 focus-within:border-accent">
-          <input
-            type="search"
-            inputMode="decimal"
-            autoComplete="off"
-            autoFocus
-            value={quantityInput}
-            onChange={(e) => setQuantityInput(e.target.value)}
-            onFocus={() => setQuantityFocused(true)}
-            onBlur={() => setQuantityFocused(false)}
-            onKeyDown={(e) => {
-              // Two competing actions live in this footer (Log Foods vs.
-              // Add, or Delete vs. Save while editing), so this isn't a
-              // plain <form> wrap — Enter maps to whichever one is the
-              // visually "primary" (white/bold) button in ActionButtons:
-              // onAdd/onSave, never the muted secondary one, and only when
-              // that button isn't itself disabled.
-              if (e.key !== "Enter" || quantityGrams <= 0) return;
-              e.preventDefault();
-              if (editing) editing.onSave(quantityGrams);
-              else onAdd(food, quantityGrams);
-            }}
-            aria-label="Quantity"
-            className="min-w-0 flex-1 bg-transparent tabular text-2xl font-semibold text-white focus:outline-none"
-          />
-          <span className="text-sm text-muted shrink-0">{unitLabel(unit)}</span>
-        </div>
+      {/* Docked footer, top to bottom: a tappable quantity display driving a
+          custom keypad (not a real input — see keypadOpen's own comment
+          above for why, and the back-dismiss trap that makes this safe this
+          time), a horizontally scrollable unit carousel, the keypad itself,
+          then Log Foods/Add. Always visible without scrolling — a real flex
+          sibling after the scrollable pane above (see the fixed gap div
+          right after Impact on Targets for how much of the pane's own
+          content is visible before this). */}
+      <div className="shrink-0 border-t border-white/10 bg-dashboardBg px-4 pt-1 pb-1">
+        <button
+          type="button"
+          onTouchStart={() => triggerHaptic(12)}
+          onClick={() => {
+            triggerHaptic(12);
+            setKeypadOpen((v) => !v);
+          }}
+          aria-expanded={keypadOpen}
+          aria-label="Quantity"
+          className={`w-full rounded-xl bg-dashboardCard border transition-all duration-200 px-4 mb-1.5 flex items-center justify-between gap-1.5 active:scale-[0.99] ${
+            keypadOpen ? "border-accent h-11" : "border-white/15 h-9"
+          }`}
+        >
+          <span className={`flex items-center tabular font-semibold text-white transition-all duration-200 ${keypadOpen ? "text-lg" : "text-sm"}`}>
+            {/* keypadOpen-gated: this is a fake caret/selection on a plain
+                <button>, not a real input, so neither should show while
+                collapsed (nothing to be "focused" then). allSelected shows
+                a selection-style highlight (matches a real input's tap-in
+                behavior — see its own comment above) *and* keeps the caret
+                visible right after it — a real input wouldn't show both at
+                once, but this control has no other affordance telling the
+                user it's the thing about to receive taps, so the caret
+                stays as a constant "you can type here" signal regardless
+                of selection state instead of only appearing after the
+                first keystroke. */}
+            {keypadOpen && allSelected ? (
+              <span className="bg-accent/30 rounded px-0.5 -mx-0.5">{quantityInput}</span>
+            ) : (
+              quantityInput
+            )}
+            {keypadOpen && <span className="caret-blink w-[3px] h-[1.1em] bg-white ml-1 shrink-0" />}
+          </span>
+          <span className="flex items-center gap-1 shrink-0 text-muted">
+            <span className="text-xs">{unitLabel(unit)}</span>
+            <ChevronDown size={14} strokeWidth={2.5} className={`transition-transform duration-200 ${keypadOpen ? "rotate-180" : ""}`} />
+          </span>
+        </button>
 
         {/* Same outlined-pill treatment as the staged-plate editor's own
             QuantityPresetBar (AddFoodSheet.tsx) — border-accent/text-accent
@@ -747,29 +919,68 @@ export default function FoodDetailScreen({
             two serving-size pill rows read as one consistent control instead
             of two different designs depending on which screen you're on.
             Collapsed via the grid-template-rows 0fr/1fr trick (CoachScreen's
-            narrative section uses the same one) whenever the quantity input
-            isn't focused — hidden rather than always-on so the footer takes
-            less permanent space when the keyboard's down, without an
-            abrupt height jump when it reappears. Each pill needs
-            onMouseDown preventDefault so tapping one doesn't itself blur the
-            input (which would hide the very row being tapped mid-tap) —
-            same trick LogWeightInline's body-fat toggle already uses to keep
-            the keyboard from dismissing on tap. */}
-        <div className="grid transition-[grid-template-rows] duration-200 ease-out" style={{ gridTemplateRows: quantityFocused ? "1fr" : "0fr" }}>
+            narrative section uses the same one) whenever the keypad is
+            closed — hidden rather than always-on so the footer takes less
+            permanent space, without an abrupt height jump when it reopens.
+            The keypad grid below shares this same collapsible wrapper so
+            both animate open/closed together. */}
+        <div className="grid transition-[grid-template-rows] duration-200 ease-out" style={{ gridTemplateRows: keypadOpen ? "1fr" : "0fr" }}>
           <div className="overflow-hidden">
-            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2.5">
+            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-3">
               {units.map((u) => (
                 <button
                   key={u}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => setUnit(u)}
-                  className={`shrink-0 rounded-full px-3.5 py-2 border text-xs font-medium whitespace-nowrap transition-colors ${
-                    unit === u ? "border-accent text-accent" : "border-white/15 text-white active:bg-white/5"
+                  onTouchStart={() => triggerHaptic(10)}
+                  onClick={() => {
+                    triggerHaptic(10);
+                    setUnit(u);
+                  }}
+                  className={`shrink-0 h-8 rounded-full px-3.5 border text-xs font-medium whitespace-nowrap flex items-center justify-center transition-all duration-75 active:scale-[0.96] select-none ${
+                    unit === u ? "border-accent text-accent bg-accent/[0.06]" : "border-white/10 text-white/80 active:bg-white/5"
                   }`}
                 >
                   {unitLabel(u)}
                 </button>
               ))}
+            </div>
+
+            {/* Fixed-height 3x4 grid, unlike a real system keyboard's
+                unpredictable (and per-device-variable) height — this is
+                what actually lets the rest of the screen budget space for
+                itself reliably above it. */}
+            <div className="grid grid-cols-3 gap-x-3 gap-y-2 pb-3">
+              {(["1", "2", "3", "4", "5", "6", "7", "8", "9"] as const).map((d) => (
+                <button
+                  key={d}
+                  onTouchStart={() => triggerHaptic(10)}
+                  onClick={() => tapDigit(d)}
+                  className="h-[58px] rounded-2xl bg-white/[0.07] flex items-center justify-center text-2xl font-medium text-white active:bg-white/[0.15] active:scale-[0.95] transition-all duration-75 select-none"
+                >
+                  {d}
+                </button>
+              ))}
+              <button
+                onTouchStart={() => triggerHaptic(10)}
+                onClick={tapDecimal}
+                className="h-[58px] rounded-2xl bg-white/[0.03] flex items-center justify-center text-2xl font-medium text-white/70 active:bg-white/[0.1] active:scale-[0.95] transition-all duration-75 select-none"
+              >
+                .
+              </button>
+              <button
+                onTouchStart={() => triggerHaptic(10)}
+                onClick={() => tapDigit("0")}
+                className="h-[58px] rounded-2xl bg-white/[0.07] flex items-center justify-center text-2xl font-medium text-white active:bg-white/[0.15] active:scale-[0.95] transition-all duration-75 select-none"
+              >
+                0
+              </button>
+              <button
+                onTouchStart={() => triggerHaptic(12)}
+                onClick={tapBackspace}
+                aria-label="Backspace"
+                className="h-[58px] rounded-2xl bg-white/[0.03] flex items-center justify-center text-white/70 active:bg-white/[0.1] active:scale-[0.95] transition-all duration-75 select-none"
+              >
+                <Delete size={26} strokeWidth={1.5} />
+              </button>
             </div>
           </div>
         </div>
@@ -798,6 +1009,7 @@ export default function FoodDetailScreen({
           />
         )}
       </div>
+
       {confirmingDelete && onDeleteFood && (
         <ConfirmDeleteSheet
           title="Delete Food"

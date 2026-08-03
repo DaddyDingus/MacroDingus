@@ -18,11 +18,17 @@ function Tab({ to, label, icon: Icon }: { to: string; label: string; icon: Lucid
       to={to}
       end={to === "/"}
       className={({ isActive }) =>
-        `flex-1 py-2 flex flex-col items-center gap-0.5 ${isActive ? "text-[11px] text-ink font-medium" : "text-[10px] text-muted"}`
+        `flex-1 py-2 flex flex-col items-center gap-0.5 transition-colors duration-150 ${
+          isActive ? "text-accent font-semibold" : "text-muted hover:text-white/80"
+        }`
       }
     >
-      <Icon size={23} strokeWidth={2} />
-      {label}
+      {({ isActive }) => (
+        <>
+          <Icon size={22} strokeWidth={isActive ? 2.4 : 1.8} className="transition-all duration-150" />
+          <span className="text-[10px] font-medium leading-none mt-0.5">{label}</span>
+        </>
+      )}
     </NavLink>
   );
 }

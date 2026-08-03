@@ -31,12 +31,19 @@ export interface RecipeFormInitial {
 export default function RecipeForm({
   initialName,
   initial,
+  editingExisting = false,
   onCancel,
   onCreated,
   dragHandlers,
 }: {
   initialName: string;
   initial?: RecipeFormInitial;
+  // Distinct from `initial` (which only means "prefilled") — URL import,
+  // "Duplicate," and this form's own ingredient-picker prefill all set
+  // `initial` on a recipe that's still genuinely new/unsaved, so header/
+  // button copy keys off this instead. Only RecipeEditSheet's real
+  // edit-in-place sets it true.
+  editingExisting?: boolean;
   onCancel: () => void;
   onCreated: (input: { name: string; icon: string | null; servings: number; totalWeightGrams?: number; ingredients: Ingredient[] }) => void;
   // Spread onto this form's own header (below) when it's rendered directly
@@ -161,12 +168,12 @@ export default function RecipeForm({
       <div {...dragHandlers} className="px-2.5 pt-1 pb-1 flex items-center gap-1 shrink-0 touch-none">
         <button
           onClick={requestCancel}
-          aria-label={initial ? "Close" : "Back"}
+          aria-label={editingExisting ? "Close" : "Back"}
           className="h-9 w-9 shrink-0 flex items-center justify-center rounded-full text-white active:bg-white/10"
         >
           <ChevronLeft size={18} strokeWidth={2} />
         </button>
-        <span className="text-sm font-medium text-white">{initial ? "Edit recipe" : "Create recipe"}</span>
+        <span className="text-sm font-medium text-white">{editingExisting ? "Edit recipe" : "Create recipe"}</span>
       </div>
 
       {/* Enter submits via onKeyDown on the Name/Servings/Total-weight
@@ -408,7 +415,7 @@ export default function RecipeForm({
           className="w-full py-3.5 rounded-xl bg-accent text-base disabled:opacity-40 font-semibold"
           style={{ color: "#0B1210" }}
         >
-          {initial ? "Save changes" : "Save recipe"}
+          {editingExisting ? "Save changes" : "Save recipe"}
         </button>
       </div>
 

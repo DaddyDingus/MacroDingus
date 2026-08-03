@@ -104,11 +104,35 @@ export default function BottomSheet({
 
   // The page behind a sheet must not scroll while it's open — without this,
   // dragging on the dimmed backdrop scrolls whatever screen is underneath.
+  // `overflow: hidden` alone doesn't reliably block touch-driven scroll of
+  // the document on mobile Chrome/Safari (it stops wheel/keyboard scroll,
+  // but a finger drag can still walk the document a few px per event even
+  // with the ancestor `overflow: hidden`) — pinning body to the current
+  // scroll offset via `position: fixed` is what actually prevents it, since
+  // there's then no scrollable box left for the touch to move at all. Losing
+  // this lock is what caused the background to visibly scroll (and, via
+  // useVisualViewportMetrics reacting to the resulting browser-chrome
+  // show/hide, the sheet itself to jitter) while scrolling content inside a
+  // sheet.
   useEffect(() => {
-    const previous = document.body.style.overflow;
+    const scrollY = window.scrollY;
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    const prevBodyPosition = document.body.style.position;
+    const prevBodyTop = document.body.style.top;
+    const prevBodyWidth = document.body.style.width;
     document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.position = "fixed";
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.width = "100%";
     return () => {
-      document.body.style.overflow = previous;
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overflow = prevHtmlOverflow;
+      document.body.style.position = prevBodyPosition;
+      document.body.style.top = prevBodyTop;
+      document.body.style.width = prevBodyWidth;
+      window.scrollTo(0, scrollY);
     };
   }, []);
 
@@ -182,7 +206,7 @@ export default function BottomSheet({
     // rather than viewport units so they inherit that same correctness.
     <div className="fixed inset-x-0 z-50" style={{ top: viewportOffsetTop, height: viewportHeight }}>
       <div
-        className={`absolute inset-0 ${backdropClassName}`}
+        className={`absolute inset-0 ${backdropClassName} touch-none`}
         onClick={close}
         style={{
           opacity: mounted && !closing ? 1 : 0,

@@ -178,3 +178,16 @@
   animation: tile-enter 360ms cubic-bezier(0.2, 0, 0, 1) both;
   animation-delay: var(--tile-delay, 0ms);
 }
+
+/* FoodDetailScreen's custom keypad quantity display isn't a real <input> (see
+   its own comment on why), so it has no native blinking caret — this fakes
+   one, shown only while actively editing (not while the value is all-selected,
+   same as a real input never shows both at once). */
+@keyframes caret-blink {
+  0%, 50% { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
+}
+
+.caret-blink {
+  animation: caret-blink 1s step-end infinite;
+}
