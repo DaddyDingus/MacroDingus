@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ChefHat, ChevronRight } from "lucide-react";
 import type { Food } from "../api/types";
@@ -8,6 +8,7 @@ import { usePrograms } from "../api/programs";
 import { targetsForDate } from "../lib/programTargets";
 import { useEnergyUnit, kcalToUnit, energyUnitLabel } from "../lib/energyUnit";
 import { useEffectiveLogDate } from "../lib/viewedDate";
+import { armTrapHandoff } from "../lib/useBackDismiss";
 import type { ShortcutId } from "../lib/shortcuts";
 import AddFoodSheet from "./AddFoodSheet";
 import QuickAddSheet from "./QuickAddSheet";
@@ -38,6 +39,10 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
   const { unit: energyUnit } = useEnergyUnit();
   const [pickedFood, setPickedFood] = useState<Food | null>(null);
   const [recipeQuery, setRecipeQuery] = useState("");
+  // Set by pickRecipe, read by handleSheetClosed once the "recipesList"
+  // step's own BottomSheet has finished animating away — distinguishes
+  // "picked a recipe" from a swipe-down/backdrop-tap close.
+  const pendingPickedFoodRef = useRef<Food | null>(null);
   const [step, setStep] = useState<Step>(() => {
     if (action === "logWeight") return "logWeight";
     if (action === "copyDay") return "copyDay";
@@ -67,7 +72,24 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
 
   if (action === "photos") return null;
 
-  function pickRecipe(food: Food) {
+  // Same handoff as QuickActionsSheet's own selectAction — picking a recipe
+  // swaps the "recipesList" step's inline <BottomSheet> below for
+  // <AddFoodSheet>, so the outgoing sheet's history entry is handed straight
+  // to AddFoodSheet's trap instead of being unwound and re-pushed (see
+  // lib/useBackDismiss.ts's armTrapHandoff).
+  function pickRecipe(food: Food, close: () => void) {
+    pendingPickedFoodRef.current = food;
+    close();
+  }
+
+  function handleSheetClosed() {
+    const food = pendingPickedFoodRef.current;
+    if (!food) {
+      onClose();
+      return;
+    }
+    pendingPickedFoodRef.current = null;
+    armTrapHandoff();
     setPickedFood(food);
     setStep("addFood");
   }
@@ -114,7 +136,7 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
 
   return (
     <BottomSheet
-      onClose={onClose}
+      onClose={handleSheetClosed}
       backdropClassName="bg-black/50"
       panelClassName="max-h-[85%] bg-surface rounded-t-xl border-t border-line pb-[env(safe-area-inset-bottom)]"
     >
@@ -166,7 +188,7 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
                     {filtered.map((r) => (
                       <button
                         key={r.id}
-                        onClick={() => pickRecipe(r.food)}
+                        onClick={() => pickRecipe(r.food, close)}
                         className="w-full flex items-center gap-3 px-4 py-3 text-left active:bg-surface-raised"
                       >
                         <FoodIconAvatar name={r.name} icon={r.food.icon} className="w-8 h-8" />

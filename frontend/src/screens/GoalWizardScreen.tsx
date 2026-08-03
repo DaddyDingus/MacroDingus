@@ -16,7 +16,7 @@ import {
 import WizardShell from "../components/WizardShell";
 import WizardIntroCard, { type WizardIntroStep } from "../components/WizardIntroCard";
 import WizardOption from "../components/WizardOption";
-import { useBackDismiss } from "../lib/useBackDismiss";
+import { useBackDismissDepth } from "../lib/useBackDismiss";
 
 type Step = "intro" | "type" | "target" | "summary";
 
@@ -136,17 +136,29 @@ function GoalWizardBody({ mode, status }: { mode: "new" | "edit"; status: CoachS
   // the whole wizard to wherever /strategy/new-goal was opened from — same
   // bug class useBackDismiss already fixed for every sheet/modal in the app,
   // just never wired up for this linear stepper shape.
-  function goBack() {
-    if (step === "target") setStep(mode === "new" ? "type" : "intro");
-    else if (step === "summary") setStep(goalType === "maintain" ? "type" : "target");
-    else setStep("intro");
+  // Pure, so the step depth below can walk the same chain goBack takes and
+  // the two can't drift. null = "intro", the bottom of the wizard.
+  function previousStep(from: Step): Step | null {
+    if (from === "intro") return null;
+    if (from === "target") return mode === "new" ? "type" : "intro";
+    if (from === "summary") return goalType === "maintain" ? "type" : "target";
+    return "intro";
   }
-  // Inactive on "intro" — that step already sits on a real route
-  // (/strategy/new-goal), so a back press there falls through to the normal
-  // browser history and correctly lands back on /strategy, exactly like the
-  // intro screen's own X button does. Only the intermediate steps (which
-  // have no history entry of their own) need trapping.
-  useBackDismiss(step !== "intro", goBack);
+
+  function goBack() {
+    const previous = previousStep(step);
+    if (previous) setStep(previous);
+  }
+
+  // One history entry per step between here and "intro" — not one trap that
+  // re-arms itself per press, which exited the app outright on the second
+  // press (see lib/useBackDismiss.ts). Zero on "intro" itself: that step sits
+  // on a real route (/strategy/new-goal), so back there falls through to
+  // normal browser history and lands on /strategy, exactly like the intro
+  // screen's own X button.
+  let backDepth = 0;
+  for (let s = previousStep(step); s; s = previousStep(s)) backDepth++;
+  useBackDismissDepth(backDepth, goBack);
 
   const distanceKg = goalWeightKg !== null && trendWeightKg !== null ? Math.abs(goalWeightKg - trendWeightKg) : null;
   const previewTdee = latestTdee;

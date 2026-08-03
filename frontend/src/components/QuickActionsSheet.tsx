@@ -1,4 +1,4 @@
-import { useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { SlidersHorizontal, ChevronRight, GripVertical, Plus } from "lucide-react";
 import {
@@ -11,6 +11,7 @@ import {
 import QuickActionFlow from "./QuickActionFlow";
 import BottomSheet from "./BottomSheet";
 import ToggleSwitch from "./ToggleSwitch";
+import { armTrapHandoff } from "../lib/useBackDismiss";
 
 interface ShortcutDragState {
   id: ShortcutId;
@@ -55,6 +56,10 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
   // list" flag through one shared implementation.
   const [drag, setDrag] = useState<ShortcutDragState | null>(null);
   const [moreDrag, setMoreDrag] = useState<ShortcutDragState | null>(null);
+  // Set by selectAction, read by handleSheetClosed once BottomSheet has
+  // finished animating away — distinguishes "picked an action" from the
+  // swipe-down/backdrop-tap closes that share the same onClose.
+  const pendingActionRef = useRef<ShortcutId | null>(null);
 
   function handlePointerDown(e: ReactPointerEvent<HTMLButtonElement>, id: ShortcutId, index: number) {
     e.preventDefault();
@@ -107,25 +112,39 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
     setMoreDrag(null);
   }
 
-  // Photos is special-cased here rather than left to QuickActionFlow's own
-  // handling (which is otherwise correct, and still what backs the
-  // Dashboard's ShortcutsBar): setting `runningAction` swaps this component's
-  // return value from the <BottomSheet> below to <QuickActionFlow>, which
-  // unmounts the BottomSheet mid-render. BottomSheet's own useBackDismiss
-  // trap unwinds its dummy history entry on unmount via `history.back()` —
-  // and since that's an async browser navigation, it doesn't actually pop
-  // until after QuickActionFlow's effect has already called `navigate()`,
-  // so it ends up popping the freshly-pushed "/photos" entry instead,
-  // landing right back where we started. Calling navigate() synchronously
-  // right here, before onClose() ever triggers that unmount, sidesteps the
-  // race entirely — by the time BottomSheet's cleanup runs, history's top
-  // entry is already "/photos", not the dummy one, so nothing gets undone.
-  function selectAction(id: ShortcutId) {
+  // Runs BottomSheet's own ordinary close (the exact same path a swipe-down
+  // or a backdrop tap already takes) rather than swapping this component's
+  // return value out from under it — the picked action's overlay mounts from
+  // handleSheetClosed below, once the sheet has actually animated away.
+  function selectAction(id: ShortcutId, close: () => void) {
     if (id === "photos") {
       navigate("/photos");
       onClose();
       return;
     }
+    pendingActionRef.current = id;
+    close();
+  }
+
+  // BottomSheet's real onClose — fires once its close animation completes,
+  // whether that was triggered by selectAction above, a swipe-down, or the
+  // backdrop tap. Only the first of those leaves something in
+  // pendingActionRef; the other two mean the user just wanted the menu gone.
+  function handleSheetClosed() {
+    const id = pendingActionRef.current;
+    if (!id) {
+      onClose();
+      return;
+    }
+    pendingActionRef.current = null;
+    // BottomSheet's trap unmounts and QuickActionFlow's mounts in the one
+    // commit this setState triggers. Armed right here rather than back in
+    // selectAction so the window it's open for is that single commit: the
+    // outgoing trap hands its history entry straight to the incoming one and
+    // neither touches the History API, which is what keeps this path's
+    // browser-visible history identical to the Dashboard's pinned-shortcut
+    // path (see lib/useBackDismiss.ts).
+    armTrapHandoff();
     setRunningAction(id);
   }
 
@@ -153,11 +172,11 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
 
   return (
     <BottomSheet
-      onClose={onClose}
+      onClose={handleSheetClosed}
       backdropClassName="bg-black/50"
       panelClassName="max-h-[85%] bg-surface rounded-t-xl border-t border-line pb-[env(safe-area-inset-bottom)]"
     >
-      {(dragHandlers) => (
+      {(dragHandlers, close) => (
         <>
         {view === "menu" && (
           <>
@@ -190,7 +209,7 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
                     return (
                       <button
                         key={s.id}
-                        onClick={() => selectAction(s.id)}
+                        onClick={() => selectAction(s.id, close)}
                         className="flex flex-col items-center gap-1 active:opacity-80"
                       >
                         <span className="h-11 w-11 rounded-full bg-dashboardChip flex items-center justify-center">
@@ -215,7 +234,7 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
                 return (
                   <button
                     key={s.id}
-                    onClick={() => selectAction(s.id)}
+                    onClick={() => selectAction(s.id, close)}
                     className="w-full flex items-center gap-3 px-4 py-3 border-b border-line/60 text-left active:bg-surface-raised text-sm"
                   >
                     <Icon className="w-[18px] h-[18px] text-muted shrink-0" strokeWidth={2} />

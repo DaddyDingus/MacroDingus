@@ -27,7 +27,7 @@ import { localTimeString, localIsoNoTz, formatLogTime, loggedAtTimeString, build
 import { usePlateState, type PlateItem } from "../lib/quickAddPlate";
 import { useEnergyUnit, kcalToUnit, unitToKcal, energyUnitLabel, formatEnergy } from "../lib/energyUnit";
 import { useVisualViewportMetrics } from "../lib/useVisualViewportMetrics";
-import { useBackDismiss } from "../lib/useBackDismiss";
+import { useBackDismissDepth } from "../lib/useBackDismiss";
 import FoodIconAvatar from "./FoodIconAvatar";
 import CreateFoodForm from "./CreateFoodForm";
 import RecipeForm, { type RecipeFormInitial } from "./RecipeForm";
@@ -54,6 +54,19 @@ type Step = "browse" | "quantity" | "create" | "scan" | "recipe" | "recipeChoice
 // same class of bug the Goal/Program wizards had before their own
 // useBackDismiss wiring. Steps absent here (browse/quantity) aren't
 // "sub-steps" — requestClose treats those as a real dismissal instead.
+// How many back presses it takes to walk `step` back to "browse" — i.e. how
+// many history entries this sheet needs on top of the one for the sheet
+// itself. Follows the same chain requestClose does, so the two can't drift.
+function subStepDepth(step: Step): number {
+  let depth = 0;
+  let current: Step | undefined = step;
+  while (current && SHEET_SUB_STEP_BACK[current]) {
+    current = SHEET_SUB_STEP_BACK[current];
+    depth++;
+  }
+  return depth;
+}
+
 const SHEET_SUB_STEP_BACK: Partial<Record<Step, Step>> = {
   detail: "browse",
   create: "browse",
@@ -400,15 +413,15 @@ export default function AddFoodSheet({
     // on an actual open/step transition.
   }, [open, editingEntry, initialFood, initialStep]);
 
-  // One trap for the whole sheet (not a nested one per step) — requestClose
-  // itself is step-aware (see its own comment below), so a single back press
-  // already does the right thing regardless of which internal step is
-  // showing: detail/create/recipe return to browse, and only browse itself
-  // (or the direct-to-detail editingEntry case) actually closes the sheet.
-  // Routes through requestClose rather than the raw onClose prop so an
-  // unlogged plate still gets its confirmation dialog instead of silently
-  // discarding staged items.
-  useBackDismiss(open, requestClose);
+  // One history entry per back press this sheet can absorb: one for the sheet
+  // itself, plus one for each sub-step between here and "browse". This used to
+  // be a single `useBackDismiss(open, requestClose)` that re-armed itself on
+  // every press — see useBackDismiss.ts for why that exited the app instead.
+  //
+  // editingEntry opens straight into "detail" with no browse state behind it,
+  // so back there closes the sheet outright, same as that screen's own
+  // "‹ Close" button — one level, never more.
+  useBackDismissDepth(open ? 1 + (editingEntry ? 0 : subStepDepth(step)) : 0, handleBackDismiss);
 
   useEffect(() => {
     if (!pendingSearchFocus || step !== "browse" || activeTab !== "search") return;
@@ -658,22 +671,18 @@ export default function AddFoodSheet({
   // persistence only covers reopening the sheet within the same running app
   // session, not a real page refresh/PWA relaunch, so it's still worth an
   // explicit heads-up before actually leaving with something unlogged.
-  // This is the single handler behind every dismissal gesture (the header
-  // X, and — via useBackDismiss below — the hardware/gesture back button),
-  // so making it step-aware here is what makes back "just work" the same
-  // way as the X: from detail/create/recipe/scan, back re-surfaces browse
-  // (in whatever tab, with whatever focus, changeStep() already restores)
-  // instead of leaving the sheet entirely. editingEntry is the one
-  // exception — it drops straight into "detail" on open with no browse
-  // state to go back to, so back there closes the sheet immediately, same
-  // as that screen's own "‹ Close" button.
+  // The header X only — the back gesture routes through handleBackDismiss
+  // just below instead. Step-aware either way: from detail/create/recipe/scan
+  // both re-surface browse (in whatever tab, with whatever focus, changeStep()
+  // already restores) rather than leaving the sheet entirely. editingEntry is
+  // the exception — it drops straight into "detail" on open with no browse
+  // state to go back to, so it closes immediately, same as that screen's own
+  // "‹ Close" button.
   //
   // Reads stepRef (kept in sync every render, just below) rather than the
-  // `step` variable from this render's own closure — requestClose is handed
-  // to useBackDismiss once per render same as any other value here, so in
-  // practice `step` is already current by the time a real key/gesture press
-  // reaches it, but the ref removes any dependency on that being true and
-  // costs nothing.
+  // `step` from this render's closure — in practice `step` is already current
+  // by the time a real press reaches it, but the ref removes any dependency on
+  // that being true and costs nothing.
   function requestClose() {
     const backTarget = !editingEntry ? SHEET_SUB_STEP_BACK[stepRef.current] : undefined;
     if (backTarget) {
@@ -685,6 +694,32 @@ export default function AddFoodSheet({
     } else {
       onClose();
     }
+  }
+
+  // The back gesture's handler. Identical to requestClose except that leaving
+  // "browse" with a staged plate closes outright instead of raising the
+  // unlogged-plate warning.
+  //
+  // That difference is forced, not a preference: showing the warning would
+  // open a new overlay in response to a back press, and a new overlay needs a
+  // new history entry, which cannot be created from inside a popstate handler
+  // without Chrome marking the entry underneath as skippable and stranding the
+  // app one press from exiting (see useBackDismiss.ts). It also broke this
+  // component's depth invariant — the dismiss wouldn't reduce depth, so the
+  // next press would escape.
+  //
+  // Worth knowing the old behaviour was not actually reachable either: back
+  // used to re-raise the warning indefinitely, since the re-push meant the
+  // press was never really consumed, so back could never leave this sheet at
+  // all with something staged. The X button still shows the warning, which is
+  // where the comment above about an explicit heads-up applies.
+  function handleBackDismiss() {
+    const backTarget = !editingEntry ? SHEET_SUB_STEP_BACK[stepRef.current] : undefined;
+    if (backTarget) {
+      changeStep(backTarget);
+      return;
+    }
+    onClose();
   }
 
   const suggestions = query.trim() ? search.data : smartHistory.data?.foods;

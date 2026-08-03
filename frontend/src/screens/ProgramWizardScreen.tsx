@@ -25,7 +25,7 @@ import WizardIntroCard from "../components/WizardIntroCard";
 import WizardOption from "../components/WizardOption";
 import WeeklyProgramGrid from "../components/WeeklyProgramGrid";
 import OrbitLoadingAnimation from "../components/OrbitLoadingAnimation";
-import { useBackDismiss } from "../lib/useBackDismiss";
+import { useBackDismissDepth } from "../lib/useBackDismiss";
 
 type Step = "intro" | "style" | "diet" | "floor" | "distribution" | "shiftDays" | "protein" | "calories" | "manualEntry" | "generating" | "results";
 // Total step count the progress bar's fractions are measured against — the
@@ -125,24 +125,44 @@ function ProgramWizardBody({ goalId }: { goalId: string }) {
   // without a trap, none of these steps have their own history entry, so one
   // back press from anywhere past "intro" used to skip the whole wizard
   // instead of stepping back one page.
-  function goBack() {
-    if (step === "diet") setStep("style");
-    else if (step === "floor") setStep("diet");
-    else if (step === "distribution") setStep("floor");
-    else if (step === "shiftDays") setStep("distribution");
-    else if (step === "protein") setStep(distributionMode === "shifted" ? "shiftDays" : "distribution");
-    else if (step === "calories") setStep("protein");
-    else if (step === "manualEntry") setStep("style");
-    // "results" is a terminal success state with nothing to step back into —
-    // matches its own WizardShell's onBack below, which already left the
-    // whole wizard rather than reopening an input step.
-    else if (step === "results") navigate("/strategy");
-    else setStep("intro");
+  // Pure, so the step depth below can walk the same chain goBack takes and the
+  // two can't drift. null = nothing of this wizard's own to step back into.
+  //
+  // "intro" is a real route (falls through to normal browser history, same as
+  // GoalWizardScreen); "generating" is a transient submit state with no back
+  // button of its own to mirror; "results" is a terminal success state whose
+  // own WizardShell chevron leaves the wizard rather than reopening an input
+  // step. All three therefore hold no history entry — and on "results" that's
+  // now what produces the intended destination for free: the wizard's own
+  // route entry is the next thing back, so a press lands on /strategy without
+  // any navigate() call. That matters, because a navigate() from inside a
+  // popstate handler is itself a no-activation history push — the exact thing
+  // that was breaking the back gesture app-wide (see lib/useBackDismiss.ts).
+  function previousStep(from: Step): Step | null {
+    if (from === "diet") return "style";
+    if (from === "floor") return "diet";
+    if (from === "distribution") return "floor";
+    if (from === "shiftDays") return "distribution";
+    if (from === "protein") return distributionMode === "shifted" ? "shiftDays" : "distribution";
+    if (from === "calories") return "protein";
+    if (from === "manualEntry") return "style";
+    if (from === "intro" || from === "generating" || from === "results") return null;
+    return "intro";
   }
-  // Inactive on "intro" (a real route, falls through to normal browser
-  // history same as GoalWizardScreen) and "generating" (a transient submit
-  // state with no back button of its own to mirror).
-  useBackDismiss(step !== "intro" && step !== "generating", goBack);
+
+  function goBack() {
+    if (step === "results") {
+      navigate("/strategy");
+      return;
+    }
+    const previous = previousStep(step);
+    if (previous) setStep(previous);
+  }
+
+  // One history entry per step between here and the bottom of the wizard.
+  let backDepth = 0;
+  for (let s = previousStep(step); s; s = previousStep(s)) backDepth++;
+  useBackDismissDepth(backDepth, goBack);
 
   function submitManual() {
     const calories = Number(manualValues.calories) || 0;
