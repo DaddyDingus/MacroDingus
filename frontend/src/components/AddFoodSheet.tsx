@@ -173,10 +173,10 @@ export default function AddFoodSheet({
   editingEntry: LogEntry | null;
   onClose: () => void;
   // Lets callers outside the timeline's own "+ Log food" button (the global
-  // quick-actions sheet, a recipe picker) skip straight to scanning, straight
-  // to the new-food form, or to a preselected food's quantity step instead of
-  // always landing on search.
-  initialStep?: "search" | "scan" | "create" | "describe" | "recipe";
+  // quick-actions sheet, a recipe picker) skip straight to scanning, the
+  // library's Recipes view, the new-food form, or a preselected food's
+  // quantity step instead of always landing on search.
+  initialStep?: "search" | "scan" | "create" | "describe" | "recipe" | "library";
   initialFood?: Food;
   // Overrides the default "now" timestamp everything staged here gets
   // logged under — set by the Food Log's per-group "+" button so items
@@ -418,7 +418,8 @@ export default function AddFoodSheet({
     } else {
       setSelectedFood(null);
       setStep(initialStep === "scan" ? "scan" : initialStep === "create" ? "create" : initialStep === "recipe" ? "recipeChoice" : "browse");
-      setActiveTab(initialStep === "describe" ? "describe" : "search");
+      setActiveTab(initialStep === "describe" ? "describe" : initialStep === "library" ? "library" : "search");
+      if (initialStep === "library") setLibraryView("recipes");
       setPendingSearchFocus(initialStep === "search");
       setQuickLogInitialFood(false);
     }

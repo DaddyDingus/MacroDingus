@@ -18,6 +18,8 @@ const compareInput = z.object({
   photoIdB: z.string().min(1),
 });
 
+const photoPose = z.enum(["front", "side", "back", "front_flexed", "side_flexed", "back_flexed"]);
+
 export function registerPhotoRoutes(app: FastifyInstance, dataDir: string) {
   const photosDir = path.join(dataDir, "photos");
 
@@ -37,7 +39,8 @@ export function registerPhotoRoutes(app: FastifyInstance, dataDir: string) {
 
     const poseField = data.fields.pose;
     const poseRaw = poseField && "value" in poseField ? String(poseField.value) : undefined;
-    const pose = poseRaw === "front" || poseRaw === "side" || poseRaw === "back" ? poseRaw : null;
+    const parsedPose = photoPose.safeParse(poseRaw);
+    const pose = parsedPose.success ? parsedPose.data : null;
 
     const buffer = await data.toBuffer();
     const userId = req.userId!;

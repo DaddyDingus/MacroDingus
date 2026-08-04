@@ -2,15 +2,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ReactCompareSlider, ReactCompareSliderImage, ReactCompareSliderHandle } from "react-compare-slider";
 import { ChevronLeft, Columns2, Download, ImageOff, Loader2, Rows3, Sparkles } from "lucide-react";
-import { usePhotos, useComparePhotos, type Photo, type PhotoPose } from "../api/photos";
+import {
+  PHOTO_POSES,
+  PHOTO_POSE_LABEL,
+  usePhotos,
+  useComparePhotos,
+  type Photo,
+  type PhotoPose,
+} from "../api/photos";
 import { useWeightTrend } from "../api/weights";
 import { useWeightUnit, kgToUnit } from "../lib/weightUnit";
 import { formatDayLabel } from "../lib/date";
 import BottomSheet from "../components/BottomSheet";
 import PhotoDatePickerSheet from "../components/PhotoDatePickerSheet";
-
-const POSES: PhotoPose[] = ["front", "side", "back"];
-const POSE_LABEL: Record<PhotoPose, string> = { front: "Front", side: "Side", back: "Back" };
 
 function weightLabel(kg: number | null, unit: "kg" | "lb"): string {
   return kg !== null ? `${kgToUnit(kg, unit).toFixed(1)} ${unit}` : `— ${unit}`;
@@ -196,16 +200,16 @@ export default function PhotoCompareScreen() {
         </button>
       </header>
 
-      <div className="flex gap-2 px-4 pb-3">
-        {POSES.map((pose) => (
+      <div className="grid grid-cols-3 gap-2 px-4 pb-3">
+        {PHOTO_POSES.map((pose) => (
           <button
             key={pose}
             onClick={() => setActivePose(pose)}
-            className={`flex-1 text-xs py-1.5 rounded-full border ${
+            className={`min-h-9 px-2 text-xs leading-tight rounded-full border ${
               activePose === pose ? "border-accent text-accent" : "border-line text-muted"
             }`}
           >
-            {POSE_LABEL[pose]}
+            {PHOTO_POSE_LABEL[pose]}
           </button>
         ))}
       </div>
@@ -246,14 +250,14 @@ export default function PhotoCompareScreen() {
               }
               itemOne={
                 leftPhoto ? (
-                  <ReactCompareSliderImage src={`/api/photos/${leftPhoto.id}/file`} alt={`Before ${POSE_LABEL[activePose]} photo`} style={{ objectFit: "contain", background: "transparent" }} />
+                  <ReactCompareSliderImage src={`/api/photos/${leftPhoto.id}/file`} alt={`Before ${PHOTO_POSE_LABEL[activePose]} photo`} style={{ objectFit: "contain", background: "transparent" }} />
                 ) : (
                   <NoPhotoSlot />
                 )
               }
               itemTwo={
                 rightPhoto ? (
-                  <ReactCompareSliderImage src={`/api/photos/${rightPhoto.id}/file`} alt={`After ${POSE_LABEL[activePose]} photo`} style={{ objectFit: "contain", background: "transparent" }} />
+                  <ReactCompareSliderImage src={`/api/photos/${rightPhoto.id}/file`} alt={`After ${PHOTO_POSE_LABEL[activePose]} photo`} style={{ objectFit: "contain", background: "transparent" }} />
                 ) : (
                   <NoPhotoSlot />
                 )

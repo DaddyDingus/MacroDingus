@@ -2,7 +2,15 @@ import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import imageCompression from "browser-image-compression";
 import { Calendar, Camera, ChevronDown, ChevronLeft, Columns2, Trash2, X } from "lucide-react";
-import { usePhotos, useUploadPhoto, useDeletePhoto, type Photo, type PhotoPose } from "../api/photos";
+import {
+  PHOTO_POSES,
+  PHOTO_POSE_LABEL,
+  usePhotos,
+  useUploadPhoto,
+  useDeletePhoto,
+  type Photo,
+  type PhotoPose,
+} from "../api/photos";
 import {
   BODY_PARTS,
   useMeasurements,
@@ -21,8 +29,6 @@ import CalendarJumpSheet from "../components/CalendarJumpSheet";
 import ConfirmDeleteSheet from "../components/ConfirmDeleteSheet";
 import PhotoSourceSheet from "../components/PhotoSourceSheet";
 
-const POSES: PhotoPose[] = ["front", "side", "back"];
-const POSE_LABEL: Record<PhotoPose, string> = { front: "Front", side: "Side", back: "Back" };
 const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function formatShortDate(dateStr: string): string {
@@ -128,7 +134,7 @@ export default function PhotosScreen() {
       setAligning({ pose, file: compressed as File });
     } catch (err) {
       console.error("Progress photo pre-processing failed:", err);
-      setZoneError(`Could not process the ${pose} photo.`);
+      setZoneError(`Could not process the ${PHOTO_POSE_LABEL[pose].toLowerCase()} photo.`);
     } finally {
       setCompressingPose(null);
     }
@@ -183,7 +189,7 @@ export default function PhotosScreen() {
       .sort((a, b) => b[0].localeCompare(a[0]))
       .map(([groupDate, group]) => ({
         date: groupDate,
-        posed: POSES.map((pose) => group.photos.find((p) => p.pose === pose)).filter((p): p is Photo => !!p),
+        posed: PHOTO_POSES.map((pose) => group.photos.find((p) => p.pose === pose)).filter((p): p is Photo => !!p),
         other: group.photos.filter((p) => !p.pose),
         measurements: group.measurements,
         trendWeightKg: trendByDate.get(groupDate) ?? null,
@@ -271,7 +277,7 @@ export default function PhotosScreen() {
           <div>
             <p className="text-[11px] tracking-widest uppercase text-muted mb-2">Progress photos</p>
             <div className="grid grid-cols-3 gap-2">
-              {POSES.map((pose) => {
+              {PHOTO_POSES.map((pose) => {
                 const existing = all.find((p) => p.pose === pose && p.date === date);
                 const isCompressing = compressingPose === pose;
                 return (
@@ -285,11 +291,11 @@ export default function PhotosScreen() {
                         <>
                           <img
                             src={`/api/photos/${existing.id}/file`}
-                            alt={`${POSE_LABEL[pose]} progress photo for ${formatDayLabel(date)}`}
+                            alt={`${PHOTO_POSE_LABEL[pose]} progress photo for ${formatDayLabel(date)}`}
                             className="absolute inset-0 w-full h-full object-cover"
                           />
                           <span className="absolute bottom-1.5 left-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-black/60 text-ink">
-                            {POSE_LABEL[pose]}
+                            {PHOTO_POSE_LABEL[pose]}
                           </span>
                         </>
                       ) : isCompressing ? (
@@ -299,7 +305,9 @@ export default function PhotosScreen() {
                           <span className="h-9 w-9 rounded-full bg-dashboardBg/60 flex items-center justify-center">
                             <Camera size={17} strokeWidth={1.8} className="text-muted" />
                           </span>
-                          <span className="text-[10px] font-semibold tracking-wide uppercase text-muted">{POSE_LABEL[pose]}</span>
+                          <span className="px-1 text-center text-[10px] leading-tight font-semibold tracking-wide uppercase text-muted">
+                            {PHOTO_POSE_LABEL[pose]}
+                          </span>
                         </>
                       )}
                     </button>
@@ -424,13 +432,13 @@ export default function PhotosScreen() {
                           >
                             <img
                               src={`/api/photos/${photo.id}/file`}
-                              alt={photo.pose ? `${POSE_LABEL[photo.pose]} photo for ${formatDayLabel(group.date)}` : formatDayLabel(group.date)}
+                              alt={photo.pose ? `${PHOTO_POSE_LABEL[photo.pose]} photo for ${formatDayLabel(group.date)}` : formatDayLabel(group.date)}
                               loading="lazy"
                               className="w-full h-full object-cover"
                             />
                             {photo.pose && (
                               <span className="absolute bottom-1.5 left-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-black/60 text-ink">
-                                {POSE_LABEL[photo.pose]}
+                                {PHOTO_POSE_LABEL[photo.pose]}
                               </span>
                             )}
                           </button>
@@ -500,7 +508,7 @@ export default function PhotosScreen() {
           title={deleteTarget.kind === "photo" ? "Delete Photo" : "Delete Physique Log"}
           message={
             deleteTarget.kind === "photo"
-              ? `Delete this ${deleteTarget.photo.pose ? `${POSE_LABEL[deleteTarget.photo.pose]} ` : ""}photo from ${formatShortDate(deleteTarget.photo.date)}? This can't be undone.`
+              ? `Delete this ${deleteTarget.photo.pose ? `${PHOTO_POSE_LABEL[deleteTarget.photo.pose]} ` : ""}photo from ${formatShortDate(deleteTarget.photo.date)}? This can't be undone.`
               : `Delete all photos and measurements logged for ${formatShortDate(deleteTarget.date)}? This can't be undone.`
           }
           confirmLabel={deleteTarget.kind === "photo" ? "Delete Photo" : "Delete Log"}
@@ -515,7 +523,7 @@ export default function PhotosScreen() {
           <div className="flex items-center justify-between px-4 py-4 shrink-0">
             <span className="text-sm text-ink">
               {formatDayLabel(viewing.date)}
-              {viewing.pose && <span className="text-muted"> · {POSE_LABEL[viewing.pose]}</span>}
+              {viewing.pose && <span className="text-muted"> · {PHOTO_POSE_LABEL[viewing.pose]}</span>}
             </span>
             <button onClick={() => setViewingId(null)} className="text-muted text-xl leading-none px-1">
               ×

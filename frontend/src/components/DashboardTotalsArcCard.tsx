@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useEnergyUnit, kcalToUnit, energyUnitLabel } from "../lib/energyUnit";
 
 export interface DashboardTotals {
@@ -90,18 +90,35 @@ type ArcMode = "total" | "remaining";
 // MacroSummaryBar's own "consumed"/"remaining" pages use.
 function ArcPage({
   mode,
+  active,
   totals,
   targets,
   energyUnit,
 }: {
   mode: ArcMode;
+  active: boolean;
   totals: DashboardTotals;
   targets: DashboardTotals | null;
   energyUnit: "kcal" | "kj";
 }) {
+  const [ringRevealed, setRingRevealed] = useState(false);
   const remaining = targets ? targets.calories - totals.calories : null;
   const ringValue = mode === "remaining" && remaining !== null ? remaining : totals.calories;
   const ringPct = targets ? pct(ringValue, targets.calories) : 0;
+
+  // Both swipe pages stay mounted side-by-side, so a mount-only CSS
+  // animation would run once while one page is still off-screen and never
+  // replay. Reset an inactive page without a transition, then reveal it on
+  // the next frame when the swipe crosses the midpoint and makes it active.
+  useEffect(() => {
+    if (!active) {
+      setRingRevealed(false);
+      return;
+    }
+    setRingRevealed(false);
+    const frame = requestAnimationFrame(() => setRingRevealed(true));
+    return () => cancelAnimationFrame(frame);
+  }, [active]);
 
   const centerLabel = mode === "total" ? "Consumed" : remaining !== null && remaining < 0 ? "Over" : "Remaining";
   const centerValue = mode === "total" ? totals.calories : remaining !== null ? Math.abs(remaining) : totals.calories;
@@ -139,8 +156,10 @@ function ArcPage({
               strokeWidth={STROKE_WIDTH}
               strokeLinecap="round"
               strokeDasharray={ARC_LENGTH}
-              strokeDashoffset={ARC_LENGTH * (1 - ringPct / 100)}
-              className="fill-none text-calories transition-[stroke-dashoffset] duration-500 ease-out"
+              strokeDashoffset={ringRevealed ? ARC_LENGTH * (1 - ringPct / 100) : ARC_LENGTH}
+              className={`fill-none text-calories motion-reduce:transition-none ${
+                active ? "transition-[stroke-dashoffset] duration-500 ease-out" : ""
+              }`}
               stroke="currentColor"
             />
           </svg>
@@ -232,7 +251,7 @@ export default function DashboardTotalsArcCard({
     return (
       <div className="bg-dashboardCard rounded-2xl overflow-hidden">
         <div className="px-5 py-5">
-          <ArcPage mode="total" totals={totals} targets={null} energyUnit={energyUnit} />
+          <ArcPage mode="total" active totals={totals} targets={null} energyUnit={energyUnit} />
         </div>
       </div>
     );
@@ -252,8 +271,8 @@ export default function DashboardTotalsArcCard({
           className="flex overflow-x-auto no-scrollbar overscroll-x-contain select-none"
           style={{ scrollSnapType: "x mandatory", touchAction: "pan-x" }}
         >
-          <ArcPage mode="total" totals={totals} targets={targets} energyUnit={energyUnit} />
-          <ArcPage mode="remaining" totals={totals} targets={targets} energyUnit={energyUnit} />
+          <ArcPage mode="total" active={page === 0} totals={totals} targets={targets} energyUnit={energyUnit} />
+          <ArcPage mode="remaining" active={page === 1} totals={totals} targets={targets} energyUnit={energyUnit} />
         </div>
         <div className="flex justify-center gap-1.5 mt-4">
           {([0, 1] as const).map((p) => (

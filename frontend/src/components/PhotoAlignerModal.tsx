@@ -2,16 +2,21 @@ import { useEffect, useState } from "react";
 import Cropper, { type Area } from "react-easy-crop";
 import imageCompression from "browser-image-compression";
 import { X, Grid3x3, FlipHorizontal, Wand2, Loader2 } from "lucide-react";
-import type { PhotoPose } from "../api/photos";
+import { PHOTO_POSE_LABEL, type PhotoPose } from "../api/photos";
 import { useHideBottomNav } from "../lib/navVisibility";
-
-const POSE_LABEL: Record<PhotoPose, string> = { front: "Front", side: "Side", back: "Back" };
 
 // A side pose only shows one shoulder/hip clearly, which doesn't give
 // lib/poseAlign.ts's shoulder/hip-based method anything usable to match —
 // the "Match Pose" button below is only offered for poses where it can
 // actually work.
-const POSE_MATCH_SUPPORTED: Record<PhotoPose, boolean> = { front: true, side: false, back: true };
+const POSE_MATCH_SUPPORTED: Record<PhotoPose, boolean> = {
+  front: true,
+  side: false,
+  back: true,
+  front_flexed: true,
+  side_flexed: false,
+  back_flexed: true,
+};
 
 export function createImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -226,7 +231,7 @@ export default function PhotoAlignerModal({
           <X size={20} strokeWidth={2.2} />
         </button>
         <div>
-          <p className="text-[11px] tracking-widest uppercase text-muted">{POSE_LABEL[pose]}</p>
+          <p className="text-[11px] tracking-widest uppercase text-muted">{PHOTO_POSE_LABEL[pose]}</p>
           <h2 className="text-sm font-medium text-ink">Align photo</h2>
         </div>
       </div>
@@ -299,7 +304,7 @@ export default function PhotoAlignerModal({
           >
             <img
               src={ghostUrl}
-              alt={`${POSE_LABEL[pose]} ghost reference`}
+              alt={`${PHOTO_POSE_LABEL[pose]} ghost reference`}
               decoding="async"
               className="w-full h-full object-cover"
               style={{ opacity: ghostOpacity }}

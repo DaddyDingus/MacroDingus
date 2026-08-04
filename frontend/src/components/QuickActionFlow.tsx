@@ -1,23 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { ChefHat, ChevronRight } from "lucide-react";
-import type { Food } from "../api/types";
-import { useRecipes } from "../api/recipes";
 import { useDayLog } from "../api/logs";
 import { usePrograms } from "../api/programs";
 import { targetsForDate } from "../lib/programTargets";
-import { useEnergyUnit, kcalToUnit, energyUnitLabel } from "../lib/energyUnit";
 import { useEffectiveLogDate } from "../lib/viewedDate";
-import { armTrapHandoff } from "../lib/useBackDismiss";
 import type { ShortcutId } from "../lib/shortcuts";
 import AddFoodSheet from "./AddFoodSheet";
 import QuickAddSheet from "./QuickAddSheet";
 import CopyDaySheet from "./CopyDaySheet";
 import LogWeightInline from "./LogWeightInline";
 import BottomSheet from "./BottomSheet";
-import FoodIconAvatar from "./FoodIconAvatar";
-
-type Step = "recipesList" | "logWeight" | "copyDay" | "quickAdd" | "addFood";
 
 // Runs a single quick action to completion, against whichever date is
 // currently "effective" (lib/viewedDate.tsx) — real today everywhere except
@@ -33,23 +25,15 @@ type Step = "recipesList" | "logWeight" | "copyDay" | "quickAdd" | "addFood";
 export default function QuickActionFlow({ action, onClose }: { action: ShortcutId; onClose: () => void }) {
   const navigate = useNavigate();
   const date = useEffectiveLogDate();
-  const recipes = useRecipes();
   const dayLog = useDayLog(date);
   const programs = usePrograms();
-  const { unit: energyUnit } = useEnergyUnit();
-  const [pickedFood, setPickedFood] = useState<Food | null>(null);
-  const [recipeQuery, setRecipeQuery] = useState("");
-  // Set by pickRecipe, read by handleSheetClosed once the "recipesList"
-  // step's own BottomSheet has finished animating away — distinguishes
-  // "picked a recipe" from a swipe-down/backdrop-tap close.
-  const pendingPickedFoodRef = useRef<Food | null>(null);
-  const [step, setStep] = useState<Step>(() => {
-    if (action === "logWeight") return "logWeight";
-    if (action === "copyDay") return "copyDay";
-    if (action === "recipes") return "recipesList";
-    if (action === "quickAdd") return "quickAdd";
-    return "addFood"; // search / scan / newFood / describe / newRecipe
-  });
+  const step = action === "logWeight"
+    ? "logWeight"
+    : action === "copyDay"
+      ? "copyDay"
+      : action === "quickAdd"
+        ? "quickAdd"
+        : "addFood"; // search / scan / newFood / describe / newRecipe / recipes
 
   // Photos has no sheet of its own — jump straight there. Navigating (and
   // closing the menu that triggered this) has to happen in an effect, not
@@ -71,28 +55,6 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
   }, [action]);
 
   if (action === "photos") return null;
-
-  // Same handoff as QuickActionsSheet's own selectAction — picking a recipe
-  // swaps the "recipesList" step's inline <BottomSheet> below for
-  // <AddFoodSheet>, so the outgoing sheet's history entry is handed straight
-  // to AddFoodSheet's trap instead of being unwound and re-pushed (see
-  // lib/useBackDismiss.ts's armTrapHandoff).
-  function pickRecipe(food: Food, close: () => void) {
-    pendingPickedFoodRef.current = food;
-    close();
-  }
-
-  function handleSheetClosed() {
-    const food = pendingPickedFoodRef.current;
-    if (!food) {
-      onClose();
-      return;
-    }
-    pendingPickedFoodRef.current = null;
-    armTrapHandoff();
-    setPickedFood(food);
-    setStep("addFood");
-  }
 
   // Same "whichever program was active on the viewed date" lookup
   // TodayScreen uses, so the sheet's header badges match what the Food log
@@ -118,9 +80,10 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
                 ? "describe"
                 : action === "newRecipe"
                   ? "recipe"
-                  : "search"
+                  : action === "recipes"
+                    ? "library"
+                    : "search"
         }
-        initialFood={pickedFood ?? undefined}
         onClose={onClose}
         totals={dayLog.data?.totals}
         targets={targets}
@@ -136,79 +99,12 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
 
   return (
     <BottomSheet
-      onClose={handleSheetClosed}
+      onClose={onClose}
       backdropClassName="bg-black/50"
       panelClassName="max-h-[85%] bg-surface rounded-t-xl border-t border-line pb-[env(safe-area-inset-bottom)]"
     >
-      {(dragHandlers, close) => (
+      {(dragHandlers) => (
         <>
-        {step === "recipesList" && (
-          <>
-            {/* No Close button — swipe-down (the grabber, or this header) or
-                a tap on the backdrop dismiss the sheet, so a redundant ×
-                isn't needed. */}
-            <div {...dragHandlers} className="px-4 pt-1 pb-2 flex items-center shrink-0 touch-none">
-              <span className="text-sm font-medium text-white">Log a recipe</span>
-            </div>
-
-            {recipes.data && recipes.data.length > 4 && (
-              <div className="px-4 pb-2 shrink-0">
-                <input
-                  autoFocus
-                  type="search"
-                  autoComplete="off"
-                  value={recipeQuery}
-                  onChange={(e) => setRecipeQuery(e.target.value)}
-                  placeholder="Search your recipes…"
-                  className="w-full rounded-md bg-surface-raised border border-line px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent"
-                />
-              </div>
-            )}
-
-            <div className="flex-1 overflow-y-auto px-4 pb-4">
-              {recipes.data?.length === 0 && (
-                <div className="flex flex-col items-center gap-2 px-4 py-10 text-center">
-                  <span className="h-11 w-11 rounded-full bg-dashboardCard flex items-center justify-center">
-                    <ChefHat size={20} strokeWidth={2} className="text-muted" />
-                  </span>
-                  <p className="text-sm text-muted max-w-[220px]">
-                    No recipes yet — try "New recipe" from quick actions.
-                  </p>
-                </div>
-              )}
-              {(() => {
-                const q = recipeQuery.trim().toLowerCase();
-                const filtered = q ? (recipes.data ?? []).filter((r) => r.name.toLowerCase().includes(q)) : recipes.data;
-                if (filtered && filtered.length === 0 && q) {
-                  return <p className="px-1 py-6 text-sm text-muted text-center">No recipes match "{recipeQuery}".</p>;
-                }
-                if (!filtered || filtered.length === 0) return null;
-                return (
-                  <div className="rounded-2xl bg-dashboardCard overflow-hidden divide-y divide-dashboardDivider">
-                    {filtered.map((r) => (
-                      <button
-                        key={r.id}
-                        onClick={() => pickRecipe(r.food, close)}
-                        className="w-full flex items-center gap-3 px-4 py-3 text-left active:bg-surface-raised"
-                      >
-                        <FoodIconAvatar name={r.name} icon={r.food.icon} className="w-8 h-8" />
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-sm text-white truncate">{r.name}</span>
-                          <span className="block text-xs text-muted tabular">
-                            {r.servings} serving{r.servings === 1 ? "" : "s"} ·{" "}
-                            {Math.round(kcalToUnit(r.food.caloriesPer100g, energyUnit))} {energyUnitLabel(energyUnit)}/100g
-                          </span>
-                        </span>
-                        <ChevronRight size={16} strokeWidth={2} className="text-muted shrink-0" />
-                      </button>
-                    ))}
-                  </div>
-                );
-              })()}
-            </div>
-          </>
-        )}
-
         {step === "logWeight" && (
           <>
             <div {...dragHandlers} className="px-4 pt-1 pb-2 flex items-center shrink-0 touch-none">

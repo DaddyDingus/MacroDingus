@@ -303,10 +303,10 @@ export const photos = sqliteTable("photos", {
   userId: text("user_id").notNull().references(() => users.id),
   date: text("date").notNull(),
   filename: text("filename").notNull(),
-  // Nullable: 'front' | 'side' | 'back' | null. Progress-photo pose for the
-  // ghost-alignment/comparison feature — null means an older, uncategorized
-  // photo from before poses existed (or a one-off shot), still shown in the
-  // gallery/history but not eligible for pose-to-pose comparison.
+  // Nullable progress-photo pose for ghost alignment/comparison. The legacy
+  // 'front' | 'side' | 'back' values are the relaxed variants; the flexed
+  // variants add a `_flexed` suffix. Null means an older, uncategorized photo
+  // (or a one-off shot), still shown in history but excluded from comparison.
   pose: text("pose"),
   createdAt: text("created_at").notNull(),
 }, (table) => ({

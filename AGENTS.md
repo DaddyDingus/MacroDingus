@@ -123,7 +123,6 @@ The docked footer (quantity/keypad/Log Foods+Add) is a `shrink-0` flex sibling *
 **FoodRow tap behavior**: tap the row body = open Food Detail screen; tap the "+" button = quick-add with default quantity. Both entry points in Search and Library use this hybrid.
 
 **QuickActionFlow** (`components/QuickActionFlow.tsx`): single shared state machine for both the FAB and Dashboard shortcuts — don't duplicate it for new quick actions. Dates against `lib/viewedDate.tsx`'s `useEffectiveLogDate()`, not `localDateString()` directly, so a quick action fired from either surface lands on the same day `TodayScreen`'s own ‹/› date nav is currently viewing, not always real today.
-The Recipes shortcut directly hands the quick-actions menu's history trap to `AddFoodSheet` and opens Library → Recipes; don't reintroduce a separate recipe-list sheet or wait for the menu's dismiss animation first, since that creates a conspicuous down-then-up delay.
 
 **FAB Photos navigation** (`components/QuickActionsSheet.tsx`): preload the lazy Photos chunk when the quick-actions menu mounts, then route immediately underneath the still-visible sheet and dismiss through its normal animation. This overlaps page loading with the slide-down instead of exposing Suspense's null fallback or adding a dead delay. Call `armTrapHandoff()` before navigating; without it, the outgoing sheet trap's cleanup calls `history.back()` when the animation finishes and cancels the route change.
 

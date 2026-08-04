@@ -216,8 +216,8 @@ function AppRoutes() {
 
   if (needsOnboarding) {
     return (
-      <div key={location.key} className="page-enter">
-        <Suspense fallback={null}>
+      <Suspense fallback={null}>
+        <div key={location.key} className="page-enter">
           <Routes>
             {/* Explicit escape hatch from the catch-all below: OnboardingFlow's
                 own hand-off navigates to /strategy/new-goal once a profile and
@@ -232,15 +232,15 @@ function AppRoutes() {
             <Route path="/strategy/new-program" element={<ProgramWizardScreen />} />
             <Route path="*" element={<OnboardingFlow />} />
           </Routes>
-        </Suspense>
-      </div>
+        </div>
+      </Suspense>
     );
   }
 
   return (
     <>
-      <div key={location.key} className="page-enter">
-        <Suspense fallback={null}>
+      <Suspense fallback={null}>
+        <div key={location.key} className="page-enter">
           <Routes>
             <Route path="/" element={<DashboardScreen />} />
             <Route path="/log" element={<TodayScreen />} />
@@ -270,8 +270,8 @@ function AppRoutes() {
             <Route path="/photos/compare" element={<PhotoCompareScreen />} />
             <Route path="/more" element={<MoreScreen />} />
           </Routes>
-        </Suspense>
-      </div>
+        </div>
+      </Suspense>
       {/* Rendered once here rather than separately by DashboardScreen and
           TodayScreen (each used to mount its own instance) — same reasoning
           as BottomNav living here: a route swap between "/" and "/log" fully

@@ -1,7 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 
-export type PhotoPose = "front" | "side" | "back";
+// The original three values remain the relaxed variants so every existing
+// progress photo stays categorized without a data migration.
+export const PHOTO_POSES = ["front", "side", "back", "front_flexed", "side_flexed", "back_flexed"] as const;
+export type PhotoPose = (typeof PHOTO_POSES)[number];
+export const PHOTO_POSE_LABEL: Record<PhotoPose, string> = {
+  front: "Front relaxed",
+  side: "Side relaxed",
+  back: "Back relaxed",
+  front_flexed: "Front flexed",
+  side_flexed: "Side flexed",
+  back_flexed: "Back flexed",
+};
 
 export interface Photo {
   id: string;

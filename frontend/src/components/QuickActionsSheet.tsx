@@ -1,4 +1,4 @@
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { SlidersHorizontal, ChevronRight, GripVertical, Plus } from "lucide-react";
 import {
@@ -61,6 +61,13 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
   // swipe-down/backdrop-tap closes that share the same onClose.
   const pendingActionRef = useRef<ShortcutId | null>(null);
 
+  // Photos is a lazy route. Start fetching/evaluating its chunk while the
+  // user is looking at this menu so its real content is normally ready by
+  // the time the sheet slides away after a Photos tap.
+  useEffect(() => {
+    void import("../screens/PhotosScreen");
+  }, []);
+
   function handlePointerDown(e: ReactPointerEvent<HTMLButtonElement>, id: ShortcutId, index: number) {
     e.preventDefault();
     const row = e.currentTarget.closest("[data-shortcut-row]") as HTMLElement | null;
@@ -112,14 +119,29 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
     setMoreDrag(null);
   }
 
-  // Runs BottomSheet's own ordinary close (the exact same path a swipe-down
-  // or a backdrop tap already takes) rather than swapping this component's
-  // return value out from under it — the picked action's overlay mounts from
-  // handleSheetClosed below, once the sheet has actually animated away.
+  // Most actions let this BottomSheet finish its ordinary close animation
+  // before mounting their next overlay in handleSheetClosed below. Recipes
+  // is deliberately a direct overlay handoff: waiting 320ms for this menu to
+  // slide all the way down before AddFoodSheet could start sliding up made a
+  // single navigation feel like two unrelated interactions.
   function selectAction(id: ShortcutId, close: () => void) {
+    // Photos is a route rather than another overlay. Begin its page load and
+    // transition immediately underneath this still-visible sheet, then let
+    // the sheet use its normal slide-down animation to reveal it. Keep this
+    // sheet's history entry as the real route entry underneath Photos;
+    // otherwise unmount cleanup calls history.back() and cancels the route.
     if (id === "photos") {
+      armTrapHandoff();
       navigate("/photos");
-      onClose();
+      close();
+      return;
+    }
+    if (id === "recipes") {
+      // The outgoing menu and incoming AddFoodSheet swap in one commit and
+      // share the existing history entry. AddFoodSheet's own Library panel
+      // then supplies the only transition: one immediate upward reveal.
+      armTrapHandoff();
+      setRunningAction(id);
       return;
     }
     pendingActionRef.current = id;
