@@ -5,7 +5,7 @@ import bcrypt from "bcrypt";
 import { z } from "zod";
 import { and, eq, ne } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { logs, favorites, programDays, programs, checkins, goals, weights, photos, profiles, users } from "../db/schema.js";
+import { logs, favorites, foodSearchStats, programDays, programs, checkins, goals, weights, photos, profiles, users } from "../db/schema.js";
 
 const nameSchema = z.object({ name: z.string().trim().min(1).max(40) });
 const passwordSchema = z.object({
@@ -71,6 +71,7 @@ export function registerAccountRoutes(app: FastifyInstance, dataDir: string) {
     }
     await db.delete(logs).where(eq(logs.userId, userId));
     await db.delete(favorites).where(eq(favorites.userId, userId));
+    await db.delete(foodSearchStats).where(eq(foodSearchStats.userId, userId));
     await db.delete(programs).where(eq(programs.userId, userId));
     await db.delete(checkins).where(eq(checkins.userId, userId));
     await db.delete(goals).where(eq(goals.userId, userId));

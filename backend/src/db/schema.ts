@@ -28,6 +28,13 @@ export const foods = sqliteTable("foods", {
   source: text("source").notNull().default("custom"), // 'custom' | 'openfoodfacts' | 'recipe' | 'ai_estimate' | 'afcd'
   servingSizeGrams: real("serving_size_grams"),
   servingName: text("serving_name"),
+  // Optional verified household measures beyond the single primary serving,
+  // stored as [{name, grams}]. A JSON list is deliberate here: measures are
+  // small display/input metadata, never joined or aggregated, and keeping
+  // them on the food means every existing food-returning route carries them
+  // without an N+1 lookup. Never infer these from a name — a "cup" varies
+  // materially by food, so only label/user/AUSNUT-sourced masses belong here.
+  measuresJson: text("measures_json"),
   caloriesPer100g: real("calories_per_100g").notNull(),
   proteinPer100g: real("protein_per_100g").notNull(),
   carbsPer100g: real("carbs_per_100g").notNull(),
@@ -111,6 +118,29 @@ export const logs = sqliteTable("logs", {
   dateIdx: index("logs_date_idx").on(table.date),
   foodIdx: index("logs_food_idx").on(table.foodId),
   userDateIdx: index("logs_user_date_idx").on(table.userId, table.date),
+}));
+
+// Aggregated per-user search-gap telemetry. This deliberately stores no
+// keystroke stream: one row is updated only after a debounced remote search,
+// enough to identify repeated local misses and remote foods worth curating
+// without turning a private food diary into an event-log subsystem.
+export const foodSearchStats = sqliteTable("food_search_stats", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id),
+  normalizedQuery: text("normalized_query").notNull(),
+  searchCount: integer("search_count").notNull().default(0),
+  localMissCount: integer("local_miss_count").notNull().default(0),
+  selectionCount: integer("selection_count").notNull().default(0),
+  remoteSelectionCount: integer("remote_selection_count").notNull().default(0),
+  // Most recently selected food for this exact query. Besides making the
+  // gap report actionable, this becomes a private learned alias: searching
+  // the same household shorthand again can surface the chosen local row even
+  // when its official name contains none of the query words.
+  selectedFoodId: text("selected_food_id").references(() => foods.id),
+  lastResultCount: integer("last_result_count").notNull().default(0),
+  lastSearchedAt: text("last_searched_at").notNull(),
+}, (table) => ({
+  userQueryIdx: uniqueIndex("food_search_stats_user_query_idx").on(table.userId, table.normalizedQuery),
 }));
 
 // One scale reading per person per day — re-weighing the same day upserts

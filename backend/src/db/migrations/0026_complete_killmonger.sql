@@ -1,0 +1,1 @@
+ALTER TABLE `food_search_stats` ADD `selected_food_id` text REFERENCES foods(id);

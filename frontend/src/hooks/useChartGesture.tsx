@@ -6,6 +6,11 @@ import { CHART_HEIGHT, CHART_HEIGHT_EXPANDED, CHART_MARGIN, Y_AXIS_WIDTH } from 
 // pinch can zoom in before it stops being useful. Shared across every chart
 // this hook drives, same reasoning as the original Expenditure-only version.
 const MIN_WINDOW_DAYS = 7;
+// Every history-chart query is capped at this same range. Keeping it as the
+// zoom-out ceiling also lets a preset retain its real duration when the user
+// only has a few days of data, instead of collapsing every preset to the
+// tiny data span (and, for one day of data, a zero-width window).
+const MAX_WINDOW_DAYS = 3650;
 
 export interface WindowRange {
   start: number; // day-index, see lib/date.ts's dayIndex
@@ -33,7 +38,7 @@ function clamp(n: number, min: number, max: number): number {
 // every other hand-rolled gesture in this codebase (DraggableSnapSheet.tsx,
 // BottomSheet.tsx, DashboardCustomizeScreen.tsx) — never raw touch/mouse
 // events, transient per-frame state in refs, `setPointerCapture` explicit,
-// `touch-none` instead of `preventDefault()`.
+// and `touch-action: pan-y` so native vertical scrolling remains available.
 //
 // `viewRef` is the single source of truth for the live gesture, read/written
 // synchronously by the pointer handlers — reading React state here would
@@ -78,19 +83,19 @@ export function useChartGesture({
   const presetAnimId = useRef<number | null>(null);
 
   function clampWindow(start: number, end: number): WindowRange {
-    const maxSpan = Math.max(todayTs - earliestTs, minWindowDays - 1);
-    const width = clamp(end - start, minWindowDays - 1, maxSpan);
-    let s = start;
-    let e = s + width;
-    if (e > todayTs) {
-      e = todayTs;
-      s = e - width;
-    }
-    if (s < earliestTs) {
-      s = earliestTs;
-      e = Math.min(todayTs, s + width);
-    }
-    return { start: Math.round(s), end: Math.round(e) };
+    const safeEarliestTs = Math.min(earliestTs, todayTs);
+    const minSpan = minWindowDays - 1;
+    const maxSpan = Math.max(todayTs - safeEarliestTs, MAX_WINDOW_DAYS - 1, minSpan);
+    const width = clamp(end - start, minSpan, maxSpan);
+    // When history is shorter than the visible window, allow the empty part
+    // of that window to extend before the first real point. Clamping `start`
+    // straight back to earliestTs used to shrink a 7-day minimum to one or
+    // even zero days; from there pan divided by zero and pinch could never
+    // grow the window again, leaving every chart permanently stuck.
+    const earliestWindowStart = Math.min(safeEarliestTs, todayTs - width);
+    const latestWindowStart = todayTs - width;
+    const s = clamp(start, earliestWindowStart, latestWindowStart);
+    return { start: Math.round(s), end: Math.round(s + width) };
   }
 
   const commitView = useCallback((next: WindowRange) => {
@@ -152,10 +157,11 @@ export function useChartGesture({
 
   function selectPreset(days: number) {
     const end = todayTs;
-    const start = Math.max(earliestTs, end - (days - 1));
+    const target = clampWindow(end - (days - 1), end);
+    pointers.current.clear();
     panGesture.current = null;
     pinchGesture.current = null;
-    animateToView({ start, end });
+    animateToView(target);
   }
 
   // Only "active" (matching a pill) when the window is exactly that preset's
@@ -176,6 +182,16 @@ export function useChartGesture({
     if (presetAnimId.current != null) {
       cancelAnimationFrame(presetAnimId.current);
       presetAnimId.current = null;
+    }
+    // `lostpointercapture`/`pointercancel` normally clear this map, but Chrome
+    // can omit the final event when a native scroll or browser gesture wins.
+    // A new primary pointer is definitive proof that no old gesture is still
+    // active, so discard any orphaned ids before starting it; otherwise the
+    // first finger is misread as finger two and the chart appears frozen.
+    if (e.isPrimary && pointers.current.size > 0) {
+      pointers.current.clear();
+      panGesture.current = null;
+      pinchGesture.current = null;
     }
     e.currentTarget.setPointerCapture(e.pointerId);
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -222,12 +238,14 @@ export function useChartGesture({
     }
   }
 
-  function handlePointerUp(e: ReactPointerEvent<HTMLDivElement>) {
+  function finishPointer(e: ReactPointerEvent<HTMLDivElement>, releaseCapture: boolean) {
     pointers.current.delete(e.pointerId);
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch {
-      // already released (e.g. pointercancel beat us here) — nothing to do
+    if (releaseCapture) {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        // already released (e.g. pointercancel beat us here) — nothing to do
+      }
     }
     pinchGesture.current = null;
     if (pointers.current.size === 1) {
@@ -240,10 +258,21 @@ export function useChartGesture({
     }
   }
 
+  function handlePointerUp(e: ReactPointerEvent<HTMLDivElement>) {
+    finishPointer(e, true);
+  }
+
+  function handleLostPointerCapture(e: ReactPointerEvent<HTMLDivElement>) {
+    finishPointer(e, false);
+  }
+
   const overlay = (
     <div
       ref={overlayRef}
-      className="absolute top-0 touch-none"
+      // Preserve native vertical page scrolling while reserving horizontal
+      // movement and two-finger pinch for the chart. `touch-none` trapped any
+      // scroll that happened to start over this large overlay.
+      className="absolute top-0 touch-pan-y"
       style={{
         height: chartHeight,
         left: Y_AXIS_WIDTH + CHART_MARGIN.left,
@@ -253,6 +282,7 @@ export function useChartGesture({
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
+      onLostPointerCapture={handleLostPointerCapture}
     />
   );
 

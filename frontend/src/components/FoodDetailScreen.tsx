@@ -8,6 +8,7 @@ import { useBackDismiss } from "../lib/useBackDismiss";
 import { useEnergyUnit, kcalToUnit, energyUnitLabel } from "../lib/energyUnit";
 import { useLastLoggedQuantity } from "../api/foods";
 import NutrientStatusBar, { LogTimePill } from "./NutrientStatusBar";
+import { foodMeasures } from "../lib/foodMeasures";
 
 function fmt(n: number, decimals = 0): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: decimals, minimumFractionDigits: decimals });
@@ -38,7 +39,6 @@ function targetFor(targets: MacroTargets | null | undefined, key: "calories" | "
   return targets.carbsG;
 }
 
-type Unit = "g" | "oz" | "serving" | "lb";
 const GRAMS_PER_OZ = 28.3495;
 const GRAMS_PER_LB = 453.592;
 
@@ -449,10 +449,10 @@ export default function FoodDetailScreen({
   // has to sit on top of this one.
   useBackDismiss(true, onBack);
 
-  const hasServing = food.servingSizeGrams != null;
-  const [unit, setUnit] = useState<Unit>("g");
+  const [unit, setUnit] = useState("g");
   const [quantityInput, setQuantityInput] = useState(String(initialQuantityGrams ?? 100));
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  useEffect(() => setUnit("g"), [food.id]);
   // Quantity entry is a custom keypad, not a real <input> — a real one was
   // tried here before and reverted specifically because a back press had
   // nothing keyboard-shaped to close first, so it exited this whole screen
@@ -539,12 +539,24 @@ export default function FoodDetailScreen({
     setQuantityInput(String(lastQuantity.data?.quantityGrams ?? initialQuantityGrams ?? 100));
   }, [food.id, lastQuantity.data, editing, initialQuantityGrams]);
 
-  const units: Unit[] = hasServing ? ["g", "oz", "lb", "serving"] : ["g", "oz", "lb"];
-  const unitLabel = (u: Unit) => (u === "serving" ? food.servingName ?? "serving" : u);
-
-  const gramsPerUnit = unit === "oz" ? GRAMS_PER_OZ : unit === "lb" ? GRAMS_PER_LB : unit === "serving" ? food.servingSizeGrams ?? 100 : 1;
+  const units = [
+    { key: "g", label: "g", grams: 1 },
+    { key: "oz", label: "oz", grams: GRAMS_PER_OZ },
+    { key: "lb", label: "lb", grams: GRAMS_PER_LB },
+    ...foodMeasures(food).map((measure, index) => ({ key: `measure:${index}`, label: measure.name, grams: measure.grams })),
+  ];
+  const activeUnit = units.find((candidate) => candidate.key === unit) ?? units[0];
+  const gramsPerUnit = activeUnit.grams;
   const quantity = Number(quantityInput) || 0;
   const quantityGrams = Math.max(0, quantity * gramsPerUnit);
+
+  function selectUnit(nextKey: string) {
+    const next = units.find((candidate) => candidate.key === nextKey);
+    if (!next || next.key === activeUnit.key) return;
+    setQuantityInput(String(Number((quantityGrams / next.grams).toFixed(3))));
+    setUnit(next.key);
+    setAllSelected(true);
+  }
 
   // The custom keypad's own edit ops — plain string-append/trim on
   // quantityInput, same as typing into a real numeric input would produce.
@@ -907,7 +919,7 @@ export default function FoodDetailScreen({
             {keypadOpen && <span className="caret-blink w-[3px] h-[1.1em] bg-white ml-1 shrink-0" />}
           </span>
           <span className="flex items-center gap-1 shrink-0 text-muted">
-            <span className="text-xs">{unitLabel(unit)}</span>
+            <span className="text-xs">{activeUnit.label}</span>
             <ChevronDown size={14} strokeWidth={2.5} className={`transition-transform duration-200 ${keypadOpen ? "rotate-180" : ""}`} />
           </span>
         </button>
@@ -929,17 +941,17 @@ export default function FoodDetailScreen({
             <div className="flex gap-2 overflow-x-auto no-scrollbar pb-3">
               {units.map((u) => (
                 <button
-                  key={u}
+                  key={u.key}
                   onTouchStart={() => triggerHaptic(10)}
                   onClick={() => {
                     triggerHaptic(10);
-                    setUnit(u);
+                    selectUnit(u.key);
                   }}
                   className={`shrink-0 h-8 rounded-full px-3.5 border text-xs font-medium whitespace-nowrap flex items-center justify-center transition-all duration-75 active:scale-[0.96] select-none ${
-                    unit === u ? "border-accent text-accent bg-accent/[0.06]" : "border-white/10 text-white/80 active:bg-white/5"
+                    unit === u.key ? "border-accent text-accent bg-accent/[0.06]" : "border-white/10 text-white/80 active:bg-white/5"
                   }`}
                 >
-                  {unitLabel(u)}
+                  {u.label}
                 </button>
               ))}
             </div>

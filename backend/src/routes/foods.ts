@@ -1,13 +1,14 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { and, eq, like, desc, inArray, isNull } from "drizzle-orm";
+import { and, eq, like, desc, isNull, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "../db/index.js";
-import { foods, logs } from "../db/schema.js";
+import { foods, logs, foodSearchStats } from "../db/schema.js";
 import { fetchOffProduct, mapOffProduct, searchOffProducts } from "../engine/openfoodfacts.js";
 import { scanNutritionLabel } from "../engine/labelScan.js";
 import { describeMeal } from "../engine/describeMeal.js";
 import { toBoundedJpeg } from "../engine/imagePrep.js";
+import { expandFoodQuery, foodTextRelevance, normalizeFoodQuery } from "../engine/foodSearch.js";
 
 // Same long-edge cap/quality tradeoff as photos.ts's progress-photo resize —
 // a nutrition label's print is small, so this stays notably larger than that
@@ -27,6 +28,7 @@ const foodInput = z.object({
   barcode: z.string().optional(),
   servingSizeGrams: z.number().positive().optional(),
   servingName: z.string().optional(),
+  measures: z.array(z.object({ name: z.string().trim().min(1).max(40), grams: z.number().positive().max(10000) })).max(12).optional(),
   // A user-picked emoji override — null clears back to the keyword-guessed
   // icon (see frontend lib/foodEmoji.ts), omitted leaves it untouched.
   icon: z.string().nullable().optional(),
@@ -56,6 +58,39 @@ function microsJsonFromInput(micros: Record<string, number> | undefined): string
   return Object.keys(micros).length > 0 ? JSON.stringify(micros) : null;
 }
 
+function measuresJsonFromInput(measures: { name: string; grams: number }[] | undefined): string | null | undefined {
+  if (measures === undefined) return undefined;
+  const unique = new Map<string, { name: string; grams: number }>();
+  for (const measure of measures) unique.set(measure.name.trim().toLowerCase(), { name: measure.name.trim(), grams: measure.grams });
+  return unique.size > 0 ? JSON.stringify([...unique.values()]) : null;
+}
+
+function localFoodCondition(query: string) {
+  const terms = expandFoodQuery(query);
+  return and(
+    or(...terms.map((term) => and(...term.split(" ").map((word) => or(like(foods.name, `%${word}%`), like(foods.brand, `%${word}%`)))))),
+    isNull(foods.hiddenAt)
+  );
+}
+
+async function recordCompletedSearch(userId: string, query: string, localCount: number, resultCount: number) {
+  const normalizedQuery = normalizeFoodQuery(query);
+  if (normalizedQuery.length < 2) return;
+  const now = new Date().toISOString();
+  await db.insert(foodSearchStats).values({
+    id: randomUUID(), userId, normalizedQuery, searchCount: 1,
+    localMissCount: localCount === 0 ? 1 : 0, lastResultCount: resultCount, lastSearchedAt: now,
+  }).onConflictDoUpdate({
+    target: [foodSearchStats.userId, foodSearchStats.normalizedQuery],
+    set: {
+      searchCount: sql`${foodSearchStats.searchCount} + 1`,
+      localMissCount: sql`${foodSearchStats.localMissCount} + ${localCount === 0 ? 1 : 0}`,
+      lastResultCount: resultCount,
+      lastSearchedAt: now,
+    },
+  });
+}
+
 export function registerFoodRoutes(app: FastifyInstance) {
   app.get("/api/foods", async (req) => {
     const { q, limit, source } = req.query as { q?: string; limit?: string; source?: string };
@@ -68,6 +103,8 @@ export function registerFoodRoutes(app: FastifyInstance) {
       return db.select().from(foods).where(isNull(foods.hiddenAt)).orderBy(desc(foods.createdAt)).limit(take);
     }
     const trimmed = q.trim();
+    if (normalizeFoodQuery(trimmed).length < 2) return [];
+    const normalizedQuery = normalizeFoodQuery(trimmed);
     // Over-fetch beyond `take` so there's a real pool of local matches to
     // re-rank below before slicing down to size — a plain `.limit(take)` here
     // would have already thrown away anything past the DB's own (arbitrary,
@@ -75,7 +112,19 @@ export function registerFoodRoutes(app: FastifyInstance) {
     // hiddenAt excludes anything "deleted" (kept alive only for history —
     // see the DELETE handler below) or an ai_estimate Describe row, neither
     // of which should ever resurface as a pickable search result.
-    const localCandidates = await db.select().from(foods).where(and(like(foods.name, `%${trimmed}%`), isNull(foods.hiddenAt))).limit(take * 3);
+    // The visible library is only a few thousand rows, so keep every match
+    // until after relevance scoring. Limiting before sorting can silently
+    // discard the exact match on broad terms such as "milk".
+    const localCandidates = await db.select().from(foods).where(localFoodCondition(trimmed));
+    const [learned] = await db.select({ foodId: foodSearchStats.selectedFoodId }).from(foodSearchStats)
+      .where(and(eq(foodSearchStats.userId, req.userId!), eq(foodSearchStats.normalizedQuery, normalizedQuery)))
+      .limit(1);
+    const learnedIds = new Set<string>();
+    if (learned?.foodId && !localCandidates.some((food) => food.id === learned.foodId)) {
+      const [learnedFood] = await db.select().from(foods).where(and(eq(foods.id, learned.foodId), isNull(foods.hiddenAt)));
+      if (learnedFood) localCandidates.push(learnedFood);
+    }
+    if (learned?.foodId) learnedIds.add(learned.foodId);
 
     // Foods someone's actually logged before are what a search should surface
     // first — e.g. "peanut butter" should rank a plain local Peanut Butter
@@ -85,11 +134,22 @@ export function registerFoodRoutes(app: FastifyInstance) {
     // of its own, so this is a second query against `logs` rather than a
     // stored/denormalized column — trivial at personal-diary scale, same
     // trade-off other routes in this app already make (see logs/recent-days).
-    const candidateIds = localCandidates.map((f) => f.id);
-    const loggedIds = new Set<string>();
-    if (candidateIds.length > 0) {
-      const loggedRows = await db.selectDistinct({ foodId: logs.foodId }).from(logs).where(inArray(logs.foodId, candidateIds));
-      for (const row of loggedRows) loggedIds.add(row.foodId);
+    const candidateIds = new Set(localCandidates.map((f) => f.id));
+    const usage = new Map<string, { count: number; lastLoggedAt: string }>();
+    if (candidateIds.size > 0) {
+      // Read this user's small history once and filter it in JS. Building an
+      // IN (...) statement from every broad local candidate (827 matches for
+      // the first letter of "Honey") overloaded better-sqlite3's native
+      // binding and terminated the process before the finished word could be
+      // searched. Personal log history is much smaller than the food library,
+      // making this both safer and cheaper for the one/two-letter edge case.
+      const loggedRows = await db.select({ foodId: logs.foodId, loggedAt: logs.loggedAt }).from(logs)
+        .where(eq(logs.userId, req.userId!));
+      for (const row of loggedRows) {
+        if (!candidateIds.has(row.foodId)) continue;
+        const current = usage.get(row.foodId);
+        usage.set(row.foodId, { count: (current?.count ?? 0) + 1, lastLoggedAt: current && current.lastLoggedAt > row.loggedAt ? current.lastLoggedAt : row.loggedAt });
+      }
     }
     // Local matches had no relevance ranking at all until this — just
     // "logged before" as the only sort key, so an exact match with no log
@@ -101,49 +161,80 @@ export function registerFoodRoutes(app: FastifyInstance) {
     // tier) — with "logged before" breaking ties *within* a relevance tier
     // only, not overriding it: a name match this strong is a much stronger
     // intent signal than log history.
-    const trimmedLower = trimmed.toLowerCase();
-    const escapedForRegex = trimmedLower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const wordBoundaryRe = new RegExp(`\\b${escapedForRegex}\\b`, "i");
-    function relevance(name: string): number {
-      const lower = name.toLowerCase();
-      if (lower === trimmedLower) return 3;
-      if (lower.startsWith(trimmedLower)) return 2;
-      if (wordBoundaryRe.test(name)) return 1;
-      return 0;
-    }
     const local = localCandidates
-      .sort((a, b) => relevance(b.name) - relevance(a.name) || Number(loggedIds.has(b.id)) - Number(loggedIds.has(a.id)))
+      .sort((a, b) => {
+        const aRelevance = Math.max(foodTextRelevance(a.name, a.brand, trimmed), learnedIds.has(a.id) ? 35 : 0);
+        const bRelevance = Math.max(foodTextRelevance(b.name, b.brand, trimmed), learnedIds.has(b.id) ? 35 : 0);
+        const relevanceDelta = bRelevance - aRelevance;
+        if (relevanceDelta) return relevanceDelta;
+        const aUsage = usage.get(a.id);
+        const bUsage = usage.get(b.id);
+        return (bUsage?.count ?? 0) - (aUsage?.count ?? 0)
+          || (bUsage?.lastLoggedAt ?? "").localeCompare(aUsage?.lastLoggedAt ?? "")
+          || a.name.localeCompare(b.name);
+      })
       .slice(0, take);
 
-    // ~1,588 generic staples are seeded locally from the Australian Food
-    // Composition Database (source: 'afcd', see scripts/import-afcd-foods.ts)
-    // on top of whatever's come from a barcode scan, a custom entry, or a
-    // materialized recipe — but that's still nowhere near comprehensive, so a
-    // less common plain-language term can still come back empty from local
-    // matches alone. Fold in OpenFoodFacts name-search results for whatever
-    // local didn't cover — always after every local
-    // match regardless of logged status, since these are unfamiliar-by
-    // definition (never logged, not even cached locally yet). These are
-    // synthetic (id `off:<barcode>`, not a real row yet) — the frontend
-    // resolves one into an actual cached food via the existing barcode
-    // lookup only once the user picks it, same cache-on-select behavior the
-    // barcode scanner already has.
-    if (local.length < take) {
-      try {
-        const localBarcodes = new Set(local.map((f) => f.barcode).filter((b): b is string => !!b));
-        const offResults = await searchOffProducts(trimmed, take - local.length);
-        const remote = offResults
-          .filter((r) => !localBarcodes.has(r.code))
-          .map((r) => ({ id: `off:${r.code}`, createdAt: new Date().toISOString(), ...mapOffProduct(r.code, r.product) }));
-        return [...local, ...remote];
-      } catch (err) {
-        req.log.error(err);
-        return local;
-      }
-    }
-
+    // Remote OFF results deliberately live on /api/foods/remote now. Returning
+    // this SQLite result immediately lets the frontend paint known foods while
+    // that slower, separately-debounced request continues in the background.
     return local;
   });
+
+  app.get("/api/foods/remote", async (req) => {
+    const { q, limit } = req.query as { q?: string; limit?: string };
+    const trimmed = q?.trim() ?? "";
+    if (!trimmed || normalizeFoodQuery(trimmed).length < 2) return [];
+    const take = Math.min(Number(limit) || 20, 50);
+    try {
+      const offResults = await searchOffProducts(trimmed, take);
+      const mapped = offResults.map((r) => ({
+        id: `off:${r.code}`,
+        createdAt: new Date().toISOString(),
+        ...mapOffProduct(r.code, r.product),
+      }));
+      const [{ count: localCount }] = await db.select({ count: sql<number>`count(*)` }).from(foods).where(localFoodCondition(trimmed));
+      await recordCompletedSearch(req.userId!, trimmed, Number(localCount), mapped.length);
+      return mapped;
+    } catch (err) {
+      req.log.error(err);
+      return [];
+    }
+  });
+
+  app.post("/api/foods/search-selection", async (req, reply) => {
+    const parsed = z.object({ query: z.string().trim().min(2).max(120), foodId: z.string().uuid(), source: z.string().max(40) }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const normalizedQuery = normalizeFoodQuery(parsed.data.query);
+    if (normalizedQuery.length < 2) {
+      reply.code(204);
+      return null;
+    }
+    const [selectedFood] = await db.select({ id: foods.id }).from(foods)
+      .where(and(eq(foods.id, parsed.data.foodId), isNull(foods.hiddenAt)));
+    if (!selectedFood) return reply.code(400).send({ error: "unknown foodId" });
+    const now = new Date().toISOString();
+    const remote = parsed.data.source === "openfoodfacts" ? 1 : 0;
+    await db.insert(foodSearchStats).values({
+      id: randomUUID(), userId: req.userId!, normalizedQuery, selectionCount: 1,
+      remoteSelectionCount: remote, selectedFoodId: selectedFood.id, lastSearchedAt: now,
+    }).onConflictDoUpdate({
+      target: [foodSearchStats.userId, foodSearchStats.normalizedQuery],
+      set: {
+        selectionCount: sql`${foodSearchStats.selectionCount} + 1`,
+        remoteSelectionCount: sql`${foodSearchStats.remoteSelectionCount} + ${remote}`,
+        selectedFoodId: selectedFood.id,
+        lastSearchedAt: now,
+      },
+    });
+    reply.code(204);
+    return null;
+  });
+
+  app.get("/api/foods/search-gaps", async (req) => db.select().from(foodSearchStats)
+    .where(eq(foodSearchStats.userId, req.userId!))
+    .orderBy(desc(foodSearchStats.localMissCount), desc(foodSearchStats.remoteSelectionCount), desc(foodSearchStats.lastSearchedAt))
+    .limit(100));
 
   // Cache-first: a barcode already in our own database (whether from a previous
   // OFF lookup or a manually created custom food) always wins over a fresh
@@ -307,13 +398,14 @@ export function registerFoodRoutes(app: FastifyInstance) {
 
     const id = randomUUID();
     const now = new Date().toISOString();
-    const { micros, ...rest } = parsed.data;
+    const { micros, measures, ...rest } = parsed.data;
     await db.insert(foods).values({
       id,
       source: "custom",
       createdAt: now,
       ...rest,
       microsJson: microsJsonFromInput(micros),
+      measuresJson: measuresJsonFromInput(measures),
     });
     const [food] = await db.select().from(foods).where(eq(foods.id, id));
     reply.code(201);
@@ -325,11 +417,12 @@ export function registerFoodRoutes(app: FastifyInstance) {
     const parsed = foodInput.partial().safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
 
-    const { micros, ...rest } = parsed.data;
+    const { micros, measures, ...rest } = parsed.data;
     const microsJson = microsJsonFromInput(micros);
+    const measuresJson = measuresJsonFromInput(measures);
     await db
       .update(foods)
-      .set(microsJson === undefined ? rest : { ...rest, microsJson })
+      .set({ ...rest, ...(microsJson === undefined ? {} : { microsJson }), ...(measuresJson === undefined ? {} : { measuresJson }) })
       .where(eq(foods.id, id));
     const [food] = await db.select().from(foods).where(eq(foods.id, id));
     if (!food) return reply.code(404).send({ error: "not found" });

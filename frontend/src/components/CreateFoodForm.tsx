@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from "react";
-import { Camera, ChevronLeft, Loader2, Pencil } from "lucide-react";
+import { Camera, ChevronLeft, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import type { CreateFoodInput, Food, LabelScanResult } from "../api/types";
 import { useEnergyUnit, kcalToUnit, unitToKcal, energyUnitLabel, type EnergyUnit } from "../lib/energyUnit";
 import { getFoodIcon } from "../lib/foodEmoji";
@@ -18,6 +18,18 @@ function parseMicrosJson(microsJson: string | null): Record<string, number> {
     return typeof parsed === "object" && parsed !== null ? parsed : {};
   } catch {
     return {};
+  }
+}
+
+function parseMeasuresJson(measuresJson: string | null | undefined): { name: string; grams: string }[] {
+  if (!measuresJson) return [];
+  try {
+    const parsed = JSON.parse(measuresJson) as { name?: unknown; grams?: unknown }[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((m) => typeof m.name === "string" && typeof m.grams === "number" && m.grams > 0)
+      .map((m) => ({ name: m.name as string, grams: String(m.grams) }));
+  } catch {
+    return [];
   }
 }
 
@@ -166,6 +178,8 @@ export default function CreateFoodForm({
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [brand, setBrand] = useState(prefillFood?.brand ?? "");
   const [servingSizeGrams, setServingSizeGrams] = useState(numToStr(prefillFood?.servingSizeGrams));
+  const [servingName, setServingName] = useState(prefillFood?.servingName ?? "serving");
+  const [measures, setMeasures] = useState(() => parseMeasuresJson(prefillFood?.measuresJson));
   const [calories, setCalories] = useState(() =>
     prefillFood?.caloriesPer100g == null ? "" : String(Math.round(kcalToUnit(prefillFood.caloriesPer100g, energyUnit)))
   );
@@ -223,6 +237,7 @@ export default function CreateFoodForm({
     if (result.name != null) setName(result.name);
     if (result.brand != null) setBrand(result.brand);
     if (result.servingSizeGrams != null) setServingSizeGrams(String(result.servingSizeGrams));
+    if (result.servingName != null) setServingName(result.servingName);
     if (result.caloriesPer100g != null) setCalories(String(Math.round(kcalToUnit(result.caloriesPer100g, energyUnit))));
     if (result.proteinPer100g != null) setProtein(String(result.proteinPer100g));
     if (result.carbsPer100g != null) setCarbs(String(result.carbsPer100g));
@@ -297,6 +312,10 @@ export default function CreateFoodForm({
       brand: brand.trim() || undefined,
       barcode,
       servingSizeGrams: num(servingSizeGrams),
+      servingName: servingSizeGrams.trim() ? servingName.trim() || "serving" : undefined,
+      measures: measures
+        .filter((measure) => measure.name.trim() && measure.grams.trim() && Number(measure.grams) > 0)
+        .map((measure) => ({ name: measure.name.trim(), grams: Number(measure.grams) })),
       caloriesPer100g: unitToKcal(Number(calories), energyUnit),
       proteinPer100g: Number(protein),
       carbsPer100g: Number(carbs),
@@ -464,9 +483,18 @@ export default function CreateFoodForm({
             <NumberField label="Fat" value={fat} onChange={setFat} suffix="g" labelClassName="text-fat" onEnter={submit} />
           </div>
 
-          <label className="block">
-            <span className="block text-xs text-muted mb-1">Serving size (optional)</span>
-            <div className="flex items-center rounded-md bg-surface-raised border border-line px-3 focus-within:border-accent">
+          <div>
+            <span className="block text-xs text-muted mb-1">Primary serving (optional)</span>
+            <div className="grid grid-cols-[1fr_7rem] gap-2">
+              <input
+                type="search"
+                autoComplete="off"
+                value={servingName}
+                onChange={(e) => setServingName(e.target.value)}
+                placeholder="e.g. slice"
+                className="min-w-0 rounded-md bg-surface-raised border border-line px-3 py-2.5 text-sm focus:outline-none focus:border-accent"
+              />
+              <div className="flex items-center rounded-md bg-surface-raised border border-line px-3 focus-within:border-accent">
               <input
                 type="search"
                 inputMode="decimal"
@@ -477,8 +505,29 @@ export default function CreateFoodForm({
                 className="tabular w-full bg-transparent py-2.5 text-sm focus:outline-none"
               />
               <span className="text-xs text-muted">g</span>
+              </div>
             </div>
-          </label>
+          </div>
+
+          {measures.map((measure, index) => (
+            <div key={index} className="grid grid-cols-[1fr_7rem_2rem] gap-2 items-end">
+              <label className="block">
+                <span className="block text-xs text-muted mb-1">Measure</span>
+                <input type="search" autoComplete="off" value={measure.name} onChange={(e) => setMeasures((current) => current.map((m, i) => i === index ? { ...m, name: e.target.value } : m))} placeholder="e.g. cup" className="w-full rounded-md bg-surface-raised border border-line px-3 py-2.5 text-sm focus:outline-none focus:border-accent" />
+              </label>
+              <label className="block">
+                <span className="block text-xs text-muted mb-1">Weight</span>
+                <div className="flex items-center rounded-md bg-surface-raised border border-line px-3 focus-within:border-accent">
+                  <input type="search" inputMode="decimal" autoComplete="off" value={measure.grams} onChange={(e) => setMeasures((current) => current.map((m, i) => i === index ? { ...m, grams: e.target.value } : m))} className="tabular w-full min-w-0 bg-transparent py-2.5 text-sm focus:outline-none" />
+                  <span className="text-xs text-muted">g</span>
+                </div>
+              </label>
+              <button type="button" aria-label="Remove measure" onClick={() => setMeasures((current) => current.filter((_, i) => i !== index))} className="h-10 flex items-center justify-center text-muted active:text-white"><Trash2 size={15} /></button>
+            </div>
+          ))}
+          <button type="button" onClick={() => setMeasures((current) => [...current, { name: "", grams: "" }])} className="flex items-center gap-1.5 text-xs text-accent font-medium active:opacity-70">
+            <Plus size={14} /> Add household measure
+          </button>
 
           {showPreview && (
             <div className="rounded-xl bg-dashboardBg px-3 pt-3 pb-2.5">

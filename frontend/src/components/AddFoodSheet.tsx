@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import type { Food, LogEntry, Nutrition } from "../api/types";
 import type { MacroTargets } from "./MacroSummaryBar";
-import { useFoodSearch, useCreateFood, useCustomFoods, useBarcodeLookup, useDeleteFood, useDescribeMeal } from "../api/foods";
+import { useFoodSearch, useCreateFood, useCustomFoods, useBarcodeLookup, useDeleteFood, useDescribeMeal, recordFoodSearchSelection } from "../api/foods";
 import { useFavorites, useAddFavorite, useRemoveFavorite } from "../api/favorites";
 import { useRecipes, useRecipeDetail, useCreateRecipe, useUpdateRecipe, useDeleteRecipe, useImportRecipeUrl, type RecipeSummary } from "../api/recipes";
 import { useAddLog, useBulkAddLog, useUpdateLogQuantity, useDeleteLog, useSmartHistory } from "../api/logs";
@@ -38,6 +38,7 @@ import DateTimePickerSheet from "./DateTimePickerSheet";
 import ConfirmDeleteSheet from "./ConfirmDeleteSheet";
 import PhotoSourceSheet from "./PhotoSourceSheet";
 import DiscardWarningSheet from "./DiscardWarningSheet";
+import { foodMeasures } from "../lib/foodMeasures";
 
 // zxing's decoder is ~400kB and only ever needed for the occasional barcode
 // scan, not the everyday search-and-log path — split it into its own chunk
@@ -259,6 +260,12 @@ export default function AddFoodSheet({
   // header's chevron, a drag on the sheet's own grabber, or tapping a tab
   // while collapsed.
   const [sheetExpanded, setSheetExpanded] = useState(true);
+  // Kept in sync eagerly inside the back handler as well as on render. A
+  // second, very fast gesture can arrive before React has committed the
+  // collapse; reading only the render closure there could consume the outer
+  // sheet entry while trying to collapse an already-collapsing panel again.
+  const sheetExpandedRef = useRef(sheetExpanded);
+  sheetExpandedRef.current = sheetExpanded;
   // Confirmation gate for the X button specifically — see requestClose below.
   // Not shown for the chevron/collapse or for a successful "Log Foods"
   // commit, only for actually leaving the modal with unlogged items still on
@@ -448,14 +455,24 @@ export default function AddFoodSheet({
   }, [open, editingEntry, initialFood, initialStep]);
 
   // One history entry per back press this sheet can absorb: one for the sheet
-  // itself, plus one for each sub-step between here and "browse". This used to
-  // be a single `useBackDismiss(open, requestClose)` that re-armed itself on
-  // every press — see useBackDismiss.ts for why that exited the app instead.
+  // itself, one for the expanded Search layer above Plate View, plus one for
+  // each sub-step between here and "browse". The expansion entry stays owned
+  // underneath fullscreen sub-steps (including FoodDetailScreen's own nested
+  // traps), so returning to browse via back reveals an already-backed UI level
+  // instead of pushing a new entry from a popstate-triggered render.
+  //
+  // Recipe ingredient picking has no Plate View/collapsed resting state, and
+  // direct edit/initial-food detail opens have no browse layer behind them, so
+  // none of those paths owns this extra level.
+  const ownsExpansionLevel = !editingEntry && !initialFood && !onPickItems && sheetExpanded;
+  // This used to be a single `useBackDismiss(open, requestClose)` that
+  // re-armed itself on every press — see useBackDismiss.ts for why that exited
+  // the app instead.
   //
   // editingEntry opens straight into "detail" with no browse state behind it,
   // so back there closes the sheet outright, same as that screen's own
   // "‹ Close" button — one level, never more.
-  useBackDismissDepth(open ? 1 + (editingEntry ? 0 : subStepDepth(step)) : 0, handleBackDismiss);
+  useBackDismissDepth(open ? 1 + (ownsExpansionLevel ? 1 : 0) + (editingEntry ? 0 : subStepDepth(step)) : 0, handleBackDismiss);
 
   useEffect(() => {
     if (!pendingSearchFocus || step !== "browse" || activeTab !== "search") return;
@@ -463,19 +480,16 @@ export default function AddFoodSheet({
     setPendingSearchFocus(false);
   }, [pendingSearchFocus, step, activeTab]);
 
-  // Every keystroke used to fire an immediate request, including the
-  // name-search fallback to OpenFoodFacts (see api/foods.ts on the backend) —
-  // typing "oats" fired "o", "oa", "oat", "oats" back to back, hammering
-  // OFF's search endpoint fast enough that it started 503-ing mid-word, so
-  // the last keystroke's results (what the user actually sees) sometimes
-  // came back empty even though the same term worked a moment later.
-  // Debouncing to one request per pause fixes that at the source.
+  // Only the online OFF leg is debounced now. The local SQLite leg follows
+  // `query` directly (see useFoodSearch) so a known food appears immediately;
+  // typing "oats" still makes only one remote request after the pause instead
+  // of hammering OFF with "o", "oa", "oat", "oats" back to back.
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(query), 350);
     return () => clearTimeout(t);
   }, [query]);
 
-  const search = useFoodSearch(debouncedQuery);
+  const search = useFoodSearch(query, debouncedQuery);
   const smartHistory = useSmartHistory(localTimeString());
   const addLog = useAddLog(date);
   const bulkAddLog = useBulkAddLog(date);
@@ -665,6 +679,7 @@ export default function AddFoodSheet({
       barcodeLookup.mutate(food.barcode, { onSuccess: (resolved) => pickFood(resolved) });
       return;
     }
+    if (activeTab === "search") recordFoodSearchSelection(query, food);
     addToPlate(food);
     changeStep("browse");
   }
@@ -841,6 +856,15 @@ export default function AddFoodSheet({
     const backTarget = !editingEntry ? SHEET_SUB_STEP_BACK[stepRef.current] : undefined;
     if (backTarget) {
       changeStep(backTarget);
+      return;
+    }
+    if (!editingEntry && !initialFood && !onPickItems && sheetExpandedRef.current) {
+      // This consumes the expansion entry and exposes Plate View. Update the
+      // ref before scheduling React state so a rapid follow-up gesture sees
+      // the collapsed state and can consume the outer sheet entry exactly
+      // once, rather than no-oping against the same level twice.
+      sheetExpandedRef.current = false;
+      setSheetExpanded(false);
       return;
     }
     onClose();
@@ -1064,10 +1088,33 @@ export default function AddFoodSheet({
                               </div>
                             </div>
                           )}
-                          <div className="px-4 pt-3 pb-1">
+                          <div className="px-4 pt-3 pb-1 flex items-center justify-between gap-3">
                             <p className="text-[11px] tracking-widest uppercase text-muted">{suggestionsLabel}</p>
+                            {query.trim() && search.isFetchingRemote && (
+                              <span className="flex items-center gap-1 text-[10px] text-muted">
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                Searching online
+                              </span>
+                            )}
                           </div>
-                          {suggestions?.length === 0 && <p className="px-4 py-3 text-sm text-muted">No foods found.</p>}
+                          {query.trim().length === 1 && (
+                            <p className="px-4 py-3 text-sm text-muted">Type at least 2 characters to search.</p>
+                          )}
+                          {query.trim().length >= 2 && search.isLocalError && (
+                            <div className="mx-4 my-3 rounded-xl border border-red-400/25 bg-red-400/[0.07] px-3 py-3 flex items-center justify-between gap-3">
+                              <p className="text-sm text-white/80">Local foods couldn&apos;t be loaded.</p>
+                              <button
+                                type="button"
+                                onClick={() => void search.retryLocal()}
+                                className="shrink-0 rounded-full border border-white/15 px-3 py-1.5 text-xs font-semibold text-white active:bg-white/10"
+                              >
+                                Retry
+                              </button>
+                            </div>
+                          )}
+                          {suggestions?.length === 0 && !search.isFetchingRemote && !search.isLocalError && (
+                            <p className="px-4 py-3 text-sm text-muted">No foods found.</p>
+                          )}
                           {suggestions?.map((food) => (
                             <FoodRow key={food.id} food={food} onOpen={openFoodDetail} onQuickAdd={pickFood} />
                           ))}
@@ -1217,6 +1264,7 @@ export default function AddFoodSheet({
             backLabel={editingEntry ? "Close" : "Back to search results"}
             onBack={() => (editingEntry ? onClose() : changeStep("browse"))}
             onAdd={(food, quantityGrams) => {
+              if (!editingEntry && activeTab === "search") recordFoodSearchSelection(query, food);
               // Quick-log mode (QuickActionFlow's recipe picker): "Add"
               // commits immediately and closes, same as "Log Foods" — this
               // entry point's old single-button screen always logged
@@ -1242,7 +1290,10 @@ export default function AddFoodSheet({
               }
               changeStep("browse");
             }}
-            onLogFoods={confirmPlateWithExtra}
+            onLogFoods={(food, quantityGrams) => {
+              if (!editingEntry && activeTab === "search") recordFoodSearchSelection(query, food);
+              confirmPlateWithExtra(food, quantityGrams);
+            }}
             hideTargetsUi={!!onPickItems}
             onSaveAsCustom={openCreateFromFood}
             isFavorite={favoriteFoodIds.has(selectedFood.id)}
@@ -1850,7 +1901,7 @@ function ActionBar({
 // tracking independently would just be duplicated plumbing.
 function QuantityPresetBar({ item, onSelect }: { item: PlateItem; onSelect: (quantityGrams: number) => void }) {
   const chips = [
-    item.food.servingSizeGrams && { label: `1 serving (${item.food.servingSizeGrams}g)`, value: item.food.servingSizeGrams },
+    ...foodMeasures(item.food).map((measure) => ({ label: `1 ${measure.name} (${measure.grams}g)`, value: measure.grams })),
     { label: "50 g", value: 50 },
     { label: "100 g", value: 100 },
     { label: "150 g", value: 150 },

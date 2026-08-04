@@ -6,6 +6,7 @@ export interface Food {
   source: "custom" | "openfoodfacts" | "recipe" | "ai_estimate" | "afcd";
   servingSizeGrams: number | null;
   servingName: string | null;
+  measuresJson?: string | null;
   caloriesPer100g: number;
   proteinPer100g: number;
   carbsPer100g: number;
@@ -68,6 +69,7 @@ export interface CreateFoodInput {
   barcode?: string;
   servingSizeGrams?: number;
   servingName?: string;
+  measures?: { name: string; grams: number }[];
   icon?: string | null;
   caloriesPer100g: number;
   proteinPer100g: number;

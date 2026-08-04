@@ -1,13 +1,55 @@
+import { useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import type { CreateFoodInput, DescribedMealItem, Food, LabelScanResult } from "./types";
 
-export function useFoodSearch(query: string) {
-  return useQuery({
-    queryKey: ["foods", "search", query],
-    queryFn: () => apiFetch<Food[]>(`/foods?q=${encodeURIComponent(query)}`),
-    enabled: query.trim().length > 0,
+export function useFoodSearch(query: string, debouncedRemoteQuery: string) {
+  const normalizedQuery = query.trim();
+  const normalizedRemoteQuery = debouncedRemoteQuery.trim();
+  const remoteMatchesCurrentQuery = normalizedRemoteQuery.length > 0 && normalizedRemoteQuery === normalizedQuery;
+  // SQLite-only: intentionally keyed straight off the live input rather than
+  // the remote debounce, so a known household/AFCD food can render as soon as
+  // the local network round-trip completes.
+  const local = useQuery({
+    queryKey: ["foods", "search", "local", normalizedQuery],
+    queryFn: () => apiFetch<Food[]>(`/foods?q=${encodeURIComponent(normalizedQuery)}`),
+    enabled: normalizedQuery.length >= 2,
   });
+  // OFF-only: still waits for the typing pause. The query equality gate keeps
+  // results for the previous word from appearing beneath fresh local results
+  // during the 350ms before debouncedRemoteQuery catches up.
+  const remote = useQuery({
+    queryKey: ["foods", "search", "remote", normalizedRemoteQuery],
+    queryFn: () => apiFetch<Food[]>(`/foods/remote?q=${encodeURIComponent(normalizedRemoteQuery)}`),
+    enabled: remoteMatchesCurrentQuery && normalizedRemoteQuery.length >= 2,
+  });
+
+  const data = useMemo(() => {
+    if (!local.data) return undefined;
+    const combined: Food[] = [];
+    const seen = new Set<string>();
+    for (const food of [...local.data, ...(remoteMatchesCurrentQuery ? (remote.data ?? []) : [])]) {
+      // A barcode-cached local row and its synthetic `off:<barcode>` result
+      // are the same food. Name+brand catches the few OFF rows with no usable
+      // barcode overlap while keeping the local version first.
+      const key = food.barcode || `${food.name.trim().toLowerCase()}::${food.brand?.trim().toLowerCase() ?? ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      combined.push(food);
+      if (combined.length === 20) break;
+    }
+    return combined;
+  }, [local.data, remote.data, remoteMatchesCurrentQuery]);
+
+  return {
+    data,
+    isPending: local.isPending,
+    isLocalError: local.isError,
+    retryLocal: () => local.refetch(),
+    // Treat the debounce interval as part of the online search so an empty
+    // local result never flashes "No foods found" for 300ms before OFF starts.
+    isFetchingRemote: normalizedQuery.length >= 2 && (!remoteMatchesCurrentQuery || remote.isFetching),
+  };
 }
 
 // Backs FoodDetailScreen's quantity prefill when logging a food fresh (not
@@ -39,6 +81,16 @@ export function useBarcodeLookup() {
     mutationFn: (barcode: string) => apiFetch<Food>(`/foods/barcode/${encodeURIComponent(barcode)}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["foods"] }),
   });
+}
+
+export function recordFoodSearchSelection(query: string, food: Food) {
+  const trimmed = query.trim();
+  if (trimmed.length < 2) return;
+  // Telemetry is deliberately best-effort and must never delay staging food.
+  void apiFetch<void>("/foods/search-selection", {
+    method: "POST",
+    body: JSON.stringify({ query: trimmed, foodId: food.id, source: food.source }),
+  }).catch(() => undefined);
 }
 
 export function useCreateFood() {
