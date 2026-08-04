@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Check, Palette, Ruler, CalendarDays, UtensilsCrossed, Camera, ChevronRight, AlertTriangle, LogOut, User, KeyRound, Activity } from "lucide-react";
+import { Check, Palette, Ruler, CalendarDays, UtensilsCrossed, Camera, ChevronDown, ChevronRight, AlertTriangle, LogOut, User, KeyRound, Activity, Sparkles } from "lucide-react";
 import { useRecipes } from "../api/recipes";
 import { useAuthStatus, useLogout } from "../api/auth";
 import { useCoachStatus, useSaveProfile } from "../api/coach";
@@ -14,6 +14,7 @@ import ChangeCheckInDaySheet from "../components/ChangeCheckInDaySheet";
 import RenameAccountSheet from "../components/RenameAccountSheet";
 import ChangePasswordSheet from "../components/ChangePasswordSheet";
 import EditBodyProfileSheet from "../components/EditBodyProfileSheet";
+import AiSettingsSheet from "../components/AiSettingsSheet";
 
 const ENERGY_UNITS: EnergyUnit[] = ["kcal", "kj"];
 const WEIGHT_UNITS: WeightUnit[] = ["kg", "lb"];
@@ -44,11 +45,14 @@ export default function MoreScreen() {
   const [showRenameSheet, setShowRenameSheet] = useState(false);
   const [showPasswordSheet, setShowPasswordSheet] = useState(false);
   const [showBodyProfileSheet, setShowBodyProfileSheet] = useState(false);
+  const [showAiSettingsSheet, setShowAiSettingsSheet] = useState(false);
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
 
   let block = 0;
   const name = authStatus.data?.user?.name ?? "";
   const initial = name.trim().charAt(0).toUpperCase() || "?";
   const profile = coachStatus.data?.profile ?? null;
+  const selectedTheme = THEME_CATALOG.find((t) => t.id === theme)!;
 
   return (
     <div className="min-h-dvh pb-24">
@@ -89,24 +93,41 @@ export default function MoreScreen() {
         </div>
 
         <section className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
-          <SectionHeader icon={<Palette size={15} strokeWidth={2} className="text-muted" />} label="Appearance" />
-          {THEME_CATALOG.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setTheme(t.id)}
-              className="w-full flex items-center gap-3 px-4 py-2.5 border-b border-line/60 last:border-b-0 text-left active:bg-surface-raised"
-            >
-              <span
-                className="shrink-0 w-7 h-7 rounded-full border border-line"
-                style={{ backgroundColor: t.swatch }}
+          <button
+            type="button"
+            onClick={() => setAppearanceOpen((open) => !open)}
+            aria-expanded={appearanceOpen}
+            className={`w-full px-4 py-2.5 flex items-center gap-2 text-left active:bg-surface-raised ${appearanceOpen ? "border-b border-line" : ""}`}
+          >
+            <Palette size={15} strokeWidth={2} className="text-muted shrink-0" />
+            <span className="text-sm font-medium flex-1">Appearance</span>
+            <span className="flex items-center gap-2 min-w-0">
+              <span className="w-4 h-4 rounded-full border border-line shrink-0" style={{ backgroundColor: selectedTheme.swatch }} />
+              <span className="text-xs text-muted truncate max-w-32">{selectedTheme.label}</span>
+              <ChevronDown
+                size={16}
+                strokeWidth={2.5}
+                className={`text-muted shrink-0 transition-transform duration-200 ${appearanceOpen ? "rotate-180" : ""}`}
               />
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm">{t.label}</span>
-                <span className="block text-xs text-muted">{t.description}</span>
-              </span>
-              {theme === t.id && <Check size={18} className="shrink-0 text-accent" />}
-            </button>
-          ))}
+            </span>
+          </button>
+          {appearanceOpen && THEME_CATALOG.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setTheme(t.id)}
+                className="w-full flex items-center gap-3 px-4 py-2.5 border-b border-line/60 last:border-b-0 text-left active:bg-surface-raised"
+              >
+                <span
+                  className="shrink-0 w-7 h-7 rounded-full border border-line"
+                  style={{ backgroundColor: t.swatch }}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm">{t.label}</span>
+                  <span className="block text-xs text-muted">{t.description}</span>
+                </span>
+                {theme === t.id && <Check size={18} className="shrink-0 text-accent" />}
+              </button>
+            ))}
         </section>
 
         <section className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
@@ -219,6 +240,17 @@ export default function MoreScreen() {
 
         <section className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
           <button
+            onClick={() => setShowAiSettingsSheet(true)}
+            className="w-full flex items-center gap-3 px-4 py-2.5 text-left active:bg-surface-raised"
+          >
+            <Sparkles size={15} strokeWidth={2} className="text-muted shrink-0" />
+            <span className="text-sm font-medium flex-1 min-w-0">AI features</span>
+            <ChevronRight size={16} strokeWidth={2.5} className="text-muted shrink-0" />
+          </button>
+        </section>
+
+        <section className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
+          <button
             onClick={() => navigate("/photos")}
             className="w-full flex items-center gap-3 px-4 py-2.5 text-left active:bg-surface-raised"
           >
@@ -261,6 +293,7 @@ export default function MoreScreen() {
       {showBodyProfileSheet && profile && (
         <EditBodyProfileSheet profile={profile} onClose={() => setShowBodyProfileSheet(false)} />
       )}
+      {showAiSettingsSheet && <AiSettingsSheet onClose={() => setShowAiSettingsSheet(false)} />}
     </div>
   );
 }

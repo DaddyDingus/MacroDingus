@@ -5,7 +5,7 @@ export type LengthUnit = "cm" | "in";
 const CM_PER_IN = 2.54;
 
 // Tape-measure unit follows the scale unit — kg pairs with cm, lb with in —
-// same convention iron-dingus uses, rather than a second independent
+// same convention the companion measurement app uses, rather than a second independent
 // preference nobody would ever set differently.
 export function lengthUnitFor(weightUnit: WeightUnit): LengthUnit {
   return weightUnit === "lb" ? "in" : "cm";

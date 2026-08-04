@@ -7,6 +7,7 @@ import { foods, logs, foodSearchStats } from "../db/schema.js";
 import { fetchOffProduct, mapOffProduct, searchOffProducts } from "../engine/openfoodfacts.js";
 import { scanNutritionLabel } from "../engine/labelScan.js";
 import { describeMeal } from "../engine/describeMeal.js";
+import { anthropicKeyStatus } from "../engine/anthropicClient.js";
 import { toBoundedJpeg } from "../engine/imagePrep.js";
 import { expandFoodQuery, foodTextRelevance, normalizeFoodQuery } from "../engine/foodSearch.js";
 
@@ -272,10 +273,9 @@ export function registerFoodRoutes(app: FastifyInstance) {
   // out, always via the create-food form (never auto-saved) so a misread
   // stays a one-field edit rather than a silently wrong food in the shared
   // library. Returns 503 rather than a raw SDK error when no API key is
-  // configured, since this is the one feature in the app with an external
-  // dependency and that's the most likely reason it's unavailable.
+  // configured, since that's the most likely reason it is unavailable.
   app.post("/api/foods/scan-label", async (req, reply) => {
-    if (!process.env.ANTHROPIC_API_KEY) {
+    if (!anthropicKeyStatus(req.userId!).configured) {
       reply.code(503);
       return { error: "Label scanning isn't configured on this server yet" };
     }
@@ -294,7 +294,7 @@ export function registerFoodRoutes(app: FastifyInstance) {
     }
 
     try {
-      const result = await scanNutritionLabel(jpeg, "image/jpeg");
+      const result = await scanNutritionLabel(req.userId!, jpeg, "image/jpeg");
       return result;
     } catch (err) {
       req.log.error(err);
@@ -315,7 +315,7 @@ export function registerFoodRoutes(app: FastifyInstance) {
   // was never saved anywhere either) — it only exists long enough to be
   // described, then discarded once describeMeal() returns.
   app.post("/api/foods/describe-meal", async (req, reply) => {
-    if (!process.env.ANTHROPIC_API_KEY) {
+    if (!anthropicKeyStatus(req.userId!).configured) {
       reply.code(503);
       return { error: "Meal description isn't configured on this server yet" };
     }
@@ -350,7 +350,7 @@ export function registerFoodRoutes(app: FastifyInstance) {
     }
 
     try {
-      return await describeMeal(trimmedText, photo);
+      return await describeMeal(req.userId!, trimmedText, photo);
     } catch (err) {
       req.log.error(err);
       reply.code(502);

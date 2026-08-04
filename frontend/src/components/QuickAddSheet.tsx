@@ -45,9 +45,11 @@ function NumberField({
 export default function QuickAddSheet({
   date,
   onClose,
+  onLogged,
 }: {
   date: string;
   onClose: () => void;
+  onLogged?: () => void;
 }) {
   const [name, setName] = useState("");
   const [protein, setProtein] = useState("");
@@ -87,7 +89,7 @@ export default function QuickAddSheet({
   }
 
   function submit() {
-    if (!canSave) return;
+    if (!canSave || createFood.isPending || addLog.isPending) return;
     createFood.mutate(
       {
         name: name.trim(),
@@ -99,8 +101,10 @@ export default function QuickAddSheet({
       },
       {
         onSuccess: (food) => {
-          addLog.mutate({ food, quantityGrams: 100 });
-          onClose();
+          addLog.mutate(
+            { food, quantityGrams: 100 },
+            { onSuccess: () => (onLogged ?? onClose)() }
+          );
         },
       }
     );
@@ -171,7 +175,7 @@ export default function QuickAddSheet({
       <div className="p-4 shrink-0">
         <button
           onClick={submit}
-          disabled={!canSave || createFood.isPending}
+          disabled={!canSave || createFood.isPending || addLog.isPending}
           className="w-full py-3 rounded-md bg-accent text-base disabled:opacity-40 font-medium"
           style={{ color: "#0B1210" }}
         >

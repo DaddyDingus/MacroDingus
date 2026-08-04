@@ -33,11 +33,12 @@ If there is a visible difference, set hasVisibleChange to true and list each con
 }
 
 export async function comparePhotos(
+  userId: string,
   photoA: { buffer: Buffer; mediaType: "image/jpeg" },
   photoB: { buffer: Buffer; mediaType: "image/jpeg" },
   daysApart: number
 ): Promise<PhotoCompareResult> {
-  const response = await getAnthropicClient().messages.create({
+  const response = await getAnthropicClient(userId).messages.create({
     model: "claude-sonnet-5",
     max_tokens: 1024,
     messages: [

@@ -9,6 +9,7 @@ import { db } from "../db/index.js";
 import { photos } from "../db/schema.js";
 import { comparePhotos } from "../engine/photoCompare.js";
 import { daysBetween } from "../engine/trendWeight.js";
+import { anthropicKeyStatus } from "../engine/anthropicClient.js";
 
 const MAX_DIMENSION = 1600;
 const JPEG_QUALITY = 82;
@@ -90,7 +91,7 @@ export function registerPhotoRoutes(app: FastifyInstance, dataDir: string) {
   // Anthropic is the day-gap between them (see engine/photoCompare.ts for
   // why weight/scale numbers are deliberately withheld).
   app.post("/api/photos/compare", async (req, reply) => {
-    if (!process.env.ANTHROPIC_API_KEY) {
+    if (!anthropicKeyStatus(req.userId!).configured) {
       reply.code(503);
       return { error: "Photo comparison isn't configured on this server yet" };
     }
@@ -117,6 +118,7 @@ export function registerPhotoRoutes(app: FastifyInstance, dataDir: string) {
       const [earlier, later] = photoA.date <= photoB.date ? [photoA, photoB] : [photoB, photoA];
       const [earlierBuffer, laterBuffer] = photoA.date <= photoB.date ? [bufferA, bufferB] : [bufferB, bufferA];
       const result = await comparePhotos(
+        userId,
         { buffer: earlierBuffer, mediaType: "image/jpeg" },
         { buffer: laterBuffer, mediaType: "image/jpeg" },
         Math.abs(daysBetween(earlier.date, later.date))

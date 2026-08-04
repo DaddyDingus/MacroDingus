@@ -207,12 +207,12 @@ If a library entry is clearly the same food — not just the same category — s
 If this page doesn't actually contain a recipe, return an empty ingredients array rather than inventing one.`;
 }
 
-export async function importRecipeFromUrl(url: string): Promise<ImportedRecipe> {
+export async function importRecipeFromUrl(userId: string, url: string): Promise<ImportedRecipe> {
   const pageText = await fetchPageText(url);
   const candidates = await fetchCandidateFoods();
   const candidateIds = new Set(candidates.map((c) => c.id));
 
-  const response = await getAnthropicClient().messages.create({
+  const response = await getAnthropicClient(userId).messages.create({
     model: "claude-sonnet-5",
     max_tokens: 4096,
     messages: [{ role: "user", content: buildPrompt(pageText, candidates) }],

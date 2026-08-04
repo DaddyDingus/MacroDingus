@@ -319,7 +319,7 @@ export const checkins = sqliteTable("checkins", {
   // the previous check-in (see engine/checkinNarrative.ts) — generated
   // best-effort inside performCheckin() alongside the TDEE snapshot above,
   // so it rides the same weekly cadence rather than a separate schedule.
-  // Null when ANTHROPIC_API_KEY isn't configured, generation failed, or
+  // Null when no account/shared Anthropic key is configured, generation failed, or
   // this check-in predates the feature — the Dashboard tile and journal
   // screen both just omit a checkin with no narrative rather than fake one.
   narrative: text("narrative"),

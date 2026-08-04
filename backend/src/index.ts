@@ -18,6 +18,7 @@ import { registerMeasurementRoutes } from "./routes/measurements.js";
 import { registerFavoriteRoutes } from "./routes/favorites.js";
 import { registerAccountRoutes } from "./routes/account.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
+import { configureAnthropicKeyStore } from "./engine/anthropicClient.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 3000);
@@ -26,6 +27,7 @@ const DATA_DIR = process.env.DATA_DIR ?? path.join(__dirname, "..", "..", "data"
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(path.join(DATA_DIR, "photos"), { recursive: true });
+configureAnthropicKeyStore(DATA_DIR);
 
 runMigrations();
 

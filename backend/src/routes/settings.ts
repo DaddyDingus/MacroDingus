@@ -3,6 +3,7 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { userSettings } from "../db/schema.js";
+import { anthropicKeyStatus, removeAnthropicApiKey, saveAnthropicApiKey } from "../engine/anthropicClient.js";
 
 // One loosely-typed JSON blob rather than a strict schema — this is a bag of
 // independent frontend preferences (theme, units, dashboard shortcuts/colors,
@@ -11,8 +12,29 @@ import { userSettings } from "../db/schema.js";
 // merged shallowly into whatever's already stored (see PATCH below), so a
 // client only ever needs to send the keys it actually changed.
 const patchInput = z.record(z.string(), z.unknown());
+const anthropicKeyInput = z.object({ apiKey: z.string().trim().min(20).max(300) });
 
 export function registerSettingsRoutes(app: FastifyInstance) {
+  app.get("/api/settings/ai", async (req) => anthropicKeyStatus(req.userId!));
+
+  app.put("/api/settings/ai", async (req, reply) => {
+    const parsed = anthropicKeyInput.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Enter a valid Anthropic API key" });
+    try {
+      await saveAnthropicApiKey(req.userId!, parsed.data.apiKey);
+      return anthropicKeyStatus(req.userId!);
+    } catch (err) {
+      req.log.warn({ err }, "Anthropic API key validation failed");
+      return reply.code(400).send({ error: "Couldn't validate that key with Anthropic" });
+    }
+  });
+
+  app.delete("/api/settings/ai", async (req, reply) => {
+    await removeAnthropicApiKey(req.userId!);
+    reply.code(204);
+    return null;
+  });
+
   app.get("/api/settings", async (req) => {
     const [row] = await db.select().from(userSettings).where(eq(userSettings.userId, req.userId!));
     if (!row) return {};

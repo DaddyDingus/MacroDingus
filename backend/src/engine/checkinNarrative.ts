@@ -48,8 +48,8 @@ Write 2-4 short sentences that plainly restate what happened, in the numbers' ow
 - Plain prose, no bullet points, no headers, no emoji.`;
 }
 
-export async function generateCheckinNarrative(input: CheckinNarrativeInput): Promise<string> {
-  const response = await getAnthropicClient().messages.create({
+export async function generateCheckinNarrative(userId: string, input: CheckinNarrativeInput): Promise<string> {
+  const response = await getAnthropicClient(userId).messages.create({
     model: "claude-sonnet-5",
     max_tokens: 300,
     messages: [{ role: "user", content: buildPrompt(input) }],

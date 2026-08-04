@@ -156,6 +156,7 @@ export default function AddFoodSheet({
   date,
   editingEntry,
   onClose,
+  onLogged,
   initialStep,
   initialFood,
   forcedLoggedAt,
@@ -173,6 +174,10 @@ export default function AddFoodSheet({
   date: string;
   editingEntry: LogEntry | null;
   onClose: () => void;
+  // Called only after a real log mutation succeeds. Global quick actions use
+  // this to leave whichever screen launched them and reveal the Food Log;
+  // ingredient-picking mode never calls it because that does not create logs.
+  onLogged?: () => void;
   // Lets callers outside the timeline's own "+ Log food" button (the global
   // quick-actions sheet, a recipe picker) skip straight to scanning, the
   // library's Recipes view, the new-food form, or a preselected food's
@@ -772,15 +777,23 @@ export default function AddFoodSheet({
   // used (backend/src/routes/logs.ts), just fed from stagedPlate instead of
   // a checked-rows Set.
   function confirmPlate() {
-    if (stagedPlate.length === 0) return;
+    if (stagedPlate.length === 0 || bulkAddLog.isPending) return;
     const entries = stagedPlate.map((item) => ({ food: item.food, quantityGrams: item.quantityGrams }));
     if (onPickItems) {
       onPickItems(entries);
+      clearPlate();
+      onClose();
     } else {
-      bulkAddLog.mutate({ entries, loggedAt: loggedAtOverride });
+      bulkAddLog.mutate(
+        { entries, loggedAt: loggedAtOverride },
+        {
+          onSuccess: () => {
+            clearPlate();
+            (onLogged ?? onClose)();
+          },
+        }
+      );
     }
-    clearPlate();
-    onClose();
   }
 
   // FoodDetailScreen's numpad "Log Foods" key — commits whatever's already
@@ -791,18 +804,26 @@ export default function AddFoodSheet({
   // handler would still see the pre-update array (state hasn't re-rendered
   // yet), silently dropping the just-added item from the log.
   function confirmPlateWithExtra(food: Food, quantityGrams: number) {
-    if (stagedPlate.length === 0 && quantityGrams <= 0) return;
+    if ((stagedPlate.length === 0 && quantityGrams <= 0) || bulkAddLog.isPending) return;
     const entries = [
       ...stagedPlate.map((item) => ({ food: item.food, quantityGrams: item.quantityGrams })),
       ...(quantityGrams > 0 ? [{ food, quantityGrams }] : []),
     ];
     if (onPickItems) {
       onPickItems(entries);
+      clearPlate();
+      onClose();
     } else {
-      bulkAddLog.mutate({ entries, loggedAt: loggedAtOverride });
+      bulkAddLog.mutate(
+        { entries, loggedAt: loggedAtOverride },
+        {
+          onSuccess: () => {
+            clearPlate();
+            (onLogged ?? onClose)();
+          },
+        }
+      );
     }
-    clearPlate();
-    onClose();
   }
 
   // The X button's handler — staged items already survive closing this
@@ -878,7 +899,7 @@ export default function AddFoodSheet({
       : "Recently logged";
 
   const plateTotals = sumNutrition(stagedPlate.map((item) => scaleNutrition(item.food, item.quantityGrams)));
-  const commitDisabled = stagedPlate.length === 0;
+  const commitDisabled = stagedPlate.length === 0 || bulkAddLog.isPending;
 
   // Portaled straight to <body>, same as BottomSheet.tsx and for the same
   // reason: this is mounted from several different call sites at very

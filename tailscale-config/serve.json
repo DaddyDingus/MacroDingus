@@ -5,7 +5,7 @@
     }
   },
   "Web": {
-    "macrotrack.tail984e80.ts.net:443": {
+    "${TS_CERT_DOMAIN}:443": {
       "Handlers": {
         "/": {
           "Proxy": "http://macrotrack:3000"

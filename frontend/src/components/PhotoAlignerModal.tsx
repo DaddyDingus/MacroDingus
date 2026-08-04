@@ -106,11 +106,11 @@ async function cropImageToBlob(imageSrc: string, pixelCrop: Area, rotation: numb
 }
 
 // Full-screen crop/align step between picking a file and it actually
-// uploading — mirrors the same aligner in iron-dingus (react-easy-crop +
+// uploading — mirrors the same aligner in the companion progress app (react-easy-crop +
 // a semi-transparent "ghost" of the last photo for this pose so the new
 // shot can be lined up against it before it's saved). `ghostUrl` is
 // resolved by the caller from the already-fetched photo list (macrotrack
-// has no client-side photo store to query directly, unlike iron-dingus's
+// has no client-side photo store to query directly, unlike the companion app's
 // IndexedDB-backed one).
 export default function PhotoAlignerModal({
   pose,

@@ -6,6 +6,7 @@ import { db } from "../db/index.js";
 import { foods, recipes, recipeIngredients } from "../db/schema.js";
 import { scaleNutrition, sumNutrition } from "../engine/nutrition.js";
 import { importRecipeFromUrl } from "../engine/recipeImport.js";
+import { anthropicKeyStatus } from "../engine/anthropicClient.js";
 
 const recipeInput = z.object({
   name: z.string().min(1),
@@ -105,7 +106,7 @@ export function registerRecipeRoutes(app: FastifyInstance) {
   // describe-meal. See engine/recipeImport.ts for the fetch/parse/match
   // logic. Same 503-when-unconfigured convention as those two features.
   app.post("/api/recipes/import-url", async (req, reply) => {
-    if (!process.env.ANTHROPIC_API_KEY) {
+    if (!anthropicKeyStatus(req.userId!).configured) {
       reply.code(503);
       return { error: "Recipe import isn't configured on this server yet" };
     }
@@ -114,7 +115,7 @@ export function registerRecipeRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
 
     try {
-      return await importRecipeFromUrl(parsed.data.url);
+      return await importRecipeFromUrl(req.userId!, parsed.data.url);
     } catch (err) {
       req.log.error(err);
       reply.code(502);

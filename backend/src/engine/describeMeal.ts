@@ -168,6 +168,7 @@ If nothing edible is identifiable, return an empty items array rather than inven
 }
 
 export async function describeMeal(
+  userId: string,
   text: string | null,
   photo?: { buffer: Buffer; mediaType: "image/jpeg" }
 ): Promise<DescribedItem[]> {
@@ -182,7 +183,7 @@ export async function describeMeal(
   if (photo) content.push({ type: "image", source: { type: "base64", media_type: photo.mediaType, data: photo.buffer.toString("base64") } });
   content.push({ type: "text", text: prompt });
 
-  const response = await getAnthropicClient().messages.create({
+  const response = await getAnthropicClient(userId).messages.create({
     model: "claude-sonnet-5",
     max_tokens: 4096,
     messages: [{ role: "user", content }],

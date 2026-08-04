@@ -1,9 +1,9 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { useSyncedSetting } from "./useSyncedSetting";
 
-export type Theme = "black" | "graphite" | "cappuccino" | "catppuccin";
+export type Theme = "black" | "graphite" | "cappuccino" | "catppuccin" | "midnight" | "evergreen" | "aubergine";
 
-const THEME_IDS: Theme[] = ["black", "graphite", "cappuccino", "catppuccin"];
+const THEME_IDS: Theme[] = ["black", "graphite", "cappuccino", "catppuccin", "midnight", "evergreen", "aubergine"];
 const STORAGE_KEY = "macrotrack-theme";
 
 export const THEME_CATALOG: { id: Theme; label: string; description: string; swatch: string }[] = [
@@ -19,6 +19,9 @@ export const THEME_CATALOG: { id: Theme; label: string; description: string; swa
   // swatch is Catppuccin's own Mauve accent rather than its (much darker,
   // less immediately recognizable) background tone.
   { id: "catppuccin", label: "Catppuccin Macchiato", description: "Purple-blue, cooler and softer than the others", swatch: "#C6A0F6" },
+  { id: "midnight", label: "Midnight", description: "Deep navy with cool blue layers", swatch: "#315A8C" },
+  { id: "evergreen", label: "Evergreen", description: "Dark forest green, calm and earthy", swatch: "#39735A" },
+  { id: "aubergine", label: "Aubergine", description: "Rich plum with warm purple layers", swatch: "#7A477A" },
 ];
 
 // Mirrors index.css's --color-bg per theme — kept in sync manually since the
@@ -28,6 +31,9 @@ const THEME_COLOR: Record<Theme, string> = {
   graphite: "#17171A",
   cappuccino: "#1C1512",
   catppuccin: "#181926",
+  midnight: "#0B1220",
+  evergreen: "#0D1713",
+  aubergine: "#190F19",
 };
 
 function isTheme(v: unknown): v is Theme {

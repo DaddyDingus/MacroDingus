@@ -1,4 +1,6 @@
 data/
+.env
+tailscale-state/
 frontend/node_modules/
 frontend/dist/
 backend/node_modules/

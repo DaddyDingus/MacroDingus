@@ -9,14 +9,14 @@
 @tailwind utilities;
 
 @layer base {
-  /* Four theme palettes, same design language (page bg < card < raised card
+  /* Theme palettes share one design language (page bg < card < raised card
      < divider, each a step lighter) — only how dark "dark" is, and the hue,
      changes. Values are "R G B" so Tailwind's rgb(var(...) / <alpha-value>)
      pattern can still apply opacity modifiers (border-line/60 etc). Defaults
      on :root match the "black" theme so first paint is correct before the
      inline bootstrap script in index.html (which sets data-theme from
      localStorage before React mounts) has a chance to run. Accent (#D896FF)
-     and the categorical chart colors stay fixed across all four themes —
+     and the categorical chart colors stay fixed across all themes —
      re-validated against each theme's --color-card via the dataviz skill's
      validator, not just black's.
    */
@@ -58,6 +58,27 @@
     --color-card: 36 39 58;
     --color-card-raised: 54 58 79;
     --color-divider: 73 77 100;
+  }
+
+  :root[data-theme="midnight"] {
+    --color-bg: 11 18 32;
+    --color-card: 20 32 52;
+    --color-card-raised: 29 43 68;
+    --color-divider: 42 59 88;
+  }
+
+  :root[data-theme="evergreen"] {
+    --color-bg: 13 23 19;
+    --color-card: 22 37 30;
+    --color-card-raised: 32 50 41;
+    --color-divider: 48 72 59;
+  }
+
+  :root[data-theme="aubergine"] {
+    --color-bg: 25 15 25;
+    --color-card: 41 26 41;
+    --color-card-raised: 58 38 58;
+    --color-divider: 81 54 80;
   }
 
   html,

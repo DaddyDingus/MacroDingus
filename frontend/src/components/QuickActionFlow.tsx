@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useDayLog } from "../api/logs";
 import { usePrograms } from "../api/programs";
 import { targetsForDate } from "../lib/programTargets";
@@ -10,6 +10,7 @@ import QuickAddSheet from "./QuickAddSheet";
 import CopyDaySheet from "./CopyDaySheet";
 import LogWeightInline from "./LogWeightInline";
 import BottomSheet from "./BottomSheet";
+import { armTrapHandoff } from "../lib/useBackDismiss";
 
 // Runs a single quick action to completion, against whichever date is
 // currently "effective" (lib/viewedDate.tsx) — real today everywhere except
@@ -24,6 +25,7 @@ import BottomSheet from "./BottomSheet";
 // actually logged.
 export default function QuickActionFlow({ action, onClose }: { action: ShortcutId; onClose: () => void }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const date = useEffectiveLogDate();
   const dayLog = useDayLog(date);
   const programs = usePrograms();
@@ -56,6 +58,19 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
 
   if (action === "photos") return null;
 
+  function finishFoodLogging() {
+    if (location.pathname === "/log") {
+      onClose();
+      return;
+    }
+    // The logging sheet owns a back-dismiss history entry. Navigating before
+    // it unmounts without this handoff lets cleanup call history.back() and
+    // cancel the route change (the same trap as Photos navigation).
+    armTrapHandoff();
+    navigate("/log");
+    onClose();
+  }
+
   // Same "whichever program was active on the viewed date" lookup
   // TodayScreen uses, so the sheet's header badges match what the Food log
   // screen itself would show for this date.
@@ -85,13 +100,14 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
                     : "search"
         }
         onClose={onClose}
+        onLogged={finishFoodLogging}
         totals={dayLog.data?.totals}
         targets={targets}
       />
     );
   }
   if (step === "quickAdd") {
-    return <QuickAddSheet date={date} onClose={onClose} />;
+    return <QuickAddSheet date={date} onClose={onClose} onLogged={finishFoodLogging} />;
   }
   if (step === "copyDay") {
     return <CopyDaySheet targetDate={date} onClose={onClose} />;

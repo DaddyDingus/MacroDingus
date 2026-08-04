@@ -24,3 +24,34 @@ export function useUpdateSettings() {
     onSuccess: (data) => qc.setQueryData(["settings"], data),
   });
 }
+
+export interface AiSettingsStatus {
+  configured: boolean;
+  source: "account" | "environment" | null;
+}
+
+export function useAiSettings() {
+  const auth = useAuthStatus();
+  return useQuery({
+    queryKey: ["settings", "ai"],
+    queryFn: () => apiFetch<AiSettingsStatus>("/settings/ai"),
+    enabled: !!auth.data?.authenticated,
+  });
+}
+
+export function useSaveAiKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (apiKey: string) =>
+      apiFetch<AiSettingsStatus>("/settings/ai", { method: "PUT", body: JSON.stringify({ apiKey }) }),
+    onSuccess: (data) => qc.setQueryData(["settings", "ai"], data),
+  });
+}
+
+export function useRemoveAiKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiFetch<void>("/settings/ai", { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["settings", "ai"] }),
+  });
+}

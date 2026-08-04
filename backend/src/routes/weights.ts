@@ -6,20 +6,14 @@ import { db } from "../db/index.js";
 import { weights, users } from "../db/schema.js";
 import { computeDenseTrend, addDaysToDateString } from "../engine/trendWeight.js";
 
-// Iron Dingus (a separate, single-person PWA with no backend of its own)
-// mirrors this household's scale + trend weight. It has no login, so it
-// can't hit our own auth'd /api/weights - instead we push a full snapshot,
-// best-effort, to a small relay endpoint on the iron-dingus-backup sidecar
-// (same `proxy` docker network, reached by container name - stack folder
-// and container names were "mypwa"/"mypwa-backup" until 2026-08-02) every
-// time a weigh-in changes. Iron Dingus polls that relay on its own
-// schedule. Only Tristan's weigh-ins sync - matched by name (survives a DB
-// rebuild) rather than a hardcoded user id, since Iron Dingus is one
-// person's app, not the whole household's.
-const WEIGHT_SYNC_RELAY_URL = "http://iron-dingus-backup:3000/api/weight-sync";
-const WEIGHT_SYNC_USER_NAME = "Tristan";
+// Optional integration for a separate app that consumes weight history.
+// Matching by account name survives a database rebuild; both configuration
+// values are required so a fresh fork never sends weight data anywhere.
+const WEIGHT_SYNC_RELAY_URL = process.env.WEIGHT_SYNC_RELAY_URL?.trim() || null;
+const WEIGHT_SYNC_USER_NAME = process.env.WEIGHT_SYNC_USER_NAME?.trim() || null;
 
-async function pushWeightSyncToIronDingus(userId: string) {
+async function pushWeightSync(userId: string) {
+  if (!WEIGHT_SYNC_RELAY_URL || !WEIGHT_SYNC_USER_NAME) return;
   try {
     const [user] = await db.select().from(users).where(eq(users.id, userId));
     if (!user || user.name !== WEIGHT_SYNC_USER_NAME) return;
@@ -32,7 +26,7 @@ async function pushWeightSyncToIronDingus(userId: string) {
       signal: AbortSignal.timeout(5000),
     });
   } catch {
-    // Best-effort - Iron Dingus's next poll just picks up the last successful push.
+    // Best-effort: the destination keeps its last successful snapshot.
   }
 }
 
@@ -67,7 +61,7 @@ export function registerWeightRoutes(app: FastifyInstance) {
         })
         .where(eq(weights.id, existing.id));
       const [updated] = await db.select().from(weights).where(eq(weights.id, existing.id));
-      void pushWeightSyncToIronDingus(userId);
+      void pushWeightSync(userId);
       return updated;
     }
 
@@ -81,7 +75,7 @@ export function registerWeightRoutes(app: FastifyInstance) {
       createdAt: new Date().toISOString(),
     });
     const [created] = await db.select().from(weights).where(eq(weights.id, id));
-    void pushWeightSyncToIronDingus(userId);
+    void pushWeightSync(userId);
     reply.code(201);
     return created;
   });
@@ -125,7 +119,7 @@ export function registerWeightRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const userId = req.userId!;
     await db.delete(weights).where(and(eq(weights.id, id), eq(weights.userId, userId)));
-    void pushWeightSyncToIronDingus(userId);
+    void pushWeightSync(userId);
     reply.code(204);
     return null;
   });
