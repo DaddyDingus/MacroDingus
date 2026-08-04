@@ -6,6 +6,7 @@ import { db } from "../db/index.js";
 import { logs, foods } from "../db/schema.js";
 import { scaleNutrition, sumNutrition, EMPTY_NUTRITION } from "../engine/nutrition.js";
 import { addDaysToDateString } from "../engine/trendWeight.js";
+import { householdDateString } from "../lib/householdDate.js";
 
 const logInput = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -181,7 +182,7 @@ export function registerLogRoutes(app: FastifyInstance) {
     // trivial at personal-diary scale — same reasoning as GET /api/weights.
     const take = Math.min(Number(days) || 30, 3650);
     const userId = req.userId!;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = householdDateString();
     const since = addDaysToDateString(today, -(take - 1));
 
     const rows = await db

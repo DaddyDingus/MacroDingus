@@ -67,6 +67,17 @@ export interface MappedFood {
   microsJson?: string;
 }
 
+export function offCaloriesPer100g(product: Pick<OffProduct, "nutriments">): number | null {
+  const nutriments = product.nutriments ?? {};
+  // OFF normalizes energy_100g/energy-kj_100g to kJ, while
+  // energy-kcal_100g is already kcal. Australian labels commonly provide
+  // only kJ, so treating a missing kcal-specific field as zero makes normal
+  // foods (bread was the observed case) appear calorie-free.
+  if (nutriments["energy-kcal_100g"] != null) return nutriments["energy-kcal_100g"];
+  const energyKj = nutriments["energy-kj_100g"] ?? nutriments["energy_100g"];
+  return energyKj != null ? energyKj / 4.184 : null;
+}
+
 export function mapOffProduct(barcode: string, product: OffProduct): MappedFood {
   const n = product.nutriments ?? {};
 
@@ -89,7 +100,7 @@ export function mapOffProduct(barcode: string, product: OffProduct): MappedFood 
     source: "openfoodfacts",
     servingSizeGrams: product.serving_quantity ?? undefined,
     servingName: product.serving_size ?? undefined,
-    caloriesPer100g: n["energy-kcal_100g"] ?? 0,
+    caloriesPer100g: offCaloriesPer100g(product) ?? 0,
     proteinPer100g: n["proteins_100g"] ?? 0,
     carbsPer100g: n["carbohydrates_100g"] ?? 0,
     fatPer100g: n["fat_100g"] ?? 0,

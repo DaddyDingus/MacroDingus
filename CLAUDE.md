@@ -115,6 +115,7 @@ The docked footer (quantity/keypad/Log Foods+Add) is a `shrink-0` flex sibling *
 **AI food entry and keys** (`engine/anthropicClient.ts`, `labelScan.ts`, `describeMeal.ts`): each account may save its own key from More → AI features. Keys are files under `DATA_DIR/secrets/anthropic`, never part of the browser-readable settings JSON; an account key overrides optional installation-wide `ANTHROPIC_API_KEY`. Every AI engine resolves with the requesting `userId`. Label scanning uses Claude Haiku 4.5 with a hand-written JSON Schema; meal description uses **Sonnet 5**, matching household foods when confident or persisting a hidden `source: 'ai_estimate'` fallback.
 
 **Progress photos**: six UI poses: front/side/back relaxed and front/side/back flexed. The original stored values (`'front' | 'side' | 'back'`) intentionally mean relaxed so existing photos need no migration; flexed values use an `_flexed` suffix. `photos.pose` remains nullable — null means an older/uncategorized shot, still shown in history but excluded from pose comparison. No separate "latest photo by pose" endpoint: derived client-side from the already-fetched full `usePhotos()` list.
+New uploads keep a bounded 2560px working image for alignment, then render one fixed 1200×1600 lossless crop before the server's final metadata-stripping JPEG encode. Don't restore the old 0.4MB post-crop compression pass: it caused redundant JPEG loss and left comparison exports upscaling small crops.
 
 ## Frontend patterns
 

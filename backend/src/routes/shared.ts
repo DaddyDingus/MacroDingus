@@ -3,6 +3,7 @@ import { db } from "../db/index.js";
 import { weights, logs, foods } from "../db/schema.js";
 import { scaleNutrition } from "../engine/nutrition.js";
 import { computeTrend, addDaysToDateString } from "../engine/trendWeight.js";
+import { householdDateString } from "../lib/householdDate.js";
 
 // Shared by coach.ts's performCheckin() and programs.ts's program-generation
 // routes — both need "the current trend weight" for a user.
@@ -62,7 +63,7 @@ const CALORIE_LOOKBACK_DAYS = 28; // window for adaptive TDEE (needs 21 days of 
 export async function gatherAdaptiveTdeeInputs(userId: string) {
   const weighIns = await db.select().from(weights).where(eq(weights.userId, userId)).orderBy(weights.date);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = householdDateString();
   const cutoff = addDaysToDateString(today, -CALORIE_LOOKBACK_DAYS);
   const logRows = await db
     .select({ log: logs, food: foods })
@@ -91,7 +92,7 @@ export async function gatherAdaptiveTdeeInputs(userId: string) {
 export async function gatherDailyTdeeSeriesInputs(userId: string, days: number) {
   const weighIns = await db.select().from(weights).where(eq(weights.userId, userId)).orderBy(weights.date);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = householdDateString();
   const cutoff = addDaysToDateString(today, -(days + CALORIE_LOOKBACK_DAYS));
   const logRows = await db
     .select({ log: logs, food: foods })

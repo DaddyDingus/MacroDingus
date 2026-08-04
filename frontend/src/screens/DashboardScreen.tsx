@@ -85,8 +85,9 @@ export default function DashboardScreen() {
   // Only rendered once a check-in is actually due (see backend/src/lib/
   // checkinSchedule.ts) — silent otherwise, no persistent nag to dismiss.
   const nextCheckinDueDate = status.data?.nextCheckinDueDate ?? null;
-  const isCheckinDue = nextCheckinDueDate !== null && nextCheckinDueDate <= today;
-  const daysOverdue = isCheckinDue ? daysBetween(nextCheckinDueDate!, today) : 0;
+  const checkinToday = status.data?.currentDate ?? today;
+  const isCheckinDue = nextCheckinDueDate !== null && nextCheckinDueDate <= checkinToday;
+  const daysOverdue = isCheckinDue ? daysBetween(nextCheckinDueDate!, checkinToday) : 0;
   const hasActiveGoal = status.data?.activeGoal != null;
   const hasWeightHistory = status.data?.trendWeightKg != null;
 

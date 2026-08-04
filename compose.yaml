@@ -9,6 +9,9 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - DATA_DIR=/app/data
+      # Calendar-day boundaries (check-ins, history windows) follow the
+      # household rather than UTC. Override this IANA timezone for a fork.
+      - APP_TIME_ZONE=${APP_TIME_ZONE:-Australia/Brisbane}
       # Optional installation-wide fallback. Each account can instead save
       # its own key under More > AI features; account keys take precedence.
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}

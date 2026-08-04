@@ -12,7 +12,7 @@ import { daysBetween } from "../engine/trendWeight.js";
 import { anthropicKeyStatus } from "../engine/anthropicClient.js";
 
 const MAX_DIMENSION = 1600;
-const JPEG_QUALITY = 82;
+const JPEG_QUALITY = 90;
 
 const compareInput = z.object({
   photoIdA: z.string().min(1),

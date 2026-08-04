@@ -2,6 +2,7 @@ import { NavLink, useLocation } from "react-router-dom";
 import { LayoutDashboard, UtensilsCrossed, Target, Menu, type LucideIcon } from "lucide-react";
 import QuickActionsButton from "./QuickActionsSheet";
 import { useNavVisibility } from "../lib/navVisibility";
+import { useCoachStatus } from "../api/coach";
 
 const TABS_LEFT = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -12,11 +13,12 @@ const TABS_RIGHT = [
   { to: "/more", label: "More", icon: Menu },
 ];
 
-function Tab({ to, label, icon: Icon }: { to: string; label: string; icon: LucideIcon }) {
+function Tab({ to, label, icon: Icon, attention = false }: { to: string; label: string; icon: LucideIcon; attention?: boolean }) {
   return (
     <NavLink
       to={to}
       end={to === "/"}
+      aria-label={attention ? `${label}, check-in due` : label}
       className={({ isActive }) =>
         `flex-1 py-2 flex flex-col items-center gap-0.5 transition-colors duration-150 ${
           isActive ? "text-accent font-semibold" : "text-muted hover:text-white/80"
@@ -25,7 +27,16 @@ function Tab({ to, label, icon: Icon }: { to: string; label: string; icon: Lucid
     >
       {({ isActive }) => (
         <>
-          <Icon size={22} strokeWidth={isActive ? 2.4 : 1.8} className="transition-all duration-150" />
+          <span className="relative">
+            <Icon size={22} strokeWidth={isActive ? 2.4 : 1.8} className="transition-all duration-150" />
+            {attention && (
+              <span
+                aria-hidden="true"
+                className="absolute -right-1 -top-0.5 w-2 h-2 rounded-full ring-2 ring-dashboardBg"
+                style={{ background: "#D95926" }}
+              />
+            )}
+          </span>
           <span className="text-[10px] font-medium leading-none mt-0.5">{label}</span>
         </>
       )}
@@ -36,6 +47,9 @@ function Tab({ to, label, icon: Icon }: { to: string; label: string; icon: Lucid
 export default function BottomNav() {
   const location = useLocation();
   const { hidden } = useNavVisibility();
+  const coachStatus = useCoachStatus();
+  const nextCheckinDueDate = coachStatus.data?.nextCheckinDueDate ?? null;
+  const checkinDue = nextCheckinDueDate !== null && nextCheckinDueDate <= (coachStatus.data?.currentDate ?? "");
   // The Strategy wizard screens (New Goal/Edit Goal/New Program/Edit
   // Program) are full-screen takeovers, same intent as MacroFactor's own —
   // none of their screenshots show a bottom tab bar during a wizard, and
@@ -60,7 +74,7 @@ export default function BottomNav() {
       ))}
       <QuickActionsButton />
       {TABS_RIGHT.map((t) => (
-        <Tab key={t.to} {...t} />
+        <Tab key={t.to} {...t} attention={t.to === "/strategy" && checkinDue} />
       ))}
     </nav>
   );

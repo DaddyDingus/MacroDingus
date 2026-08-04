@@ -130,7 +130,10 @@ export default function PhotosScreen() {
     setZoneError("");
     setCompressingPose(pose);
     try {
-      const compressed = await imageCompression(file, { maxSizeMB: 0.8, maxWidthOrHeight: 1440, useWebWorker: true });
+      // Keep enough source detail for a zoomed-in crop to still reach the
+      // aligner's fixed 1200x1600 output. This is a working-image bound for
+      // predictable phone memory/performance, not the final storage target.
+      const compressed = await imageCompression(file, { maxSizeMB: 4, maxWidthOrHeight: 2560, useWebWorker: true });
       setAligning({ pose, file: compressed as File });
     } catch (err) {
       console.error("Progress photo pre-processing failed:", err);

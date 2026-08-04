@@ -39,7 +39,10 @@ export function useCreateRecipe() {
   return useMutation({
     mutationFn: (input: CreateRecipeInput) =>
       apiFetch<Food>("/recipes", { method: "POST", body: JSON.stringify(input) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["foods"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["recipes"] });
+      qc.invalidateQueries({ queryKey: ["foods"] });
+    },
   });
 }
 

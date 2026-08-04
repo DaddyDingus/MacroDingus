@@ -4,7 +4,7 @@ import { and, eq, like, desc, isNull, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "../db/index.js";
 import { foods, logs, foodSearchStats } from "../db/schema.js";
-import { fetchOffProduct, mapOffProduct, searchOffProducts } from "../engine/openfoodfacts.js";
+import { fetchOffProduct, mapOffProduct, offCaloriesPer100g, searchOffProducts } from "../engine/openfoodfacts.js";
 import { scanNutritionLabel } from "../engine/labelScan.js";
 import { describeMeal } from "../engine/describeMeal.js";
 import { anthropicKeyStatus } from "../engine/anthropicClient.js";
@@ -189,11 +189,16 @@ export function registerFoodRoutes(app: FastifyInstance) {
     const take = Math.min(Number(limit) || 20, 50);
     try {
       const offResults = await searchOffProducts(trimmed, take);
-      const mapped = offResults.map((r) => ({
-        id: `off:${r.code}`,
-        createdAt: new Date().toISOString(),
-        ...mapOffProduct(r.code, r.product),
-      }));
+      // An absent energy field is unknown, not zero. Keep genuine explicit
+      // zero-energy products, but don't show an incomplete OFF result as a
+      // calorie-free food in search.
+      const mapped = offResults
+        .filter((r) => offCaloriesPer100g(r.product) !== null)
+        .map((r) => ({
+          id: `off:${r.code}`,
+          createdAt: new Date().toISOString(),
+          ...mapOffProduct(r.code, r.product),
+        }));
       const [{ count: localCount }] = await db.select({ count: sql<number>`count(*)` }).from(foods).where(localFoodCondition(trimmed));
       await recordCompletedSearch(req.userId!, trimmed, Number(localCount), mapped.length);
       return mapped;

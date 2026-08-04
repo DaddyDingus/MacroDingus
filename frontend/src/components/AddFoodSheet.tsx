@@ -1512,7 +1512,16 @@ export default function AddFoodSheet({
                       quantityGrams: i.quantityGrams,
                     })),
                   },
-                  { onSuccess: (created) => pickFood(created) }
+                  {
+                    onSuccess: () => {
+                      // Saving a recipe only adds it to the library. It is
+                      // not the same action as choosing a recipe to log, so
+                      // return to the recipe list without staging it.
+                      setActiveTab("library");
+                      setLibraryView("recipes");
+                      changeStep("browse");
+                    },
+                  }
                 );
               }}
             />
@@ -1596,6 +1605,8 @@ function FoodRow({
   const refGrams = food.servingSizeGrams ?? 100;
   const n = scaleNutrition(food, refGrams);
   const { unit: energyUnit } = useEnergyUnit();
+  const originLabel = food.brand?.trim()
+    || (food.source === "afcd" ? "Generic" : food.source === "recipe" ? "Recipe" : food.source === "custom" ? "Custom food" : null);
   return (
     <div className="w-full flex items-center gap-3 px-4 py-2.5 border-b border-dashboardDivider/60">
       <button onClick={() => onOpen(food)} className="flex-1 flex items-center gap-3 min-w-0 text-left active:bg-white/5">
@@ -1603,6 +1614,7 @@ function FoodRow({
         <span className="flex-1 min-w-0">
           <span className="block text-sm text-white truncate">{food.name}</span>
           <span className="block text-[11px] text-muted truncate mt-1 tabular">
+            {originLabel && <>{originLabel} · </>}
             {fmt(n.protein)}P {fmt(n.fat)}F {fmt(n.carbs)}C · {fmt(refGrams)}g
           </span>
         </span>

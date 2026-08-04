@@ -20,6 +20,7 @@ const ALIAS_GROUPS = [
   ["full cream milk", "whole milk"],
   ["skim milk", "skimmed milk", "nonfat milk"],
   ["plain flour", "all purpose flour"],
+  ["cooked rice", "boiled rice"],
 ] as const;
 
 export function normalizeFoodQuery(value: string): string {

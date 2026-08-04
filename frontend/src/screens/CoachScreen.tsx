@@ -132,7 +132,7 @@ export default function CoachScreen() {
   const nextCheckinDueDate = status.data?.nextCheckinDueDate ?? null;
   const latestCheckinDate = status.data?.latestCheckin?.date ?? null;
 
-  const today = localDateString();
+  const today = status.data?.currentDate ?? localDateString();
   const isCheckinDue = nextCheckinDueDate !== null && nextCheckinDueDate <= today;
   const daysOverdue = isCheckinDue ? daysBetween(nextCheckinDueDate!, today) : 0;
   const daysUntilDue = nextCheckinDueDate !== null && !isCheckinDue ? daysBetween(today, nextCheckinDueDate) : null;

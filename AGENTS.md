@@ -48,7 +48,7 @@ No lint script or test suite — don't invent one. Type-check with each package'
 - `estimateAdaptiveTdee()`: 21-day window, trimmed mean (drops highest+lowest at 5+ values), 50% coverage threshold. Returns `{ tdee, fluxKcal }` where `fluxKcal` is stddev of the *untrimmed* values (keeps variance honest).
 - `performCheckin()` snapshots TDEE to `checkins`, falls back to Mifflin-St Jeor when < 2 weigh-ins or < 11 calorie days. Coached programs regenerate `program_days` on every check-in unless `distributionMode = 'custom'`.
 - **Target resolution**: `lib/programTargets.ts`'s `targetsForDate()`. `lib/checkins.ts`'s `activeCheckinForDate()` is only for TDEE lookups.
-- All date arithmetic uses `Date.UTC()` — never `setDate()`/`getDate()` (timezone-dependent).
+- Current-day boundaries use `lib/householdDate.ts` with `APP_TIME_ZONE` (Brisbane by default); date arithmetic on those `YYYY-MM-DD` strings uses `Date.UTC()` — never `setDate()`/`getDate()`.
 - `computeTrend()` (sparse, one row per real weigh-in) feeds the TDEE engine/program generation/coach status — output shape must stay untouched. The Weight Trend chart uses `computeDenseTrend()` instead (one row per calendar day; `computeTrend` is defined in terms of it so they can't drift). Only `GET /api/weights/trend` uses the dense version.
 - The Expenditure chart is driven by the daily backfill (`GET /api/coach/expenditure-daily`), not `checkins`. A day without a fresh estimate holds the last real one forward and renders a hollow "Holding" dot instead of a filled one.
 
@@ -115,6 +115,7 @@ The docked footer (quantity/keypad/Log Foods+Add) is a `shrink-0` flex sibling *
 **AI food entry and keys** (`engine/anthropicClient.ts`, `labelScan.ts`, `describeMeal.ts`): each account may save its own key from More → AI features. Keys are files under `DATA_DIR/secrets/anthropic`, never part of the browser-readable settings JSON; an account key overrides optional installation-wide `ANTHROPIC_API_KEY`. Every AI engine resolves with the requesting `userId`. Label scanning uses Claude Haiku 4.5 with a hand-written JSON Schema; meal description uses **Sonnet 5**, matching household foods when confident or persisting a hidden `source: 'ai_estimate'` fallback.
 
 **Progress photos**: six UI poses: front/side/back relaxed and front/side/back flexed. The original stored values (`'front' | 'side' | 'back'`) intentionally mean relaxed so existing photos need no migration; flexed values use an `_flexed` suffix. `photos.pose` remains nullable — null means an older/uncategorized shot, still shown in history but excluded from pose comparison. No separate "latest photo by pose" endpoint: derived client-side from the already-fetched full `usePhotos()` list.
+New uploads keep a bounded 2560px working image for alignment, then render one fixed 1200×1600 lossless crop before the server's final metadata-stripping JPEG encode. Don't restore the old 0.4MB post-crop compression pass: it caused redundant JPEG loss and left comparison exports upscaling small crops.
 
 ## Frontend patterns
 

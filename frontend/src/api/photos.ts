@@ -36,7 +36,7 @@ export function useUploadPhoto() {
       const form = new FormData();
       form.append("date", input.date);
       if (input.pose) form.append("pose", input.pose);
-      form.append("file", input.file, "photo.jpg");
+      form.append("file", input.file, input.file.type === "image/png" ? "photo.png" : "photo.jpg");
       return apiFetch<Photo>("/photos", { method: "POST", body: form });
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["photos"] }),

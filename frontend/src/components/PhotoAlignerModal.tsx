@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import Cropper, { type Area } from "react-easy-crop";
-import imageCompression from "browser-image-compression";
 import { X, Grid3x3, FlipHorizontal, Wand2, Loader2 } from "lucide-react";
 import { PHOTO_POSE_LABEL, type PhotoPose } from "../api/photos";
 import { useHideBottomNav } from "../lib/navVisibility";
@@ -17,6 +16,9 @@ const POSE_MATCH_SUPPORTED: Record<PhotoPose, boolean> = {
   side_flexed: false,
   back_flexed: true,
 };
+
+const OUTPUT_WIDTH = 1200;
+const OUTPUT_HEIGHT = 1600;
 
 export function createImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -65,28 +67,13 @@ async function cropImageToBlob(imageSrc: string, pixelCrop: Area, rotation: numb
   rotatedCtx.translate(-image.width / 2, -image.height / 2);
   rotatedCtx.drawImage(image, 0, 0);
 
-  // Pass 2: crop the requested rectangle out of that rotated bounding box.
-  // react-easy-crop rounds pixelCrop.width/height independently per photo
-  // (Math.round in its own computeCroppedArea), so two separately-aligned
-  // photos can each land a pixel or two off exact 3:4 in opposite
-  // directions — invisible on its own, but the Compare screen renders both
-  // in a strict aspect-[3/4] box with objectFit "contain", where even a
-  // sub-1% aspect mismatch shows up as one photo being very slightly
-  // letterboxed relative to the other, reading as "different zoom" when
-  // flipping between them. Snapping the *output canvas* to exactly 3:4
-  // (adjusting whichever dimension is larger by at most a pixel or two)
-  // keeps every saved photo's aspect ratio bit-identical.
-  const ASPECT = 3 / 4;
-  let outWidth = pixelCrop.width;
-  let outHeight = pixelCrop.height;
-  if (outWidth / outHeight > ASPECT) {
-    outWidth = Math.round(outHeight * ASPECT);
-  } else {
-    outHeight = Math.round(outWidth / ASPECT);
-  }
+  // Pass 2: crop into one fixed 3:4 output. Besides eliminating the tiny
+  // per-photo aspect drift caused by react-easy-crop's pixel rounding, this
+  // makes every newly-saved photo large enough for the 1080x1440 comparison
+  // export without retaining phone-camera-sized files.
   const canvas = document.createElement("canvas");
-  canvas.width = outWidth;
-  canvas.height = outHeight;
+  canvas.width = OUTPUT_WIDTH;
+  canvas.height = OUTPUT_HEIGHT;
   const ctx = canvas.getContext("2d")!;
   ctx.drawImage(
     rotatedCanvas,
@@ -96,12 +83,14 @@ async function cropImageToBlob(imageSrc: string, pixelCrop: Area, rotation: numb
     pixelCrop.height,
     0,
     0,
-    outWidth,
-    outHeight
+    OUTPUT_WIDTH,
+    OUTPUT_HEIGHT
   );
 
+  // Keep the browser-to-server handoff lossless. The server performs the
+  // one final JPEG encode after validating, orienting and stripping metadata.
   return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Could not crop image"))), "image/jpeg", 0.92);
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Could not crop image"))), "image/png");
   });
 }
 
@@ -205,13 +194,7 @@ export default function PhotoAlignerModal({
     setError("");
     try {
       const croppedBlob = await cropImageToBlob(imageUrl, croppedPixels, rotation, isFlipped);
-      const croppedFile = new File([croppedBlob], "photo.jpg", { type: "image/jpeg" });
-      const compressed = await imageCompression(croppedFile, {
-        maxSizeMB: 0.4,
-        maxWidthOrHeight: 1440,
-        useWebWorker: true,
-      });
-      await onConfirm(compressed);
+      await onConfirm(croppedBlob);
     } catch (err) {
       console.error("Photo alignment failed:", err);
       setError("Could not confirm alignment.");

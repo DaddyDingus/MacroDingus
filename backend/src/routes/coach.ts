@@ -18,6 +18,7 @@ import {
   serializeProgram,
 } from "./shared.js";
 import { nextCheckinDueDate } from "../lib/checkinSchedule.js";
+import { householdDateString } from "../lib/householdDate.js";
 
 // Body-stat fields only — goal/program fields moved to /api/goals and
 // /api/programs (see schema.ts's Phase 1/Phase 2 migration notes).
@@ -58,7 +59,7 @@ export async function performCheckin(userId: string) {
   // the trend-weight EWMA are both already smoothing day-to-day noise out),
   // and a Coached program's targets would otherwise jitter on every check-in.
   const latestCheckin = await latestCheckinForUser(userId);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = householdDateString();
   if (latestCheckin) {
     const dueDate = nextCheckinDueDate(latestCheckin.date, profile.checkInDayOfWeek);
     if (today < dueDate) return { error: "checkin_not_due" as const, dueDate };
@@ -255,7 +256,7 @@ export function registerCoachRoutes(app: FastifyInstance) {
     const { days } = req.query as { days?: string };
     const take = Math.min(Number(days) || 30, 3650); // same cap convention as GET /api/logs/history
     const userId = req.userId!;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = householdDateString();
     const since = addDaysToDateString(today, -(take - 1));
 
     const { weighIns, dailyCalories } = await gatherDailyTdeeSeriesInputs(userId, take);
@@ -273,6 +274,7 @@ export function registerCoachRoutes(app: FastifyInstance) {
 
   app.get("/api/coach/status", async (req) => {
     const userId = req.userId!;
+    const currentDate = householdDateString();
     const [profile] = await db.select().from(profiles).where(eq(profiles.userId, userId));
     const latestCheckin = await latestCheckinForUser(userId);
     const trendWeightKg = await currentTrendKg(userId);
@@ -289,11 +291,12 @@ export function registerCoachRoutes(app: FastifyInstance) {
       : [];
 
     return {
+      currentDate,
       profile: profile ?? null,
       latestCheckin: latestCheckin ?? null,
       trendWeightKg,
       bodyFatPercent,
-      daysSinceCheckin: latestCheckin ? daysBetween(latestCheckin.date, new Date().toISOString().slice(0, 10)) : null,
+      daysSinceCheckin: latestCheckin ? daysBetween(latestCheckin.date, currentDate) : null,
       nextCheckinDueDate: nextCheckinDue,
       activeGoal: activeGoal ?? null,
       activeProgram: activeProgram ? { ...serializeProgram(activeProgram), days: activeProgramDays } : null,

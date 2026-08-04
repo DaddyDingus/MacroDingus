@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "../db/index.js";
 import { weights, users } from "../db/schema.js";
 import { computeDenseTrend, addDaysToDateString } from "../engine/trendWeight.js";
+import { householdDateString } from "../lib/householdDate.js";
 
 // Optional integration for a separate app that consumes weight history.
 // Matching by account name survives a database rebuild; both configuration
@@ -84,7 +85,7 @@ export function registerWeightRoutes(app: FastifyInstance) {
     const { days } = req.query as { days?: string };
     const userId = req.userId!;
     const take = Math.min(Number(days) || 90, 3650);
-    const since = addDaysToDateString(new Date().toISOString().slice(0, 10), -take);
+    const since = addDaysToDateString(householdDateString(), -take);
 
     return db
       .select()
@@ -111,7 +112,7 @@ export function registerWeightRoutes(app: FastifyInstance) {
     const all = await db.select().from(weights).where(eq(weights.userId, userId)).orderBy(weights.date);
     const trend = computeDenseTrend(all.map((w) => ({ date: w.date, weightKg: w.weightKg })));
 
-    const since = addDaysToDateString(new Date().toISOString().slice(0, 10), -take);
+    const since = addDaysToDateString(householdDateString(), -take);
     return trend.filter((t) => t.date >= since);
   });
 

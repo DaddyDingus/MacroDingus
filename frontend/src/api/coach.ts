@@ -43,6 +43,9 @@ export interface Checkin {
 }
 
 export interface CoachStatus {
+  // The backend's household-local calendar date. Due-state UI compares
+  // against this exact value so it cannot disagree with POST /checkins.
+  currentDate: string;
   profile: Profile | null;
   latestCheckin: Checkin | null;
   trendWeightKg: number | null;
