@@ -2,6 +2,7 @@ import { useState } from "react";
 import { X } from "lucide-react";
 import { CURATED_FOOD_ICONS } from "../lib/foodEmoji";
 import { useBackDismiss } from "../lib/useBackDismiss";
+import FoodEmojiGlyph from "./FoodEmojiGlyph";
 
 // Centered dialog, same "fixed inset-0 + backdrop tap-to-dismiss" shape as
 // AddFoodSheet's UnloggedPlateWarning — the only other non-BottomSheet modal
@@ -55,7 +56,7 @@ export default function IconPickerModal({
           }`}
         >
           <span className="shrink-0 w-9 h-9 rounded-lg bg-white/5 flex items-center justify-center text-lg leading-none">
-            {autoPreview}
+            <FoodEmojiGlyph value={autoPreview} />
           </span>
           <span className="min-w-0">
             <span className="block text-sm text-white">Auto</span>
@@ -73,7 +74,7 @@ export default function IconPickerModal({
                 value === emoji ? "bg-accent/25 ring-1 ring-accent" : "bg-surface-raised active:bg-white/10"
               }`}
             >
-              {emoji}
+              <FoodEmojiGlyph value={emoji} />
             </button>
           ))}
         </div>

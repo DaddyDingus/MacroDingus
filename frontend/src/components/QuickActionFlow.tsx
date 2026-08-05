@@ -117,7 +117,7 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
     <BottomSheet
       onClose={onClose}
       backdropClassName="bg-black/50"
-      panelClassName="max-h-[85%] bg-surface rounded-t-xl border-t border-line pb-[env(safe-area-inset-bottom)]"
+      panelClassName="max-h-[85%] bg-dashboardBg rounded-t-xl border-t border-line pb-[env(safe-area-inset-bottom)]"
     >
       {(dragHandlers) => (
         <>

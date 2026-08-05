@@ -13,6 +13,7 @@ export default function DiscardWarningSheet({
   message,
   cancelLabel = "Keep editing",
   confirmLabel = "Close anyway",
+  manageBackHistory = true,
   onCancel,
   onConfirm,
 }: {
@@ -20,6 +21,10 @@ export default function DiscardWarningSheet({
   message: string;
   cancelLabel?: string;
   confirmLabel?: string;
+  // A parent may already be holding/restoring the history entry that opened
+  // this warning (AddFoodSheet's gesture-back dirty guard). In that one case
+  // the dialog must not push a second entry of its own.
+  manageBackHistory?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -27,7 +32,7 @@ export default function DiscardWarningSheet({
   // ever mounted while showing — its own history entry layers on top of
   // whatever's underneath, so back dismisses just the warning (onCancel)
   // first, then a second back reaches the screen underneath.
-  useBackDismiss(true, onCancel);
+  useBackDismiss(manageBackHistory, onCancel);
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 px-6" onClick={onCancel}>

@@ -4,6 +4,7 @@ import { ChevronLeft, Lock, Unlock } from "lucide-react";
 import { useCoachStatus } from "../api/coach";
 import { usePrograms, useUpdateProgramDays, useRegenerateProgram, type Program } from "../api/programs";
 import WeeklyProgramGrid from "../components/WeeklyProgramGrid";
+import DecimalInput from "../components/DecimalInput";
 
 const DAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAY_SHORT = ["S", "M", "T", "W", "T", "F", "S"];
@@ -252,14 +253,13 @@ export default function EditProgramScreen() {
               />
             </div>
           ) : (
-            <input
-              type="number"
-              inputMode="decimal"
-              autoComplete="off"
-              value={Math.round(current.targetCalories)}
+            <DecimalInput
+              label="Daily Calories"
+              value={String(Math.round(current.targetCalories))}
               disabled={isLocked}
-              onChange={(e) => updateCurrent({ targetCalories: Number(e.target.value) || 0 })}
-              className="w-full border border-line rounded-md px-4 py-3 bg-transparent tabular focus:outline-none focus:border-accent disabled:opacity-50"
+              onChange={(value) => updateCurrent({ targetCalories: Number(value) || 0 })}
+              allowDecimal={false}
+              className="w-full border border-line rounded-md px-4 py-3 bg-transparent tabular text-left focus:outline-none focus:border-accent disabled:opacity-50"
             />
           )}
           <p className="text-xs text-muted mt-1">

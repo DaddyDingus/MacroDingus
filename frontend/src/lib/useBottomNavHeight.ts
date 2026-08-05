@@ -10,7 +10,9 @@ export default function useBottomNavHeight(): number {
   useEffect(() => {
     const nav = document.getElementById("app-bottom-nav");
     if (!nav) return;
-    const update = () => setNavHeight(nav.offsetHeight);
+    // Keep the fractional CSS-pixel height. offsetHeight rounds to an integer,
+    // which can leave a hairline gap above the nav at some device pixel ratios.
+    const update = () => setNavHeight(nav.getBoundingClientRect().height);
     update();
     const observer = new ResizeObserver(update);
     observer.observe(nav);

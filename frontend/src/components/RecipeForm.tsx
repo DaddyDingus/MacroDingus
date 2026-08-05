@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { ChevronLeft, Pencil, Plus, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, CookingPot, Pencil, Plus, X } from "lucide-react";
 import type { Food } from "../api/types";
 import { scaleNutrition, sumNutrition } from "../lib/nutrition";
 import { localDateString } from "../lib/date";
 import FoodIconAvatar from "./FoodIconAvatar";
 import IconPickerModal from "./IconPickerModal";
 import AddFoodSheet from "./AddFoodSheet";
+import FoodEmojiGlyph from "./FoodEmojiGlyph";
 import FoodDetailScreen from "./FoodDetailScreen";
 import CreateFoodForm from "./CreateFoodForm";
 import DiscardWarningSheet from "./DiscardWarningSheet";
@@ -14,6 +15,9 @@ import type { SheetDragHandlers } from "./BottomSheet";
 import { useEnergyUnit, kcalToUnit, energyUnitLabel } from "../lib/energyUnit";
 import { useFavorites, useAddFavorite, useRemoveFavorite } from "../api/favorites";
 import { useCreateFood } from "../api/foods";
+import type { CookwareItem } from "../api/cookware";
+import CookwareSheet from "./CookwareSheet";
+import DecimalInput from "./DecimalInput";
 
 interface Ingredient {
   food: Food;
@@ -62,6 +66,9 @@ export default function RecipeForm({
       ? String(initial.totalWeightGrams)
       : ""
   );
+  const [selectedCookware, setSelectedCookware] = useState<CookwareItem | null>(null);
+  const [scaleWeight, setScaleWeight] = useState("");
+  const [cookwarePickerOpen, setCookwarePickerOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   // Which totals the nutrition card at the bottom shows — same Plate/Day
   // segmented-pill pattern AddFoodSheet's own StagedPlateSection uses for an
@@ -95,7 +102,14 @@ export default function RecipeForm({
   }
 
   const ingredientSumGrams = ingredients.reduce((sum, i) => sum + i.quantityGrams, 0);
-  const totalWeightGrams = weightOverride.trim() ? Number(weightOverride) : ingredientSumGrams;
+  const scaleWeightGrams = Number(scaleWeight);
+  const totalWeightGrams = selectedCookware
+    ? scaleWeight.trim()
+      ? scaleWeightGrams - selectedCookware.weightGrams
+      : 0
+    : weightOverride.trim()
+      ? Number(weightOverride)
+      : ingredientSumGrams;
   const totals = sumNutrition(ingredients.map((i) => scaleNutrition(i.food, i.quantityGrams)));
   const servingsNum = Number(servings) || 0;
   const perServing =
@@ -158,7 +172,11 @@ export default function RecipeForm({
       name: name.trim(),
       icon,
       servings: servingsNum,
-      totalWeightGrams: weightOverride.trim() ? Number(weightOverride) : undefined,
+      totalWeightGrams: selectedCookware
+        ? totalWeightGrams
+        : weightOverride.trim()
+          ? Number(weightOverride)
+          : undefined,
       ingredients,
     });
   }
@@ -198,7 +216,7 @@ export default function RecipeForm({
               aria-label="Choose icon"
               className="relative shrink-0 w-14 h-14 rounded-2xl bg-surface-raised border border-line flex items-center justify-center text-3xl leading-none active:opacity-70"
             >
-              {icon ?? autoIcon.value}
+              <FoodEmojiGlyph value={icon ?? autoIcon.value} className="w-9 h-9" />
               <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-accent flex items-center justify-center ring-2 ring-surface">
                 <Pencil size={10} strokeWidth={2.5} style={{ color: "#0B1210" }} />
               </span>
@@ -253,12 +271,11 @@ export default function RecipeForm({
                   <span className="text-sm text-white truncate min-w-0">{ing.food.name}</span>
                 </button>
                 <div className="flex items-center gap-1.5 shrink-0">
-                  <input
-                    type="search"
-                    inputMode="decimal"
-                    autoComplete="off"
-                    value={ing.quantityGrams}
-                    onChange={(e) => updateQuantity(i, Math.max(0, Number(e.target.value) || 0))}
+                  <DecimalInput
+                    label={`${ing.food.name} quantity`}
+                    value={String(ing.quantityGrams)}
+                    onChange={(value) => updateQuantity(i, Math.max(0, Number(value) || 0))}
+                    allowDecimal={false}
                     className="tabular w-14 bg-dashboardChip rounded-lg px-2 py-1.5 text-sm text-white text-right focus:outline-none focus:ring-1 focus:ring-accent"
                   />
                   <span className="text-xs text-muted">g</span>
@@ -282,56 +299,88 @@ export default function RecipeForm({
         <div className="grid grid-cols-2 gap-3 pt-1">
           <label className="block">
             <span className="block text-xs text-muted mb-1">Servings</span>
-            <input
-              type="search"
-              inputMode="decimal"
-              autoComplete="off"
+            <DecimalInput
+              label="Recipe servings"
               value={servings}
-              onChange={(e) => setServings(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
-              className="tabular w-full rounded-md bg-surface-raised border border-line px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent"
+              onChange={setServings}
+              className="tabular w-full rounded-md bg-surface-raised border border-line px-3 py-2.5 text-sm text-white text-left focus:outline-none focus:border-accent"
             />
           </label>
           <label className="block">
             <span className="flex items-center justify-between gap-2 mb-1">
               <span className="text-xs text-muted">
-                Total weight{" "}
-                {!weightOverride.trim() && ingredientSumGrams > 0 && (
+                {selectedCookware ? "Scale weight" : "Total weight"}{" "}
+                {!selectedCookware && !weightOverride.trim() && ingredientSumGrams > 0 && (
                   <span className="tabular">({Math.round(ingredientSumGrams)}g)</span>
                 )}
               </span>
-              {weightOverride.trim() !== "" && (
+              {(selectedCookware ? scaleWeight.trim() : weightOverride.trim()) !== "" && (
                 <button
                   type="button"
                   onClick={(e) => {
                     e.preventDefault();
-                    setWeightOverride("");
+                    if (selectedCookware) setScaleWeight("");
+                    else setWeightOverride("");
                   }}
                   className="text-xs font-medium text-accent shrink-0"
                 >
-                  Reset
+                  {selectedCookware ? "Clear" : "Reset"}
                 </button>
               )}
             </span>
             <div className="flex items-center rounded-md bg-surface-raised border border-line px-3 focus-within:border-accent">
-              <input
-                type="search"
-                inputMode="decimal"
-                autoComplete="off"
-                value={weightOverride}
-                onChange={(e) => setWeightOverride(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
-                placeholder={String(Math.round(ingredientSumGrams))}
-                className="tabular w-full bg-transparent py-2.5 text-sm text-white focus:outline-none"
+              <DecimalInput
+                label={selectedCookware ? "Scale weight" : "Total recipe weight"}
+                value={selectedCookware ? scaleWeight : weightOverride}
+                onChange={(value) => selectedCookware ? setScaleWeight(value) : setWeightOverride(value)}
+                placeholder={selectedCookware ? "0" : String(Math.round(ingredientSumGrams))}
+                className="tabular w-full bg-transparent py-2.5 text-sm text-white text-left focus:outline-none"
               />
               <span className="text-xs text-muted">g</span>
             </div>
           </label>
         </div>
-        <p className="text-xs text-muted -mt-2">
-          Only override the weight if cooking changed it (water lost or absorbed) — calories don't change, but
-          nutrition per gram does.
-        </p>
+        <button
+          type="button"
+          onClick={() => setCookwarePickerOpen(true)}
+          className="w-full flex items-center gap-3 rounded-xl border border-line bg-surface px-3 py-2.5 text-left active:bg-surface-raised"
+        >
+          <span className="w-8 h-8 rounded-lg bg-surface-raised flex items-center justify-center text-muted shrink-0">
+            <CookingPot size={16} strokeWidth={2} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-xs text-muted">Pot or dish</span>
+            <span className="block text-sm text-white truncate">
+              {selectedCookware ? selectedCookware.name : "None — entering food weight directly"}
+            </span>
+          </span>
+          {selectedCookware && (
+            <span className="text-xs text-muted tabular shrink-0">{Math.round(selectedCookware.weightGrams).toLocaleString()} g</span>
+          )}
+          <ChevronRight size={16} strokeWidth={2.5} className="text-muted shrink-0" />
+        </button>
+        {selectedCookware ? (
+          scaleWeight.trim() && totalWeightGrams > 0 ? (
+            <div className="rounded-xl bg-carbs/10 border border-carbs/20 px-3 py-2.5 -mt-1">
+              <p className="text-xs text-muted">Prepared food weight</p>
+              <p className="tabular text-sm mt-0.5">
+                {Math.round(scaleWeightGrams).toLocaleString()} g − {Math.round(selectedCookware.weightGrams).toLocaleString()} g ={" "}
+                <span className="font-semibold text-carbs">{Math.round(totalWeightGrams).toLocaleString()} g</span>
+              </p>
+            </div>
+          ) : (
+            <p className={`text-xs -mt-1 ${scaleWeight.trim() ? "text-protein" : "text-muted"}`}>
+              {scaleWeight.trim()
+                ? `Scale weight must be greater than ${Math.round(selectedCookware.weightGrams).toLocaleString()} g.`
+                : "Enter the combined weight of the finished food and dish."}
+            </p>
+          )
+        ) : (
+          <p className="text-xs text-muted -mt-2">
+            Only override the weight if cooking changed it (water lost or absorbed) — calories don't change, but
+            nutrition per gram does.
+          </p>
+        )}
 
         {ingredients.length > 0 && (
           <div className="rounded-2xl bg-dashboardCard px-4 pt-3.5 pb-3">
@@ -425,6 +474,17 @@ export default function RecipeForm({
           autoPreview={autoIcon.value}
           onSelect={setIcon}
           onClose={() => setIconPickerOpen(false)}
+        />
+      )}
+
+      {cookwarePickerOpen && (
+        <CookwareSheet
+          selectedId={selectedCookware?.id}
+          onSelect={(item) => {
+            setSelectedCookware(item);
+            setScaleWeight("");
+          }}
+          onClose={() => setCookwarePickerOpen(false)}
         />
       )}
 

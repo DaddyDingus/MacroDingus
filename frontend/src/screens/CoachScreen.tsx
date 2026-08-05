@@ -153,7 +153,7 @@ export default function CoachScreen() {
   let block = 0;
 
   return (
-    <div className="min-h-dvh pb-24">
+    <div data-rubber-band-surface className="min-h-dvh pb-24">
       <header className="px-4 pt-5 pb-3">
         <h1 className="text-3xl font-bold uppercase tracking-tight">Strategy</h1>
       </header>
@@ -400,7 +400,7 @@ export default function CoachScreen() {
 // form lives here rather than leaving new users with no way to provide it.
 function BasicProfileSetup({ saving, onSave }: { saving: boolean; onSave: (input: { sex: "male" | "female"; birthYear: number; heightCm: number; activityLevel: ActivityLevel; checkInDayOfWeek: number | null; weeklyExerciseHours: number | null }) => void }) {
   return (
-    <div className="min-h-dvh pb-24">
+    <div data-rubber-band-surface className="min-h-dvh pb-24">
       <header className="px-4 pt-5 pb-3">
         <h1 className="text-3xl font-bold uppercase tracking-tight">Strategy</h1>
         <p className="text-sm text-muted mt-2">A few basics first — this feeds your expenditure estimate until you've logged enough data for it to work from your real numbers.</p>

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ActivityLevel } from "../api/coach";
+import DecimalInput from "./DecimalInput";
 
 const ACTIVITY_OPTIONS: { value: ActivityLevel; label: string; description: string }[] = [
   { value: "sedentary", label: "Sedentary", description: "Desk job, little movement" },
@@ -48,16 +49,6 @@ export default function BasicProfileForm({
   const parsedExerciseHours = exerciseHours.trim() === "" ? null : Math.max(0, Number(exerciseHours));
   const checkInDayOfWeek = initial?.checkInDayOfWeek ?? null;
 
-  // Enter submits via onKeyDown on the number fields below, not a wrapping
-  // <form> — a <form> element turned out to be what triggers Chrome's full
-  // autofill accessory strip (passwords/payment/addresses icons) on Android,
-  // regardless of autocomplete="off". See AddFoodSheet's QuickAddTab for the
-  // fuller story.
-  function submitOnEnter(e: React.KeyboardEvent) {
-    if (e.key !== "Enter" || !canSave || saving) return;
-    onSave({ sex, birthYear: Number(birthYear), heightCm: Number(heightCm), activityLevel, checkInDayOfWeek, weeklyExerciseHours: parsedExerciseHours });
-  }
-
   return (
     <div className="space-y-4">
       <div className="flex rounded-md border border-line overflow-hidden">
@@ -70,11 +61,11 @@ export default function BasicProfileForm({
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="text-xs text-muted">Birth year</label>
-          <input type="search" inputMode="numeric" autoComplete="off" value={birthYear} onChange={(e) => setBirthYear(e.target.value)} onKeyDown={submitOnEnter} className="w-full border border-line rounded-md px-3 py-2.5 bg-transparent mt-1 focus-within:border-accent focus:outline-none" />
+          <DecimalInput label="Birth year" value={birthYear} onChange={setBirthYear} allowDecimal={false} className="w-full border border-line rounded-md px-3 py-2.5 bg-transparent mt-1 text-left focus:border-accent focus:outline-none" />
         </div>
         <div>
           <label className="text-xs text-muted">Height (cm)</label>
-          <input type="search" inputMode="decimal" autoComplete="off" value={heightCm} onChange={(e) => setHeightCm(e.target.value)} onKeyDown={submitOnEnter} className="w-full border border-line rounded-md px-3 py-2.5 bg-transparent mt-1 focus-within:border-accent focus:outline-none" />
+          <DecimalInput label="Height" value={heightCm} onChange={setHeightCm} className="w-full border border-line rounded-md px-3 py-2.5 bg-transparent mt-1 text-left focus:border-accent focus:outline-none" />
         </div>
       </div>
       <div>
@@ -97,15 +88,12 @@ export default function BasicProfileForm({
       <div>
         <label className="text-xs text-muted">High-intensity exercise (hours/week)</label>
         <p className="text-[11px] text-muted/70 mt-0.5 mb-1">Hard training sessions only — weightlifting, running, HIIT, etc. Leave blank if none.</p>
-        <input
-          type="search"
-          inputMode="decimal"
-          autoComplete="off"
+        <DecimalInput
+          label="High-intensity exercise hours per week"
           placeholder="e.g. 5"
           value={exerciseHours}
-          onChange={(e) => setExerciseHours(e.target.value)}
-          onKeyDown={submitOnEnter}
-          className="w-full border border-line rounded-md px-3 py-2.5 bg-transparent mt-1 focus-within:border-accent focus:outline-none"
+          onChange={setExerciseHours}
+          className="w-full border border-line rounded-md px-3 py-2.5 bg-transparent mt-1 text-left focus:border-accent focus:outline-none"
         />
         {parsedExerciseHours !== null && parsedExerciseHours > 0 && (
           <p className="text-[11px] text-accent mt-1">

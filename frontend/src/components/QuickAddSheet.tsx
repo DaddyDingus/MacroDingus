@@ -3,36 +3,48 @@ import { useCreateFood } from "../api/foods";
 import { useAddLog } from "../api/logs";
 import { useEnergyUnit, kcalToUnit, unitToKcal, energyUnitLabel, type EnergyUnit } from "../lib/energyUnit";
 import BottomSheet from "./BottomSheet";
+import DecimalKeypad from "./DecimalKeypad";
+
+type MacroField = "protein" | "carbs" | "fat" | "calories";
 
 function NumberField({
+  field,
   label,
   value,
-  onChange,
   suffix,
-  onEnter,
+  labelClassName,
+  active,
+  allSelected,
+  onOpen,
 }: {
+  field: MacroField;
   label: string;
   value: string;
-  onChange: (v: string) => void;
   suffix?: ReactNode;
-  onEnter?: () => void;
+  labelClassName?: string;
+  active: boolean;
+  allSelected: boolean;
+  onOpen: () => void;
 }) {
   return (
-    <label className="block">
-      <span className="block text-xs text-muted mb-1">{label}</span>
-      <div className="flex items-center rounded-md bg-surface-raised border border-line px-3 focus-within:border-accent">
-        <input
-          type="search"
-          inputMode="decimal"
-          autoComplete="off"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onKeyDown={onEnter ? (e) => { if (e.key === "Enter") onEnter(); } : undefined}
-          className="tabular w-full bg-transparent py-2.5 text-sm focus:outline-none"
-        />
-        {suffix && <span className="text-xs text-muted">{suffix}</span>}
+    <div data-quick-add-field={field} className="block">
+      <span className={`block text-xs font-medium mb-1.5 ${labelClassName ?? "text-muted"}`}>{label}</span>
+      <div className={`flex items-center min-h-12 rounded-xl bg-surface-raised border px-4 ${active ? "border-accent" : "border-line"}`}>
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-label={label}
+          aria-expanded={active}
+          className="tabular min-w-0 flex-1 self-stretch bg-transparent text-base font-medium text-left flex items-center focus:outline-none"
+        >
+          {value ? (
+            allSelected && active ? <span className="bg-accent/30 rounded px-0.5 -mx-0.5">{value}</span> : value
+          ) : null}
+          {active && <span className="caret-blink w-[2px] h-[1.1em] bg-white ml-1 shrink-0" />}
+        </button>
+        {suffix && <span className="text-sm text-muted shrink-0">{suffix}</span>}
       </div>
-    </label>
+    </div>
   );
 }
 
@@ -56,6 +68,8 @@ export default function QuickAddSheet({
   const [carbs, setCarbs] = useState("");
   const [fat, setFat] = useState("");
   const [calories, setCalories] = useState("");
+  const [activeMacro, setActiveMacro] = useState<MacroField | null>(null);
+  const [allSelected, setAllSelected] = useState(false);
   // Local, not the global preference: this toggle just changes which unit
   // this one field is typed/read in, mirroring CreateFoodForm's toggle. It
   // used to call the shared setUnit and so silently flipped the whole app's
@@ -74,6 +88,17 @@ export default function QuickAddSheet({
     setCalories(String(Math.round(kcalToUnit(p * 4 + c * 4 + f * 9, energyUnit))));
   }, [protein, carbs, fat, energyUnit]);
 
+  // Opening the docked keypad reduces the form pane rather than growing the
+  // whole sheet. Keep whichever macro was tapped inside that smaller pane,
+  // particularly Fat/Calories on the second row.
+  useEffect(() => {
+    if (!activeMacro) return;
+    const timer = window.setTimeout(() => {
+      document.querySelector(`[data-quick-add-field="${activeMacro}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }, 210);
+    return () => window.clearTimeout(timer);
+  }, [activeMacro]);
+
   const canSave = name.trim() !== "" && calories.trim() !== "";
 
   // Same in-place conversion pattern as CreateFoodForm's toggle — whatever's
@@ -86,6 +111,52 @@ export default function QuickAddSheet({
       setCalories(String(Math.round(kcalToUnit(kcal, next))));
     }
     setEnergyUnit(next);
+  }
+
+  function macroValue(field: MacroField) {
+    if (field === "protein") return protein;
+    if (field === "carbs") return carbs;
+    if (field === "fat") return fat;
+    return calories;
+  }
+
+  function setMacroValue(field: MacroField, value: string) {
+    if (field === "protein") setProtein(value);
+    else if (field === "carbs") setCarbs(value);
+    else if (field === "fat") setFat(value);
+    else setCalories(value);
+  }
+
+  function openMacro(field: MacroField) {
+    if (activeMacro === field) {
+      setActiveMacro(null);
+      return;
+    }
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    setActiveMacro(field);
+    setAllSelected(Boolean(macroValue(field)));
+  }
+
+  function tapDigit(digit: string) {
+    if (!activeMacro) return;
+    const current = macroValue(activeMacro);
+    setMacroValue(activeMacro, allSelected || current === "0" ? digit : current + digit);
+    setAllSelected(false);
+  }
+
+  function tapDecimal() {
+    if (!activeMacro) return;
+    const current = macroValue(activeMacro);
+    if (allSelected || current === "") setMacroValue(activeMacro, "0.");
+    else if (!current.includes(".")) setMacroValue(activeMacro, `${current}.`);
+    setAllSelected(false);
+  }
+
+  function tapBackspace() {
+    if (!activeMacro) return;
+    const current = macroValue(activeMacro);
+    setMacroValue(activeMacro, allSelected ? "" : current.slice(0, -1));
+    setAllSelected(false);
   }
 
   function submit() {
@@ -114,7 +185,7 @@ export default function QuickAddSheet({
     <BottomSheet
       onClose={onClose}
       backdropClassName="bg-black/50"
-      panelClassName="max-h-[85%] bg-surface rounded-t-xl border-t border-line"
+      panelClassName="max-h-[88%] bg-dashboardBg rounded-t-xl border-t border-line"
     >
       {(dragHandlers) => (
         <>
@@ -124,13 +195,7 @@ export default function QuickAddSheet({
         <span className="text-sm font-medium">Quick add</span>
       </div>
 
-      {/* Enter submits via onKeyDown on each field, not a wrapping <form> —
-          a <form> element turned out to be what triggers Chrome's full
-          autofill accessory strip (passwords/payment/addresses icons) on
-          Android, regardless of autocomplete="off" or a distinct name
-          attribute on the fields inside it. See AddFoodSheet's own Quick Add
-          tab for the fuller story — same fields, same fix. */}
-      <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
+      <div className="flex-1 overflow-y-auto px-4 pb-3 space-y-2.5">
         <label className="block">
           <span className="block text-xs text-muted mb-1">Name</span>
           <input
@@ -141,28 +206,31 @@ export default function QuickAddSheet({
             // Chromium's Android autofill integration than autocomplete/name
             // ever were on a bare type="text" field. See AddFoodSheet's own
             // Quick Add tab for the fuller story.
-            autoFocus
             autoComplete="off"
             value={name}
+            onFocus={() => setActiveMacro(null)}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
             placeholder="e.g. Restaurant lunch"
-            className="w-full rounded-md bg-surface-raised border border-line px-3 py-2.5 text-sm focus:outline-none focus:border-accent"
+            className="w-full min-h-12 rounded-xl bg-surface-raised border border-line px-4 text-sm focus:outline-none focus:border-accent"
           />
         </label>
 
-        <p className="text-[11px] tracking-widest uppercase text-muted pt-1">
-          Macros — fill in what you know, calories fill themselves in
-        </p>
-        <div className="grid grid-cols-2 gap-3">
-          <NumberField label="Protein" value={protein} onChange={setProtein} suffix="g" onEnter={submit} />
-          <NumberField label="Carbs" value={carbs} onChange={setCarbs} suffix="g" onEnter={submit} />
-          <NumberField label="Fat" value={fat} onChange={setFat} suffix="g" onEnter={submit} />
+        <div className="pt-0.5">
+          <p className="text-sm font-medium">Macros</p>
+        </div>
+        <div className="grid grid-cols-2 gap-2.5">
+          <NumberField field="protein" label="Protein" labelClassName="text-protein" value={protein} suffix="g" active={activeMacro === "protein"} allSelected={allSelected} onOpen={() => openMacro("protein")} />
+          <NumberField field="carbs" label="Carbs" labelClassName="text-carbs" value={carbs} suffix="g" active={activeMacro === "carbs"} allSelected={allSelected} onOpen={() => openMacro("carbs")} />
+          <NumberField field="fat" label="Fat" labelClassName="text-fat" value={fat} suffix="g" active={activeMacro === "fat"} allSelected={allSelected} onOpen={() => openMacro("fat")} />
           <NumberField
+            field="calories"
             label="Calories"
+            labelClassName="text-calories"
             value={calories}
-            onChange={setCalories}
-            onEnter={submit}
+            active={activeMacro === "calories"}
+            allSelected={allSelected}
+            onOpen={() => openMacro("calories")}
             suffix={
               <button type="button" onClick={toggleEnergyUnit} className="text-xs text-accent font-medium active:opacity-70">
                 {energyUnitLabel(energyUnit)}
@@ -172,11 +240,22 @@ export default function QuickAddSheet({
         </div>
       </div>
 
-      <div className="p-4 shrink-0">
+      <div
+        className="shrink-0 grid border-t border-dashboardDivider/60 transition-[grid-template-rows] duration-200 ease-out"
+        style={{ gridTemplateRows: activeMacro ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">
+          <div className="px-4 pt-3 pb-2">
+            <DecimalKeypad onDigit={tapDigit} onDecimal={tapDecimal} onBackspace={tapBackspace} />
+          </div>
+        </div>
+      </div>
+
+      <div className="p-4 pt-2 shrink-0">
         <button
           onClick={submit}
           disabled={!canSave || createFood.isPending || addLog.isPending}
-          className="w-full py-3 rounded-md bg-accent text-base disabled:opacity-40 font-medium"
+          className="w-full min-h-14 rounded-xl bg-accent text-base disabled:opacity-40 font-medium"
           style={{ color: "#0B1210" }}
         >
           Add

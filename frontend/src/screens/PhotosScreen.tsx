@@ -28,6 +28,7 @@ import PhotoAlignerModal from "../components/PhotoAlignerModal";
 import CalendarJumpSheet from "../components/CalendarJumpSheet";
 import ConfirmDeleteSheet from "../components/ConfirmDeleteSheet";
 import PhotoSourceSheet from "../components/PhotoSourceSheet";
+import DecimalInput from "../components/DecimalInput";
 
 const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -365,14 +366,12 @@ export default function PhotosScreen() {
                     <label key={part} className="flex items-center justify-between py-3">
                       <span className="text-sm font-semibold text-ink">{part}</span>
                       <span className="flex items-center gap-1.5">
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          autoComplete="off"
+                        <DecimalInput
+                          label={`${part} measurement`}
                           placeholder="0"
                           value={measurementDrafts[part]}
-                          onChange={(e) => updateMeasurementDraft(part, e.target.value)}
-                          className="w-16 bg-transparent text-right text-lg font-semibold tabular text-ink placeholder:text-muted/50 focus:outline-none"
+                          onChange={(value) => updateMeasurementDraft(part, value)}
+                          className="w-16 bg-transparent text-right text-lg font-semibold tabular text-ink focus:outline-none"
                         />
                         <span className="text-xs text-muted w-5">{lengthUnit}</span>
                       </span>

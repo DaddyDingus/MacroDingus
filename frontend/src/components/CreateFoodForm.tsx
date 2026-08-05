@@ -4,8 +4,10 @@ import type { CreateFoodInput, Food, LabelScanResult } from "../api/types";
 import { useEnergyUnit, kcalToUnit, unitToKcal, energyUnitLabel, type EnergyUnit } from "../lib/energyUnit";
 import { getFoodIcon } from "../lib/foodEmoji";
 import IconPickerModal from "./IconPickerModal";
+import FoodEmojiGlyph from "./FoodEmojiGlyph";
 import PhotoSourceSheet from "./PhotoSourceSheet";
 import { useScanNutritionLabel } from "../api/foods";
+import DecimalInput from "./DecimalInput";
 
 function displayFromGrams(unit: "mg" | "mcg", grams: number): number {
   return unit === "mg" ? grams * 1_000 : grams * 1_000_000;
@@ -39,7 +41,6 @@ function NumberField({
   onChange,
   suffix,
   labelClassName = "text-muted",
-  onEnter,
 }: {
   label: string;
   value: string;
@@ -50,25 +51,16 @@ function NumberField({
   // other screen in the app color-codes, instead of four identical gray
   // labels indistinguishable from Fiber/Sodium/etc below them.
   labelClassName?: string;
-  // Every call site in this form passes the same submit() — plain onKeyDown
-  // per field rather than wrapping the form in a <form> element, which is
-  // what was actually triggering Chrome's full autofill accessory strip
-  // (passwords/payment/addresses icons) on Android for Quick Add's identical
-  // shape; see AddFoodSheet's QuickAddTab for the fuller story.
-  onEnter?: () => void;
 }) {
   return (
     <label className="block">
       <span className={`block text-xs font-medium mb-1 ${labelClassName}`}>{label}</span>
       <div className="flex items-center rounded-md bg-surface-raised border border-line px-3 focus-within:border-accent">
-        <input
-          type="search"
-          inputMode="decimal"
-          autoComplete="off"
+        <DecimalInput
+          label={label}
           value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onKeyDown={onEnter ? (e) => { if (e.key === "Enter") onEnter(); } : undefined}
-          className="tabular w-full bg-transparent py-2.5 text-sm focus:outline-none"
+          onChange={onChange}
+          className="tabular w-full bg-transparent py-2.5 text-sm text-left focus:outline-none"
         />
         {suffix && <span className="text-xs text-muted">{suffix}</span>}
       </div>
@@ -346,13 +338,6 @@ export default function CreateFoodForm({
         <span className="text-sm font-medium">Create custom food</span>
       </div>
 
-      {/* Enter submits via onKeyDown on each NumberField/text input (see
-          NumberField's onEnter prop), not a wrapping <form> — a <form>
-          element turned out to be what triggers Chrome's full autofill
-          accessory strip (passwords/payment/addresses icons) on Android for
-          this exact field shape (name field + several plain number fields),
-          regardless of autocomplete="off". See AddFoodSheet's QuickAddTab
-          for the fuller story — same fields, same fix. */}
       <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
         {barcode && (
           <p className="text-xs text-muted">
@@ -428,7 +413,7 @@ export default function CreateFoodForm({
               aria-label="Choose icon"
               className="relative shrink-0 w-14 h-14 rounded-2xl bg-surface-raised border border-line flex items-center justify-center text-3xl leading-none active:opacity-70"
             >
-              {icon ?? autoIcon.value}
+              <FoodEmojiGlyph value={icon ?? autoIcon.value} className="w-9 h-9" />
               <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-accent flex items-center justify-center ring-2 ring-surface">
                 <Pencil size={10} strokeWidth={2.5} style={{ color: "#0B1210" }} />
               </span>
@@ -471,16 +456,15 @@ export default function CreateFoodForm({
               value={calories}
               onChange={setCalories}
               labelClassName="text-calories"
-              onEnter={submit}
               suffix={
                 <button type="button" onClick={toggleEnergyUnit} className="text-xs text-accent font-medium active:opacity-70">
                   {energyUnitLabel(energyUnit)}
                 </button>
               }
             />
-            <NumberField label="Protein" value={protein} onChange={setProtein} suffix="g" labelClassName="text-protein" onEnter={submit} />
-            <NumberField label="Carbs" value={carbs} onChange={setCarbs} suffix="g" labelClassName="text-carbs" onEnter={submit} />
-            <NumberField label="Fat" value={fat} onChange={setFat} suffix="g" labelClassName="text-fat" onEnter={submit} />
+            <NumberField label="Protein" value={protein} onChange={setProtein} suffix="g" labelClassName="text-protein" />
+            <NumberField label="Carbs" value={carbs} onChange={setCarbs} suffix="g" labelClassName="text-carbs" />
+            <NumberField label="Fat" value={fat} onChange={setFat} suffix="g" labelClassName="text-fat" />
           </div>
 
           <div>
@@ -495,14 +479,11 @@ export default function CreateFoodForm({
                 className="min-w-0 rounded-md bg-surface-raised border border-line px-3 py-2.5 text-sm focus:outline-none focus:border-accent"
               />
               <div className="flex items-center rounded-md bg-surface-raised border border-line px-3 focus-within:border-accent">
-              <input
-                type="search"
-                inputMode="decimal"
-                autoComplete="off"
+              <DecimalInput
+                label="Primary serving weight"
                 value={servingSizeGrams}
-                onChange={(e) => setServingSizeGrams(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
-                className="tabular w-full bg-transparent py-2.5 text-sm focus:outline-none"
+                onChange={setServingSizeGrams}
+                className="tabular w-full bg-transparent py-2.5 text-sm text-left focus:outline-none"
               />
               <span className="text-xs text-muted">g</span>
               </div>
@@ -518,7 +499,7 @@ export default function CreateFoodForm({
               <label className="block">
                 <span className="block text-xs text-muted mb-1">Weight</span>
                 <div className="flex items-center rounded-md bg-surface-raised border border-line px-3 focus-within:border-accent">
-                  <input type="search" inputMode="decimal" autoComplete="off" value={measure.grams} onChange={(e) => setMeasures((current) => current.map((m, i) => i === index ? { ...m, grams: e.target.value } : m))} className="tabular w-full min-w-0 bg-transparent py-2.5 text-sm focus:outline-none" />
+                  <DecimalInput label={`${measure.name || "Measure"} weight`} value={measure.grams} onChange={(value) => setMeasures((current) => current.map((m, i) => i === index ? { ...m, grams: value } : m))} className="tabular w-full min-w-0 bg-transparent py-2.5 text-sm text-left focus:outline-none" />
                   <span className="text-xs text-muted">g</span>
                 </div>
               </label>
@@ -567,8 +548,8 @@ export default function CreateFoodForm({
             <div>
               <p className="text-[11px] tracking-widest uppercase text-muted pb-2">Carbs</p>
               <div className="grid grid-cols-2 gap-3">
-                <NumberField label="Fiber" value={fiber} onChange={setFiber} suffix="g" onEnter={submit} />
-                <NumberField label="Sugar" value={sugar} onChange={setSugar} suffix="g" onEnter={submit} />
+                <NumberField label="Fiber" value={fiber} onChange={setFiber} suffix="g" />
+                <NumberField label="Sugar" value={sugar} onChange={setSugar} suffix="g" />
               </div>
             </div>
 
@@ -582,7 +563,6 @@ export default function CreateFoodForm({
                     value={fatSubtypes[f.key] ?? ""}
                     onChange={(v) => setFatSubtypes((prev) => ({ ...prev, [f.key]: v }))}
                     suffix="g"
-                    onEnter={submit}
                   />
                 ))}
               </div>
@@ -599,11 +579,10 @@ export default function CreateFoodForm({
                       value={microValues[f.key] ?? ""}
                       onChange={(v) => setMicroValues((prev) => ({ ...prev, [f.key]: v }))}
                       suffix={f.unit}
-                      onEnter={submit}
                     />
                   ))}
                   {group.category === "Other" && (
-                    <NumberField label="Sodium" value={sodiumMg} onChange={setSodiumMg} suffix="mg" onEnter={submit} />
+                    <NumberField label="Sodium" value={sodiumMg} onChange={setSodiumMg} suffix="mg" />
                   )}
                 </div>
               </div>

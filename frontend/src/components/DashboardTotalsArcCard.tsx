@@ -218,10 +218,11 @@ function ArcPage({
   );
 }
 
-// Two swipeable pages (Total / Remaining) rather than the tap toggle this
+// Two swipeable pages (Remaining / Total) rather than the tap toggle this
 // used to have — same reasoning and same native-scroll-snap technique as
 // MacroSummaryBar.tsx's own Consumed/Remaining pages, so the Home Dashboard
-// and Food Log headers page the same way. Paging state lives entirely in
+// and Food Log headers page the same way. Remaining is first so it is the
+// default view. Paging state lives entirely in
 // here now (previously lifted to DashboardScreen as mode/onModeChange, back
 // when ModeToggle needed it there) since nothing else on the screen reads it.
 export default function DashboardTotalsArcCard({
@@ -271,12 +272,12 @@ export default function DashboardTotalsArcCard({
           className="flex overflow-x-auto no-scrollbar overscroll-x-contain select-none"
           style={{ scrollSnapType: "x mandatory", touchAction: "pan-x" }}
         >
-          <ArcPage mode="total" active={page === 0} totals={totals} targets={targets} energyUnit={energyUnit} />
-          <ArcPage mode="remaining" active={page === 1} totals={totals} targets={targets} energyUnit={energyUnit} />
+          <ArcPage mode="remaining" active={page === 0} totals={totals} targets={targets} energyUnit={energyUnit} />
+          <ArcPage mode="total" active={page === 1} totals={totals} targets={targets} energyUnit={energyUnit} />
         </div>
         <div className="flex justify-center gap-1.5 mt-4">
           {([0, 1] as const).map((p) => (
-            <button key={p} onClick={() => goTo(p)} aria-label={p === 0 ? "Show total" : "Show remaining"} className="p-1 -m-1">
+            <button key={p} onClick={() => goTo(p)} aria-label={p === 0 ? "Show remaining" : "Show consumed"} className="p-1 -m-1">
               <span
                 className={`block h-1.5 rounded-full transition-all duration-300 ${page === p ? "w-4 bg-accent" : "w-1.5 bg-dashboardTrack"}`}
               />

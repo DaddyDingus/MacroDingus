@@ -31,6 +31,7 @@ export default function DashboardScreen() {
 
   const navigate = useNavigate();
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [checkInResult, setCheckInResult] = useState<{ checkin: NonNullable<ReturnType<typeof useCoachStatus>["data"]>["latestCheckin"]; usedAdaptiveTdee: boolean } | null>(null);
   const [weightPromptOpen, setWeightPromptOpen] = useState(false);
 
@@ -97,7 +98,7 @@ export default function DashboardScreen() {
   }
 
   return (
-    <div className="min-h-dvh pb-40 bg-dashboardBg">
+    <div data-rubber-band-surface className="min-h-dvh pb-40 bg-dashboardBg">
       <header className="px-4 pt-5 pb-3 flex items-start justify-between gap-3">
         <div>
           <p className="text-[11px] text-muted">{HEADER_DATE_FORMAT.format(new Date())}</p>
@@ -115,7 +116,13 @@ export default function DashboardScreen() {
         <button
           onClick={async () => {
             setRefreshing(true);
-            await forceRefreshApp();
+            setRefreshError(null);
+            try {
+              await forceRefreshApp();
+            } catch (error) {
+              setRefreshError(error instanceof Error ? error.message : "Couldn't refresh the app.");
+              setRefreshing(false);
+            }
           }}
           disabled={refreshing}
           aria-label="Refresh app"
@@ -124,6 +131,11 @@ export default function DashboardScreen() {
           <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} strokeWidth={2} />
         </button>
       </header>
+      {refreshError && (
+        <p className="px-4 -mt-1 pb-2 text-right text-xs text-protein" role="status">
+          {refreshError}
+        </p>
+      )}
 
       <main className="px-4 space-y-4 max-w-md mx-auto">
         {/* Reuses the exact same illustration the New Goal wizard's own

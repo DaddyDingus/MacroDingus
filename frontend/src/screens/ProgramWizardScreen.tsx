@@ -25,6 +25,7 @@ import WizardIntroCard from "../components/WizardIntroCard";
 import WizardOption from "../components/WizardOption";
 import WeeklyProgramGrid from "../components/WeeklyProgramGrid";
 import OrbitLoadingAnimation from "../components/OrbitLoadingAnimation";
+import DecimalInput from "../components/DecimalInput";
 import { useBackDismissDepth } from "../lib/useBackDismiss";
 
 type Step = "intro" | "style" | "diet" | "floor" | "distribution" | "shiftDays" | "protein" | "calories" | "manualEntry" | "generating" | "results";
@@ -458,12 +459,10 @@ function ProgramWizardBody({ goalId }: { goalId: string }) {
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">Starting Calories</span>
               <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  autoComplete="off"
+                <DecimalInput
+                  label="Starting Calories"
                   value={startingCalories}
-                  onChange={(e) => setStartingCalories(e.target.value)}
+                  onChange={setStartingCalories}
                   placeholder="e.g. 2100"
                   className="w-24 bg-transparent text-right tabular focus:outline-none"
                 />
@@ -507,12 +506,10 @@ function ProgramWizardBody({ goalId }: { goalId: string }) {
             <div key={key} className="flex items-center justify-between border border-line rounded-md px-4 py-3">
               <span className="text-sm">{label}</span>
               <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  autoComplete="off"
+                <DecimalInput
+                  label={`${label} target`}
                   value={manualValues[key]}
-                  onChange={(e) => setManualValues((v) => ({ ...v, [key]: e.target.value }))}
+                  onChange={(value) => setManualValues((v) => ({ ...v, [key]: value }))}
                   className="w-20 bg-transparent text-right tabular focus:outline-none"
                 />
                 <span className="text-xs text-muted">{unit}</span>

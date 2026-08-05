@@ -1,31 +1,53 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { CalendarDays } from "lucide-react";
 import { useLogWeight, useWeights } from "../api/weights";
 import { formatDayLabel, localDateString } from "../lib/date";
 import { useWeightUnit, unitToKg } from "../lib/weightUnit";
 import CalendarJumpSheet from "./CalendarJumpSheet";
+import DecimalKeypad from "./DecimalKeypad";
 
 // Shared by the weight detail page and the global quick-actions sheet — same
 // input+button, just reused wherever "log today's weight" needs to appear.
-export default function LogWeightInline({ onLogged, autoFocus }: { onLogged?: () => void; autoFocus?: boolean }) {
+export default function LogWeightInline({ onLogged, autoFocus = false }: { onLogged?: () => void; autoFocus?: boolean }) {
   const { unit } = useWeightUnit();
   const logWeight = useLogWeight();
   const [weightInput, setWeightInput] = useState("");
   const [showBodyFat, setShowBodyFat] = useState(false);
   const [bodyFatInput, setBodyFatInput] = useState("");
-  const bodyFatRef = useRef<HTMLInputElement>(null);
+  const [activeField, setActiveField] = useState<"weight" | "bodyFat">("weight");
+  const [keypadOpen, setKeypadOpen] = useState(autoFocus);
+  const [allSelected, setAllSelected] = useState(false);
   const [date, setDate] = useState(localDateString());
   const [calendarOpen, setCalendarOpen] = useState(false);
   const weightDates = useWeights(3650, calendarOpen);
   const isToday = date === localDateString();
 
-  // The toggle button below prevents itself from taking focus on tap (see
-  // its onMouseDown), so the on-screen keyboard never dismisses — instead
-  // we hand focus straight to the newly-revealed body fat input once it
-  // mounts, so the keyboard stays up and simply retargets.
-  useEffect(() => {
-    if (showBodyFat) bodyFatRef.current?.focus();
-  }, [showBodyFat]);
+  function updateActiveValue(update: (previous: string) => string) {
+    if (activeField === "weight") setWeightInput(update);
+    else setBodyFatInput(update);
+  }
+
+  function openField(field: "weight" | "bodyFat") {
+    const value = field === "weight" ? weightInput : bodyFatInput;
+    setActiveField(field);
+    setKeypadOpen(true);
+    setAllSelected(Boolean(value));
+  }
+
+  function tapDigit(digit: string) {
+    updateActiveValue((previous) => allSelected || previous === "0" ? digit : previous + digit);
+    setAllSelected(false);
+  }
+
+  function tapDecimal() {
+    updateActiveValue((previous) => allSelected || previous === "" ? "0." : previous.includes(".") ? previous : `${previous}.`);
+    setAllSelected(false);
+  }
+
+  function tapBackspace() {
+    updateActiveValue((previous) => allSelected ? "" : previous.slice(0, -1));
+    setAllSelected(false);
+  }
 
   function submit() {
     const value = Number(weightInput);
@@ -49,14 +71,7 @@ export default function LogWeightInline({ onLogged, autoFocus }: { onLogged?: ()
       <button
         type="button"
         onClick={(e) => {
-          // Unlike the body-fat toggle below, this one should blur whatever
-          // input is focused — the on-screen keyboard covers the calendar
-          // sheet otherwise, since it pops up from the bottom same as the
-          // keyboard. (e.target as HTMLElement).blur() alone isn't enough on
-          // some mobile browsers if a *different* element (the weight/body
-          // fat input) is the one actually focused, so blur the real
-          // activeElement explicitly.
-          (document.activeElement as HTMLElement | null)?.blur();
+          setKeypadOpen(false);
           setCalendarOpen(true);
         }}
         className="self-center flex items-center gap-1.5 px-3 py-1 rounded-full border border-line text-xs font-medium text-muted active:border-accent active:text-white"
@@ -64,32 +79,28 @@ export default function LogWeightInline({ onLogged, autoFocus }: { onLogged?: ()
         <CalendarDays className="w-3 h-3" strokeWidth={2} />
         {formatDayLabel(date)}
       </button>
-      <div className="border border-line bg-surface rounded-2xl p-4 flex items-center gap-2 focus-within:border-accent">
-        <input
-          type="search"
-          inputMode="decimal"
-          autoComplete="off"
-          // Chrome's keyboard accessory bar shows a "Passwords" autofill chip
-          // over this field despite autoComplete="off" — a known Chrome
-          // heuristic misfire on bare numeric inputs, not specific to this
-          // input's content. These data-* attributes are the standard
-          // cross-password-manager suppression combo (Chrome/Bitwarden/
-          // 1Password/LastPass each key off a different one); none are part
-          // of the HTML spec, they're just conventions those tools honor.
-          data-lpignore="true"
-          data-1p-ignore=""
-          data-bwignore="true"
-          data-form-type="other"
-          autoFocus={autoFocus}
-          value={weightInput}
-          onChange={(e) => setWeightInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") submit();
-          }}
-          placeholder={isToday ? "Log today's weight" : `Log weight for ${formatDayLabel(date)}`}
-          className="tabular flex-1 min-w-0 bg-transparent text-sm focus:outline-none placeholder:text-muted"
-        />
-        <span className="text-xs text-muted shrink-0">{unit}</span>
+      <div
+        className={`border bg-surface rounded-2xl p-4 flex items-center gap-2 ${
+          keypadOpen && activeField === "weight" ? "border-accent" : "border-line"
+        }`}
+      >
+        <button
+          type="button"
+          onClick={() => openField("weight")}
+          aria-label={isToday ? "Log today's weight" : `Log weight for ${formatDayLabel(date)}`}
+          aria-expanded={keypadOpen && activeField === "weight"}
+          className="flex-1 min-w-0 flex items-center gap-2 text-left"
+        >
+          <span className="tabular flex-1 min-w-0 flex items-center text-sm">
+            {weightInput ? (
+              allSelected && activeField === "weight" ? <span className="bg-accent/30 rounded px-0.5 -mx-0.5">{weightInput}</span> : weightInput
+            ) : (
+              <span className="text-muted">{isToday ? "Log today's weight" : `Log weight for ${formatDayLabel(date)}`}</span>
+            )}
+            {keypadOpen && activeField === "weight" && <span className="caret-blink w-[2px] h-[1.1em] bg-white ml-1 shrink-0" />}
+          </span>
+          <span className="text-xs text-muted shrink-0">{unit}</span>
+        </button>
         <button
           type="button"
           onClick={submit}
@@ -101,35 +112,45 @@ export default function LogWeightInline({ onLogged, autoFocus }: { onLogged?: ()
         </button>
       </div>
       {showBodyFat ? (
-        <div className="border border-line bg-surface rounded-2xl p-4 flex items-center gap-2 focus-within:border-accent">
-          <input
-            ref={bodyFatRef}
-            type="search"
-            inputMode="decimal"
-            autoComplete="off"
-            data-lpignore="true"
-            data-1p-ignore=""
-            data-bwignore="true"
-            data-form-type="other"
-            value={bodyFatInput}
-            onChange={(e) => setBodyFatInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") submit();
-            }}
-            placeholder="Body fat (optional)"
-            className="tabular flex-1 min-w-0 bg-transparent text-sm focus:outline-none placeholder:text-muted"
-          />
+        <button
+          type="button"
+          onClick={() => openField("bodyFat")}
+          aria-label="Body fat percentage"
+          aria-expanded={keypadOpen && activeField === "bodyFat"}
+          className={`border bg-surface rounded-2xl p-4 flex items-center gap-2 text-left ${
+            keypadOpen && activeField === "bodyFat" ? "border-accent" : "border-line"
+          }`}
+        >
+          <span className="tabular flex-1 min-w-0 flex items-center text-sm">
+            {bodyFatInput ? (
+              allSelected && activeField === "bodyFat" ? <span className="bg-accent/30 rounded px-0.5 -mx-0.5">{bodyFatInput}</span> : bodyFatInput
+            ) : (
+              <span className="text-muted">Body fat (optional)</span>
+            )}
+            {keypadOpen && activeField === "bodyFat" && <span className="caret-blink w-[2px] h-[1.1em] bg-white ml-1 shrink-0" />}
+          </span>
           <span className="text-xs text-muted shrink-0">%</span>
-        </div>
+        </button>
       ) : (
         <button
           type="button"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => setShowBodyFat(true)}
+          onClick={() => {
+            setShowBodyFat(true);
+            openField("bodyFat");
+          }}
           className="self-start text-xs text-muted underline underline-offset-2"
         >
           + Body fat %
         </button>
+      )}
+      {keypadOpen && (
+        <div className="-mx-4 -mb-4 mt-1 border-t border-dashboardDivider/60 px-4 pt-3 pb-4">
+          <DecimalKeypad
+            onDigit={tapDigit}
+            onDecimal={tapDecimal}
+            onBackspace={tapBackspace}
+          />
+        </div>
       )}
       {calendarOpen && (
         <CalendarJumpSheet

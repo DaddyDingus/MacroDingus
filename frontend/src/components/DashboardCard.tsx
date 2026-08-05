@@ -16,6 +16,7 @@ export default function DashboardCard({
   unit,
   onClick,
   staggerIndex,
+  mediaLayout = false,
   children,
 }: {
   title: string;
@@ -24,6 +25,7 @@ export default function DashboardCard({
   unit?: string;
   onClick: () => void;
   staggerIndex?: number;
+  mediaLayout?: boolean;
   children?: ReactNode;
 }) {
   const style = staggerIndex !== undefined ? staggerStyle(staggerIndex) : undefined;
@@ -31,7 +33,7 @@ export default function DashboardCard({
     <button
       onClick={onClick}
       style={style}
-      className="aspect-square bg-dashboardCard rounded-2xl p-4 text-left flex flex-col gap-3 transition active:brightness-110 tile-enter"
+      className={`aspect-square bg-dashboardCard rounded-2xl p-4 text-left flex flex-col transition active:brightness-110 tile-enter ${mediaLayout ? "gap-2" : "gap-3"}`}
     >
       <div>
         <p className="text-sm font-semibold text-ink truncate">{title}</p>
@@ -43,8 +45,8 @@ export default function DashboardCard({
           line-clamp still wants more vertical room than a square tile has)
           just paints straight through its own shrunk box and overlaps the
           divider/footer below rather than being cut off cleanly. */}
-      <div className="flex-1 min-h-0 py-1 overflow-hidden">{children}</div>
-      <div className="h-px bg-dashboardDivider" />
+      <div className={`flex-1 min-h-0 overflow-hidden ${mediaLayout ? "" : "py-1"}`}>{children}</div>
+      {!mediaLayout && <div className="h-px bg-dashboardDivider" />}
       <div className="flex items-center justify-between">
         <p className="tabular leading-none">
           <span className="text-lg font-bold text-ink tracking-tight">{value}</span>

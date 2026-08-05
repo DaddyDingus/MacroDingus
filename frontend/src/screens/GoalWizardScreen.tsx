@@ -17,6 +17,7 @@ import WizardShell from "../components/WizardShell";
 import WizardIntroCard, { type WizardIntroStep } from "../components/WizardIntroCard";
 import WizardOption from "../components/WizardOption";
 import { useBackDismissDepth } from "../lib/useBackDismiss";
+import DecimalInput from "../components/DecimalInput";
 
 type Step = "intro" | "type" | "target" | "summary";
 
@@ -557,19 +558,13 @@ function RateStatTile({
   if (editing) {
     return (
       <div className="rounded-md bg-surface-raised p-2 min-h-[52px] flex flex-col justify-center">
-        <input
-          type="number"
-          inputMode="decimal"
-          step="0.01"
-          autoComplete="off"
-          autoFocus
+        <DecimalInput
+          label={label}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") commit();
-            if (e.key === "Escape") setEditing(false);
-          }}
+          onChange={setInput}
+          allowNegative
+          autoOpen
+          onDone={commit}
           className="tabular font-semibold w-full bg-transparent text-center focus:outline-none"
         />
         <p className="text-muted mt-0.5">{label}</p>

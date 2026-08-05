@@ -370,6 +370,21 @@ export const favorites = sqliteTable("favorites", {
   userFoodIdx: uniqueIndex("favorites_user_food_idx").on(table.userId, table.foodId),
 }));
 
+// Per-user empty cookware weights used as a tare calculator while creating
+// or editing a recipe. Recipes deliberately do not reference these rows: the
+// selected vessel can change from batch to batch, and only the calculated net
+// prepared-food weight belongs in recipes.totalWeightGrams.
+export const cookware = sqliteTable("cookware", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id),
+  name: text("name").notNull(),
+  weightGrams: real("weight_grams").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => ({
+  userNameIdx: index("cookware_user_name_idx").on(table.userId, table.name),
+}));
+
 // One JSON blob per user for loosely-related UI preferences (theme, units,
 // dashboard shortcuts/colors, dashboard tile layout) that used to live only
 // in localStorage — a fresh install (new origin, e.g. after moving macrotrack

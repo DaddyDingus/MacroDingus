@@ -80,6 +80,11 @@ export default function BottomSheet({
 
   function close() {
     if (closing) return; // already animating out — ignore a repeat trigger
+    // A sheet disappearing does not reliably dismiss Android's IME if its
+    // focused input is unmounted in the same render. Blur while the field is
+    // still present, synchronously inside the user's dismiss gesture, so the
+    // regular keyboard leaves together with the panel.
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     setClosing(true);
     setTimeout(onClose, CLOSE_ANIMATION_MS);
   }

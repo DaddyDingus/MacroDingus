@@ -4,7 +4,7 @@ import { useLogsHistory, useLoggedDates } from "../api/logs";
 import { useCoachStatus, useCheckinHistory, useExpenditureDailySeries } from "../api/coach";
 import { usePrograms } from "../api/programs";
 import { useWeightTrend, useWeights } from "../api/weights";
-import { usePhotos } from "../api/photos";
+import { PHOTO_POSES, usePhotos } from "../api/photos";
 import { kgToUnit, useWeightUnit } from "../lib/weightUnit";
 import { kcalToUnit, energyUnitLabel, useEnergyUnit } from "../lib/energyUnit";
 import { activeCheckinForDate } from "../lib/checkins";
@@ -83,6 +83,16 @@ export default function DashboardTileSections() {
   // added after the fact) — sort so the tile always shows the most recent
   // *photo date*, not just the last row inserted.
   const latestPhoto = [...photoList].sort((a, b) => b.date.localeCompare(a.date))[0];
+  const latestPhotoSet = latestPhoto
+    ? photoList
+        .filter((photo) => photo.date === latestPhoto.date)
+        .sort((a, b) => {
+          const poseA = a.pose ? PHOTO_POSES.indexOf(a.pose) : PHOTO_POSES.length;
+          const poseB = b.pose ? PHOTO_POSES.indexOf(b.pose) : PHOTO_POSES.length;
+          return poseA - poseB || a.createdAt.localeCompare(b.createdAt);
+        })
+        .slice(0, 3)
+    : [];
 
   const weighInList = weighIns.data ?? [];
   const latestScale = weighInList[weighInList.length - 1];
@@ -359,14 +369,19 @@ export default function DashboardTileSections() {
             value={photoList.length}
             unit={photoList.length === 1 ? "photo" : "photos"}
             onClick={() => navigate("/photos")}
+            mediaLayout
           >
             {latestPhoto ? (
-              <div className="h-full rounded-md overflow-hidden bg-dashboardTrack">
-                <img
-                  src={`/api/photos/${latestPhoto.id}/file`}
-                  alt=""
-                  className="w-full h-full object-cover"
-                />
+              <div className="h-full flex items-stretch justify-center gap-1.5" aria-hidden="true">
+                {latestPhotoSet.map((photo) => (
+                  <div key={photo.id} className="h-full min-w-0 max-w-[3.25rem] aspect-[3/4] rounded-md overflow-hidden bg-dashboardTrack">
+                    <img
+                      src={`/api/photos/${photo.id}/file`}
+                      alt=""
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                ))}
               </div>
             ) : (
               <div className="h-full flex items-center justify-center">

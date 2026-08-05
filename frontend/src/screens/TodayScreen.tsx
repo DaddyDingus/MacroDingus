@@ -132,12 +132,14 @@ export default function TodayScreen() {
   const groups = groupLogEntriesByTime(entries);
 
   return (
-    <div className="min-h-dvh pb-40 bg-dashboardBg">
-      {/* Glass rather than the flat bg-dashboardBg this used to be — a fully
-          opaque sticky header made content scrolling underneath disappear at
-          a hard line right at its bottom edge instead of continuing softly
-          out of view. bg-dashboardBg/70 + backdrop-blur-xl lets that content
-          show through, blurred, instead of cutting off abruptly. */}
+    <div className="min-h-dvh bg-dashboardBg">
+      {/* This content-only surface can use compositor transforms for the
+          rubber-band without turning the fixed selection bar below into a
+          descendant containing block. Sheets are portaled to body. */}
+      <div data-rubber-band-surface className="min-h-dvh pb-40 bg-dashboardBg">
+      {/* Glass rather than a flat opaque background: content scrolling under
+          the sticky header continues softly out of view instead of meeting a
+          hard cutoff at its bottom edge. */}
       <div className="sticky top-0 z-10 bg-dashboardBg/70 backdrop-blur-xl">
         <header className="px-4 pt-5 pb-2 max-w-md mx-auto">
           <div className="grid grid-cols-3 items-center">
@@ -208,11 +210,13 @@ export default function TodayScreen() {
           </div>
         )}
       </main>
+      </div>
 
       <AddFoodSheet
         open={sheetOpen}
         date={date}
         editingEntry={editingEntry}
+        initialStep={quickAddLoggedAt ? "search" : undefined}
         forcedLoggedAt={quickAddLoggedAt ?? undefined}
         onClose={closeSheet}
         totals={totals}
@@ -231,12 +235,14 @@ export default function TodayScreen() {
       )}
 
       {selection && (
-        <LogActionBar
-          selection={selection}
-          sourceDate={date}
-          onClose={() => setSelection(null)}
-          onEdit={openEdit}
-        />
+        <div data-no-rubber-band>
+          <LogActionBar
+            selection={selection}
+            sourceDate={date}
+            onClose={() => setSelection(null)}
+            onEdit={openEdit}
+          />
+        </div>
       )}
 
       {pendingDeleteEntry && (

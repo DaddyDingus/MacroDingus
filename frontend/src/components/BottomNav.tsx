@@ -50,6 +50,7 @@ export default function BottomNav() {
   const coachStatus = useCoachStatus();
   const nextCheckinDueDate = coachStatus.data?.nextCheckinDueDate ?? null;
   const checkinDue = nextCheckinDueDate !== null && nextCheckinDueDate <= (coachStatus.data?.currentDate ?? "");
+  const hasDockedBar = location.pathname === "/" || location.pathname === "/log";
   // The Strategy wizard screens (New Goal/Edit Goal/New Program/Edit
   // Program) are full-screen takeovers, same intent as MacroFactor's own —
   // none of their screenshots show a bottom tab bar during a wizard, and
@@ -67,7 +68,9 @@ export default function BottomNav() {
   return (
     <nav
       id="app-bottom-nav"
-      className="fixed bottom-0 inset-x-0 bg-dashboardBg border-t border-dashboardDivider flex z-40 pb-[env(safe-area-inset-bottom)]"
+      className={`fixed bottom-0 inset-x-0 bg-dashboardBg border-t flex z-40 pb-[env(safe-area-inset-bottom)] ${
+        hasDockedBar ? "border-dashboardBg" : "border-dashboardDivider"
+      }`}
     >
       {TABS_LEFT.map((t) => (
         <Tab key={t.to} {...t} />

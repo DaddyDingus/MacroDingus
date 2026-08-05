@@ -31,11 +31,10 @@ function valueAtOrBefore(points: { date: string; valueKg: number }[], date: stri
 export function computeGoalWaterfall(
   points: { date: string; valueKg: number }[],
   goalStartDate: string,
+  goalStartWeightKg: number,
   goalWeightKg: number,
   today: string
 ): WeeklyDistancePoint[] {
-  if (points.length === 0) return [];
-
   const totalDays = Math.max(0, daysBetween(goalStartDate, today));
   const totalWeeks = Math.floor(totalDays / 7);
 
@@ -43,8 +42,11 @@ export function computeGoalWaterfall(
   let prevDistance: number | null = null;
   for (let w = 0; w <= totalWeeks; w++) {
     const weekEndDate = addDays(goalStartDate, w * 7);
-    const value = valueAtOrBefore(points, weekEndDate) ?? valueAtOrBefore(points, goalStartDate);
-    if (value === null) continue;
+    // The goal stores its own start-weight snapshot independently of the
+    // weigh-in history. Use that snapshot as Week 0 and carry it until the
+    // first dated point, so a goal created between weigh-ins still gets the
+    // intended baseline column instead of rendering only a grey Status bar.
+    const value = w === 0 ? goalStartWeightKg : valueAtOrBefore(points, weekEndDate) ?? goalStartWeightKg;
     const distance = Math.abs(goalWeightKg - value);
     const direction: WeeklyDistancePoint["direction"] =
       prevDistance === null ? "away" : distance <= prevDistance ? "towards" : "away";
@@ -52,10 +54,8 @@ export function computeGoalWaterfall(
     prevDistance = distance;
   }
 
-  const latestValue = valueAtOrBefore(points, today);
-  if (latestValue !== null) {
-    buckets.push({ label: "Status", distanceKg: Math.abs(goalWeightKg - latestValue), direction: "status" });
-  }
+  const latestValue = valueAtOrBefore(points, today) ?? goalStartWeightKg;
+  buckets.push({ label: "Status", distanceKg: Math.abs(goalWeightKg - latestValue), direction: "status" });
 
   return buckets;
 }

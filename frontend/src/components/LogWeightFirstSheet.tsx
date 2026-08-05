@@ -10,7 +10,7 @@ import LogWeightInline from "./LogWeightInline";
 // never actually needed a weight.
 export default function LogWeightFirstSheet({ onClose, onContinue }: { onClose: () => void; onContinue: () => void }) {
   return (
-    <BottomSheet onClose={onClose} backdropClassName="bg-black/50" panelClassName="max-h-[85%] bg-surface rounded-t-xl border-t border-line">
+    <BottomSheet onClose={onClose} backdropClassName="bg-black/50" panelClassName="max-h-[85%] bg-dashboardBg rounded-t-xl border-t border-line">
       {(dragHandlers) => (
         <>
           <div {...dragHandlers} className="px-4 pt-2 pb-4 text-center border-b border-line">

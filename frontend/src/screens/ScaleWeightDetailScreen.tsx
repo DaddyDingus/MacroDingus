@@ -11,6 +11,7 @@ import ChartCard from "../components/ChartCard";
 import ChangeDirectionIcon from "../components/ChangeDirectionIcon";
 import ConfirmDeleteSheet from "../components/ConfirmDeleteSheet";
 import { staggerStyle } from "../lib/stagger";
+import DecimalInput from "../components/DecimalInput";
 
 function formatRangeDate(dateStr: string, withYear: boolean): string {
   const [y, m, d] = dateStr.split("-").map(Number);
@@ -158,19 +159,13 @@ export default function ScaleWeightDetailScreen() {
                       <div key={w.id} className="flex items-center justify-between px-4 py-2.5 border-t border-line/60 gap-2">
                         {isEditing ? (
                           <div className="flex items-center gap-2 flex-1">
-                            <input
-                              type="number"
-                              inputMode="decimal"
-                              step="0.1"
-                              autoComplete="off"
+                            <DecimalInput
+                              label={`Weight for ${formatDayLabel(w.date)}`}
                               value={editValue}
-                              onChange={(e) => setEditValue(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") saveEdit(w.date);
-                                if (e.key === "Escape") setEditingId(null);
-                              }}
-                              autoFocus
-                              className="w-20 bg-surface-raised border border-line rounded px-2 py-1 text-sm tabular focus:outline-none focus-within:border-accent"
+                              onChange={setEditValue}
+                              onDone={() => saveEdit(w.date)}
+                              autoOpen
+                              className="w-20 bg-surface-raised border border-line rounded px-2 py-1 text-sm tabular text-left focus:outline-none focus:border-accent"
                             />
                             <span className="text-xs text-muted">{unit}</span>
                           </div>

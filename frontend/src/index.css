@@ -97,6 +97,23 @@
     @apply font-sans antialiased;
   }
 
+  /* Treat rendered UI copy like native app chrome: a long press should not
+     select headings, labels, values, or buttons. Real editing surfaces opt
+     back in so selection handles and copy/paste keep working inside them. */
+  html {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  input,
+  textarea,
+  [contenteditable]:not([contenteditable="false"]) {
+    -webkit-user-select: text;
+    user-select: text;
+    -webkit-touch-callout: default;
+  }
+
   /* All logged/measured values render in mono so they read as readouts, not prose. */
   .tabular {
     @apply font-mono tabular-nums;
@@ -211,4 +228,23 @@
 
 .caret-blink {
   animation: caret-blink 1s step-end infinite;
+}
+
+/* BarcodeScanner's restrained activity cue. It moves only inside the framed
+   scan region and becomes a static midpoint under reduced-motion. */
+@keyframes barcode-scan-line {
+  0%, 100% { top: 16%; opacity: 0.35; }
+  50% { top: 84%; opacity: 1; }
+}
+
+.barcode-scan-line {
+  animation: barcode-scan-line 2.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .barcode-scan-line {
+    animation: none;
+    top: 50%;
+    opacity: 0.45;
+  }
 }

@@ -34,6 +34,11 @@ import { useEffect, useRef } from "react";
 interface TrapEntry {
   id: symbol;
   dismiss: () => void;
+  shouldBlock?: () => boolean;
+  onBlocked?: () => void;
+  bypassBlockOnce: boolean;
+  restoring: boolean;
+  proceedAfterRestore: boolean;
   // Set when a real back press pops this trap's entry. The entry is gone at
   // that point, so the cleanup below must NOT try to unwind it again — that's
   // what distinguishes "closed by back" from "closed by an X button".
@@ -47,10 +52,26 @@ let listenerAttached = false;
 // self-identify and get silently absorbed here rather than being
 // misread as a fresh user gesture by whichever trap is now on top.
 let pendingProgrammaticPops = 0;
+// A blocker cancels a back traversal by going forward to the exact entry the
+// browser just left. That forward traversal also fires popstate, so remember
+// which entry it belongs to and absorb that one event without involving the
+// trap underneath.
+let pendingRestoredTrap: TrapEntry | null = null;
 function ensureListener() {
   if (listenerAttached) return;
   listenerAttached = true;
   window.addEventListener("popstate", () => {
+    if (pendingRestoredTrap) {
+      const restored = pendingRestoredTrap;
+      pendingRestoredTrap = null;
+      restored.restoring = false;
+      if (restored.proceedAfterRestore && trapStack.includes(restored)) {
+        restored.proceedAfterRestore = false;
+        restored.bypassBlockOnce = true;
+        history.back();
+      }
+      return;
+    }
     if (pendingProgrammaticPops > 0) {
       pendingProgrammaticPops--;
       return;
@@ -59,6 +80,19 @@ function ensureListener() {
     const top = trapStack[trapStack.length - 1];
     if (!top) return;
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    // An opt-in blocker can veto this traversal without creating any new
+    // history. Go forward to the exact entry that was just popped, then keep
+    // owning it. This is fundamentally different from pushState-in-popstate:
+    // no new entry is created without user activation, so Chrome's History
+    // Manipulation Intervention has nothing to mark as skippable.
+    if (!top.bypassBlockOnce && top.shouldBlock?.()) {
+      top.onBlocked?.();
+      top.restoring = true;
+      pendingRestoredTrap = top;
+      history.forward();
+      return;
+    }
+    top.bypassBlockOnce = false;
     // This entry is gone for good now — the cleanup below must not unwind it,
     // and it comes off the stack immediately rather than when its owner gets
     // round to unmounting. The stack has to mirror entries that actually still
@@ -142,9 +176,21 @@ export function armTrapHandoff() {
 }
 
 // Claims one history entry and puts `entry` on top of the trap stack.
-function acquireTrapEntry(onDismiss: () => void): TrapEntry {
+function acquireTrapEntry(
+  onDismiss: () => void,
+  blocker?: { shouldBlock: () => boolean; onBlocked: () => void }
+): TrapEntry {
   ensureListener();
-  const entry: TrapEntry = { id: Symbol("backDismiss"), dismiss: onDismiss, consumed: false };
+  const entry: TrapEntry = {
+    id: Symbol("backDismiss"),
+    dismiss: onDismiss,
+    shouldBlock: blocker?.shouldBlock,
+    onBlocked: blocker?.onBlocked,
+    bypassBlockOnce: false,
+    restoring: false,
+    proceedAfterRestore: false,
+    consumed: false,
+  };
   trapStack.push(entry);
   {
     // Mid-handoff (see armTrapHandoff): the overlay being replaced left its
@@ -218,19 +264,39 @@ function unwindTrapEntries(count: number) {
 // activation present on the pushState — see the popstate listener above for
 // why that matters more than anything else in this file.
 //
-// The contract for callers: **every dismiss must reduce depth by exactly
-// one.** A handler that leaves depth unchanged, or raises it (by opening a
-// confirmation dialog in response to back, say), desynchronises this from the
-// browser's real history and the next press escapes the app.
-export function useBackDismissDepth(depth: number, onDismiss: () => void) {
+// The contract for ordinary callers: **every dismiss must reduce depth by
+// exactly one.** The optional outer blocker below is the sole exception: it
+// cancels the traversal with history.forward() and therefore leaves both the
+// UI depth and the browser depth unchanged. It never pushes a replacement.
+export function useBackDismissDepth(
+  depth: number,
+  onDismiss: () => void,
+  blocker?: { shouldBlock: () => boolean; onBlocked: () => void }
+) {
   const onDismissRef = useRef(onDismiss);
   onDismissRef.current = onDismiss;
+  const blockerRef = useRef(blocker);
+  blockerRef.current = blocker;
   const ownedRef = useRef<TrapEntry[]>([]);
 
   useEffect(() => {
     const owned = ownedRef.current;
     const target = Math.max(0, depth);
-    while (owned.length < target) owned.push(acquireTrapEntry(() => onDismissRef.current()));
+    while (owned.length < target) {
+      // Only the bottom/outermost entry can block. Any entries above it still
+      // represent real sub-steps and must be consumed normally before an
+      // attempted sheet close reaches the dirty-state confirmation.
+      const isOutermost = owned.length === 0;
+      owned.push(acquireTrapEntry(
+        () => onDismissRef.current(),
+        isOutermost && blockerRef.current
+          ? {
+              shouldBlock: () => blockerRef.current?.shouldBlock() ?? false,
+              onBlocked: () => blockerRef.current?.onBlocked(),
+            }
+          : undefined
+      ));
+    }
     // Top-down, so the entries come off history in the reverse order they
     // went on, then one traversal for all of them.
     let unwind = 0;
@@ -249,6 +315,21 @@ export function useBackDismissDepth(depth: number, onDismiss: () => void) {
       unwindTrapEntries(unwind);
     };
   }, []);
+
+  // Used by a confirmation's explicit "Close anyway" button. If the
+  // browser is still completing the forward traversal that restored the
+  // blocked entry, queue the proceed until that traversal lands; otherwise
+  // consume the entry now. The normal pop handler then calls onDismiss.
+  return () => {
+    const outermost = ownedRef.current[0];
+    if (!outermost || outermost.consumed) return;
+    if (outermost.restoring) {
+      outermost.proceedAfterRestore = true;
+      return;
+    }
+    outermost.bypassBlockOnce = true;
+    history.back();
+  };
 }
 
 // The common single-level case: one overlay, one entry, one back press.

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { SlidersHorizontal, ChevronRight, GripVertical, Plus } from "lucide-react";
 import {
@@ -56,11 +56,6 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
   // list" flag through one shared implementation.
   const [drag, setDrag] = useState<ShortcutDragState | null>(null);
   const [moreDrag, setMoreDrag] = useState<ShortcutDragState | null>(null);
-  // Set by selectAction, read by handleSheetClosed once BottomSheet has
-  // finished animating away — distinguishes "picked an action" from the
-  // swipe-down/backdrop-tap closes that share the same onClose.
-  const pendingActionRef = useRef<ShortcutId | null>(null);
-
   // Photos is a lazy route. Start fetching/evaluating its chunk while the
   // user is looking at this menu so its real content is normally ready by
   // the time the sheet slides away after a Photos tap.
@@ -119,11 +114,9 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
     setMoreDrag(null);
   }
 
-  // Most actions let this BottomSheet finish its ordinary close animation
-  // before mounting their next overlay in handleSheetClosed below. Recipes
-  // is deliberately a direct overlay handoff: waiting 320ms for this menu to
-  // slide all the way down before AddFoodSheet could start sliding up made a
-  // single navigation feel like two unrelated interactions.
+  // Overlay actions swap the outgoing menu for QuickActionFlow immediately.
+  // Both sides share the existing back-dismiss entry, and the destination's
+  // own reveal supplies the transition without a 320ms dead period.
   function selectAction(id: ShortcutId, close: () => void) {
     // Photos is a route rather than another overlay. Begin its page load and
     // transition immediately underneath this still-visible sheet, then let
@@ -136,36 +129,6 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
       close();
       return;
     }
-    if (id === "recipes") {
-      // The outgoing menu and incoming AddFoodSheet swap in one commit and
-      // share the existing history entry. AddFoodSheet's own Library panel
-      // then supplies the only transition: one immediate upward reveal.
-      armTrapHandoff();
-      setRunningAction(id);
-      return;
-    }
-    pendingActionRef.current = id;
-    close();
-  }
-
-  // BottomSheet's real onClose — fires once its close animation completes,
-  // whether that was triggered by selectAction above, a swipe-down, or the
-  // backdrop tap. Only the first of those leaves something in
-  // pendingActionRef; the other two mean the user just wanted the menu gone.
-  function handleSheetClosed() {
-    const id = pendingActionRef.current;
-    if (!id) {
-      onClose();
-      return;
-    }
-    pendingActionRef.current = null;
-    // BottomSheet's trap unmounts and QuickActionFlow's mounts in the one
-    // commit this setState triggers. Armed right here rather than back in
-    // selectAction so the window it's open for is that single commit: the
-    // outgoing trap hands its history entry straight to the incoming one and
-    // neither touches the History API, which is what keeps this path's
-    // browser-visible history identical to the Dashboard's pinned-shortcut
-    // path (see lib/useBackDismiss.ts).
     armTrapHandoff();
     setRunningAction(id);
   }
@@ -194,7 +157,7 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
 
   return (
     <BottomSheet
-      onClose={handleSheetClosed}
+      onClose={onClose}
       backdropClassName="bg-black/50"
       panelClassName="max-h-[85%] bg-surface rounded-t-xl border-t border-line pb-[env(safe-area-inset-bottom)]"
     >

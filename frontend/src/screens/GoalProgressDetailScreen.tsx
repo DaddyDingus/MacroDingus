@@ -124,7 +124,7 @@ function GoalProgressBody({
       ? Math.min(100, Math.max(0, Math.round(((totalPlannedKg - distanceKg) / totalPlannedKg) * 100)))
       : null;
 
-  const waterfall = computeGoalWaterfall(points, goalStartDate, goalWeightKg, today);
+  const waterfall = computeGoalWaterfall(points, goalStartDate, startWeightKg, goalWeightKg, today);
   const etaDate = distanceKg !== null ? computeOptimisticEtaDate(distanceKg, goal.targetRateKgPerWeek, today) : null;
   const durationDays = daysBetween(goalStartDate, today);
 

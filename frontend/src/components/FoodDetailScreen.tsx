@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Plus, Heart, ChevronLeft, ChevronDown, Pencil, PackageOpen, Copy, Trash2, Delete } from "lucide-react";
+import { Plus, Heart, ChevronLeft, ChevronDown, Pencil, PackageOpen, Copy, Trash2 } from "lucide-react";
 import ConfirmDeleteSheet from "./ConfirmDeleteSheet";
 import type { Food, Nutrition } from "../api/types";
 import type { MacroTargets } from "./MacroSummaryBar";
@@ -9,6 +9,7 @@ import { useEnergyUnit, kcalToUnit, energyUnitLabel } from "../lib/energyUnit";
 import { useLastLoggedQuantity } from "../api/foods";
 import NutrientStatusBar, { LogTimePill } from "./NutrientStatusBar";
 import { foodMeasures } from "../lib/foodMeasures";
+import DecimalKeypad from "./DecimalKeypad";
 
 function fmt(n: number, decimals = 0): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: decimals, minimumFractionDigits: decimals });
@@ -176,15 +177,15 @@ const RING_CIRC = 2 * Math.PI * RING_R;
 // budget" glance rather than a second copy of the summary row's numbers.
 function Ring({ pctValue, colorClass, label }: { pctValue: number; colorClass: string; label: string }) {
   return (
-    <div className="flex flex-col items-center gap-1">
-      <div className="relative w-13 h-13">
+    <div className="flex flex-col items-center gap-0.5">
+      <div className="relative w-[46px] h-[46px]">
         <svg viewBox="0 0 64 64" className="w-full h-full -rotate-90">
-          <circle cx="32" cy="32" r={RING_R} strokeWidth={3} className="fill-none stroke-dashboardTrack" />
+          <circle cx="32" cy="32" r={RING_R} strokeWidth={4} className="fill-none stroke-dashboardTrack" />
           <circle
             cx="32"
             cy="32"
             r={RING_R}
-            strokeWidth={3}
+            strokeWidth={4}
             strokeLinecap="round"
             strokeDasharray={RING_CIRC}
             strokeDashoffset={RING_CIRC * (1 - pctValue / 100)}
@@ -193,10 +194,10 @@ function Ring({ pctValue, colorClass, label }: { pctValue: number; colorClass: s
           />
         </svg>
         <div className="absolute inset-0 flex items-center justify-center">
-          <span className="tabular text-[10px] font-semibold text-white">{fmt(pctValue)}%</span>
+          <span className="tabular text-xs font-bold text-white">{fmt(pctValue)}%</span>
         </div>
       </div>
-      <span className="text-[9px] tracking-widest uppercase text-white/60">{label}</span>
+      <span className="text-[10px] tracking-wider uppercase text-white/60">{label}</span>
     </div>
   );
 }
@@ -481,48 +482,42 @@ export default function FoodDetailScreen({
     if (keypadOpen) setAllSelected(true);
   }, [keypadOpen]);
 
-  // Keeps Protein Breakdown (and everything after it) below the fold on
-  // first load, confirmed as the actual priority over a perfectly
-  // consistent gap size: the docked footer can't move up to meet Impact on
-  // Targets on its own (see its own comment below), so guaranteeing nothing
-  // but the rings and a small gap show above it means filling however much
-  // of the pane is actually left over — which varies by food (a longer name
-  // wraps to two lines, leaving less room) and by device. spacerMinPx is
-  // the floor for a short food/tall screen; spacerMaxPx is only a sanity
-  // net, not a real design target — don't shrink it back down to "fix"
-  // visual inconsistency between foods, that inconsistency is the tradeoff
-  // that was explicitly chosen here. Same ResizeObserver-measured-height
-  // idiom as AddFoodSheet's actionBarHeight; recomputes on any resize of
-  // either the pane or the above-the-fold block, including the pane's own
-  // height changing when the docked footer's keypad collapses/expands.
-  // hideTargetsUi mode (recipe-ingredient quantity editing) skips the rings
-  // entirely, so there's nothing here for a big gap to visually "protect" —
-  // filling leftover pane space in that mode just left a large dead void
-  // under the To custom/Favourite row for no reason. Only the rings case
-  // gets the dynamic fill; hideTargetsUi always gets the small floor.
+  // While the keypad is open, keep Protein Breakdown wholly below the pane
+  // instead of allowing a clipped heading to peek above the docked footer.
+  // The required reserved height sits after the rings and becomes a subtle
+  // "View nutrition details" affordance when there's enough room for it.
+  // That makes the variable space caused by a brand/long name functional
+  // instead of leaving either a clipped heading or a featureless void. The
+  // affordance closes the keypad, which removes the reserved height and lets
+  // the larger pane reveal the detailed nutrition sections immediately.
+  // The measured block includes the current reservation, so subtract it
+  // before calculating the next value; that keeps the ResizeObserver stable
+  // instead of the reservation adding and removing its own measured height.
+  // Recipe-ingredient mode has no rings and therefore never reserves it.
   const paneRef = useRef<HTMLDivElement>(null);
   const aboveFoldRef = useRef<HTMLDivElement>(null);
-  const spacerMinPx = 12;
-  const spacerMaxPx = 32;
-  const [spacerHeight, setSpacerHeight] = useState(spacerMinPx);
+  const breakdownGapPx = 4;
+  const [impactReservedHeight, setImpactReservedHeight] = useState(0);
   useLayoutEffect(() => {
-    if (hideTargetsUi) {
-      setSpacerHeight(spacerMinPx);
+    if (hideTargetsUi || !keypadOpen) {
+      setImpactReservedHeight(0);
       return;
     }
     const paneEl = paneRef.current;
     const foldEl = aboveFoldRef.current;
     if (!paneEl || !foldEl) return;
     const update = () => {
-      const available = paneEl.clientHeight - foldEl.offsetHeight;
-      setSpacerHeight(Math.min(spacerMaxPx, Math.max(spacerMinPx, available)));
+      setImpactReservedHeight((current) => {
+        const contentHeightWithoutReservation = foldEl.offsetHeight - current;
+        return Math.max(0, Math.round(paneEl.clientHeight - contentHeightWithoutReservation - breakdownGapPx));
+      });
     };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(paneEl);
     observer.observe(foldEl);
     return () => observer.disconnect();
-  }, [hideTargetsUi]);
+  }, [hideTargetsUi, keypadOpen]);
 
   // Prefills a *new* log's quantity from this food's own log history — only
   // when there's no already-known quantity to seed from (i.e. not editing;
@@ -568,7 +563,6 @@ export default function FoodDetailScreen({
   // trimming one character — either way, selection is consumed after one
   // keystroke, same as a real input never re-selects itself mid-edit.
   function tapDigit(d: string) {
-    triggerHaptic(10);
     if (allSelected) {
       setQuantityInput(d);
       setAllSelected(false);
@@ -577,7 +571,6 @@ export default function FoodDetailScreen({
     setQuantityInput((prev) => (prev === "0" ? d : prev + d));
   }
   function tapDecimal() {
-    triggerHaptic(10);
     if (allSelected) {
       setQuantityInput("0.");
       setAllSelected(false);
@@ -586,7 +579,6 @@ export default function FoodDetailScreen({
     setQuantityInput((prev) => (prev === "" ? "0." : prev.includes(".") ? prev : prev + "."));
   }
   function tapBackspace() {
-    triggerHaptic(12);
     if (allSelected) {
       setQuantityInput("");
       setAllSelected(false);
@@ -691,10 +683,10 @@ export default function FoodDetailScreen({
             <NutrientStatusBar totals={totals} plateTotals={plateTotals} extra={n} targets={targets} />
           </div>
         )}
-        <div className="px-4 pb-1 flex flex-col items-center text-center">
+        <div className="px-6 py-1.5 min-h-[42px] flex flex-col items-center justify-center text-center">
           <span className="min-w-0 max-w-full">
-            <span className="block text-base font-semibold text-white truncate">{food.name}</span>
-            {food.brand && <span className="block text-[11px] text-muted truncate">{food.brand}</span>}
+            <span className="block text-base font-semibold leading-tight text-white line-clamp-2">{food.name}</span>
+            {food.brand && <span className="block mt-0.5 text-[11px] leading-tight text-muted truncate">{food.brand}</span>}
           </span>
         </div>
       </div>
@@ -767,7 +759,7 @@ export default function FoodDetailScreen({
             against, so even the "set up targets" fallback text is nonsense
             here. */}
         {!hideTargetsUi && (
-          <div className="px-4 pt-1.5 pb-3 border-t border-dashboardDivider">
+          <div className="px-4 pt-1.5 pb-2 border-t border-dashboardDivider/60">
             <p className="text-[13px] font-semibold text-white/80 pt-1.5 pb-2">Impact on Targets</p>
             {targets ? (
               <div className="grid grid-cols-4 gap-2">
@@ -778,20 +770,33 @@ export default function FoodDetailScreen({
             ) : (
               <p className="text-[11px] text-muted">Set up daily targets on Strategy to see impact here.</p>
             )}
+            {impactReservedHeight >= 28 ? (
+              <button
+                type="button"
+                onClick={() => setKeypadOpen(false)}
+                className="w-full flex items-center justify-center gap-1.5 text-[10px] font-medium tracking-wider uppercase text-white/45 active:text-white transition-colors"
+                style={{ height: impactReservedHeight }}
+              >
+                <span>View nutrition details</span>
+                <ChevronDown size={13} strokeWidth={2.2} />
+              </button>
+            ) : impactReservedHeight > 0 ? (
+              <div aria-hidden="true" style={{ height: impactReservedHeight }} />
+            ) : null}
           </div>
         )}
         </div>
-        {/* Height computed above (paneRef/aboveFoldRef) so Protein Breakdown
-            lands below the fold and the docked footer's quantity box sits
-            right after a small gap under the rings' own labels instead. */}
-        <div style={{ height: spacerHeight }} />
+        {/* A consistent breathing gap after Impact. Any dynamic reserved space
+            lives inside the section as a useful reveal affordance; see the
+            measurement block above. */}
+        <div style={{ height: breakdownGapPx }} />
 
         {/* Detailed nutrient breakdown — plain label + amount rows, grouped
             into categories. Section headers are Title Case (as authored,
             not forced uppercase) with a heavier weight for readability. */}
-        <div className="px-4 pt-3 border-t border-dashboardDivider">
+        <div className="px-4 pt-3">
           <p className="text-[13px] font-semibold text-white/80">Protein Breakdown</p>
-          <div className="divide-y divide-dashboardDivider/60">
+          <div>
             <BreakdownRow label="Protein" amount={n.protein} dailyValueRef={DAILY_VALUE_REF.protein} barColorClass="bg-protein" />
           </div>
         </div>
@@ -801,9 +806,9 @@ export default function FoodDetailScreen({
             Minerals below — simply doesn't render for most foods rather than
             showing an empty or partial-looking list. */}
         {aminoAcids.length > 0 && (
-          <div className="px-4 pt-3 border-t border-dashboardDivider mt-4">
+          <div className="px-4 mt-5">
             <p className="text-[13px] font-semibold text-white/80">Amino Acids</p>
-            <div className="divide-y divide-dashboardDivider/60">
+            <div>
               {aminoAcids.map((m) => (
                 <BreakdownRow key={m.key} label={m.label} amount={m.amount} unit={m.unit} dailyValueRef={m.dailyValue} />
               ))}
@@ -811,9 +816,9 @@ export default function FoodDetailScreen({
           </div>
         )}
 
-        <div className="px-4 pt-3 border-t border-dashboardDivider mt-4">
+        <div className="px-4 mt-5">
           <p className="text-[13px] font-semibold text-white/80">Carb Breakdown</p>
-          <div className="divide-y divide-dashboardDivider/60">
+          <div>
             <BreakdownRow label="Carbs" amount={n.carbs} dailyValueRef={DAILY_VALUE_REF.carbs} barColorClass="bg-carbs" />
             <BreakdownRow label="Fiber" amount={n.fiber} dailyValueRef={DAILY_VALUE_REF.fiber} barColorClass="bg-carbs" />
             <BreakdownRow label="Sugars" amount={n.sugar} dailyValueRef={DAILY_VALUE_REF.sugar} barColorClass="bg-carbs" />
@@ -824,9 +829,9 @@ export default function FoodDetailScreen({
           </div>
         </div>
 
-        <div className="px-4 pt-3 border-t border-dashboardDivider mt-4">
+        <div className="px-4 mt-5">
           <p className="text-[13px] font-semibold text-white/80">Fat Breakdown</p>
-          <div className="divide-y divide-dashboardDivider/60">
+          <div>
             <BreakdownRow label="Fat" amount={n.fat} dailyValueRef={DAILY_VALUE_REF.fat} barColorClass="bg-fat" />
             <BreakdownRow label="Saturated Fat" amount={n.saturatedFat} dailyValueRef={DAILY_VALUE_REF.saturatedFat} barColorClass="bg-fat" />
             {monounsaturated !== null && <BreakdownRow label="Monounsaturated" amount={monounsaturated} />}
@@ -846,9 +851,9 @@ export default function FoodDetailScreen({
             food/recipe with nothing entered, just skips the section rather
             than showing an empty heading. */}
         {vitamins.length > 0 && (
-          <div className="px-4 pt-3 border-t border-dashboardDivider mt-4">
+          <div className="px-4 mt-5">
             <p className="text-[13px] font-semibold text-white/80">Vitamins</p>
-            <div className="divide-y divide-dashboardDivider/60">
+            <div>
               {vitamins.map((m) => (
                 <BreakdownRow key={m.key} label={m.label} amount={m.amount} unit={m.unit} dailyValueRef={m.dailyValue} />
               ))}
@@ -857,9 +862,9 @@ export default function FoodDetailScreen({
         )}
 
         {minerals.length > 0 && (
-          <div className="px-4 pt-3 border-t border-dashboardDivider mt-4">
+          <div className="px-4 mt-5">
             <p className="text-[13px] font-semibold text-white/80">Minerals</p>
-            <div className="divide-y divide-dashboardDivider/60">
+            <div>
               {minerals.map((m) => (
                 <BreakdownRow key={m.key} label={m.label} amount={m.amount} unit={m.unit} dailyValueRef={m.dailyValue} />
               ))}
@@ -867,9 +872,9 @@ export default function FoodDetailScreen({
           </div>
         )}
 
-        <div className="px-4 pt-3 border-t border-dashboardDivider mt-4">
+        <div className="px-4 mt-5">
           <p className="text-[13px] font-semibold text-white/80">Other</p>
-          <div className="divide-y divide-dashboardDivider/60">
+          <div>
             <BreakdownRow label="Sodium" amount={n.sodiumMg} unit="mg" dailyValueRef={DAILY_VALUE_REF.sodiumMg} />
             {cholesterolAmount !== null && <BreakdownRow label="Cholesterol" amount={cholesterolAmount} unit="mg" />}
           </div>
@@ -885,7 +890,7 @@ export default function FoodDetailScreen({
           sibling after the scrollable pane above (see the fixed gap div
           right after Impact on Targets for how much of the pane's own
           content is visible before this). */}
-      <div className="shrink-0 border-t border-white/10 bg-dashboardBg px-4 pt-1 pb-1">
+      <div className="shrink-0 border-t border-dashboardDivider/60 bg-dashboardBg px-4 pt-1 pb-1">
         <button
           type="button"
           onTouchStart={() => triggerHaptic(12)}
@@ -960,39 +965,8 @@ export default function FoodDetailScreen({
                 unpredictable (and per-device-variable) height — this is
                 what actually lets the rest of the screen budget space for
                 itself reliably above it. */}
-            <div className="grid grid-cols-3 gap-x-3 gap-y-2 pb-3">
-              {(["1", "2", "3", "4", "5", "6", "7", "8", "9"] as const).map((d) => (
-                <button
-                  key={d}
-                  onTouchStart={() => triggerHaptic(10)}
-                  onClick={() => tapDigit(d)}
-                  className="h-[58px] rounded-2xl bg-white/[0.07] flex items-center justify-center text-2xl font-medium text-white active:bg-white/[0.15] active:scale-[0.95] transition-all duration-75 select-none"
-                >
-                  {d}
-                </button>
-              ))}
-              <button
-                onTouchStart={() => triggerHaptic(10)}
-                onClick={tapDecimal}
-                className="h-[58px] rounded-2xl bg-white/[0.03] flex items-center justify-center text-2xl font-medium text-white/70 active:bg-white/[0.1] active:scale-[0.95] transition-all duration-75 select-none"
-              >
-                .
-              </button>
-              <button
-                onTouchStart={() => triggerHaptic(10)}
-                onClick={() => tapDigit("0")}
-                className="h-[58px] rounded-2xl bg-white/[0.07] flex items-center justify-center text-2xl font-medium text-white active:bg-white/[0.15] active:scale-[0.95] transition-all duration-75 select-none"
-              >
-                0
-              </button>
-              <button
-                onTouchStart={() => triggerHaptic(12)}
-                onClick={tapBackspace}
-                aria-label="Backspace"
-                className="h-[58px] rounded-2xl bg-white/[0.03] flex items-center justify-center text-white/70 active:bg-white/[0.1] active:scale-[0.95] transition-all duration-75 select-none"
-              >
-                <Delete size={26} strokeWidth={1.5} />
-              </button>
+            <div className="pb-3">
+              <DecimalKeypad onDigit={tapDigit} onDecimal={tapDecimal} onBackspace={tapBackspace} />
             </div>
           </div>
         </div>

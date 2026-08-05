@@ -1,4 +1,5 @@
 import { getFoodIcon } from "../lib/foodEmoji";
+import FoodEmojiGlyph from "./FoodEmojiGlyph";
 
 // Shared emoji-or-letter icon box — used by the Food Log timeline
 // (FoodItemCard), the Add Food sheet's browse list, and the header's tiny
@@ -27,7 +28,7 @@ export default function FoodIconAvatar({
     <span
       className={`shrink-0 ${className} rounded-lg bg-white/5 flex items-center justify-center ${emojiClassName} leading-none`}
     >
-      {icon.kind === "emoji" ? icon.value : <span className={`${letterClassName} font-bold text-white/90`}>{icon.value}</span>}
+      {icon.kind === "emoji" ? <FoodEmojiGlyph value={icon.value} /> : <span className={`${letterClassName} font-bold text-white/90`}>{icon.value}</span>}
     </span>
   );
 }

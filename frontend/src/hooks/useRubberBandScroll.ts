@@ -6,6 +6,16 @@ const RESISTANCE = 0.4;
 // Caps the stretch so a long, fast drag doesn't pull the page absurdly far.
 const MAX_PULL_PX = 96;
 const SPRING_BACK_MS = 320;
+// Chromium keeps its inertial scroll after touchend but does not expose the
+// unused momentum once it clamps at an edge. A recent, sufficiently fast
+// finger velocity lets us synthesize a smaller continuation when that fling
+// reaches the boundary shortly afterward.
+const MIN_FLING_VELOCITY_PX_MS = 0.35;
+const FLING_MAX_AGE_MS = 1_600;
+const FLING_LIFT_GRACE_MS = 120;
+const FLING_OUT_MS = 90;
+const MIN_FLING_PULL_PX = 12;
+const MAX_FLING_PULL_PX = 32;
 // How close to the bottom still counts as "at the bottom" — sub-pixel
 // viewport heights (browser chrome, zoom) mean scrollY often stops a
 // fraction short of the computed maximum.
@@ -20,8 +30,10 @@ const BOTTOM_EPSILON_PX = 4;
 // underneath/instead of this one — one consistent, deliberate feel on every
 // device rather than whatever each browser happens to do.
 //
-// Offsets <body> via `position: relative` + `top`, not a CSS transform and
-// not padding.
+// Routes that expose a dedicated `[data-rubber-band-surface]` move that
+// surface with a compositor-friendly transform, leaving shared fixed chrome
+// outside it. Other routes retain the safe <body> `position: relative` +
+// `top` fallback below.
 //
 // Not a transform: a transform on any ancestor of a `position: fixed`
 // element turns it into that transform's containing block instead of the
@@ -46,9 +58,9 @@ const BOTTOM_EPSILON_PX = 4;
 //
 // Touch-only (not pointer/mouse) — there's no equivalent "drag past the
 // edge" gesture for a mouse wheel worth faking, and this is squarely a
-// mobile-feel feature. Fling momentum that *ends* at an edge doesn't bounce
-// either: the finger is already gone by then, and there's no exposed hook
-// for the tail of a native momentum scroll.
+// mobile-feel feature. Chromium does not expose the overscroll portion of a
+// finger-up fling, so that path is deliberately a smaller velocity-based
+// approximation; the normal finger-down pull remains exact.
 interface DragState {
   edge: "top" | "bottom";
   // Whether we've taken the gesture over from native scrolling.
@@ -57,6 +69,10 @@ interface DragState {
   // not since touchstart, so a gesture that scrolls the page all the way to
   // an edge and then reverses doesn't count its own earlier travel as pull.
   lastY: number;
+  lastMoveAt: number;
+  // Smoothed finger velocity. Positive travels toward the top edge; negative
+  // travels toward the bottom edge.
+  velocityPxMs: number;
   // Y at the exact moment this gesture armed. The pull is measured from
   // here, not from touchstart, so reaching the bottom edge halfway through
   // an already-long drag starts the stretch at 0 and grows with however much
@@ -74,6 +90,13 @@ interface DragState {
   // the inner container ever got to scroll — the reported symptom was a
   // wizard step whose content simply couldn't be scrolled into view at all.
   scrollEl: Element | null;
+}
+
+interface FlingState {
+  edge: "top" | "bottom";
+  scrollEl: Element | null;
+  speedPxMs: number;
+  expiresAt: number;
 }
 
 function isRealScrollContainer(el: Element): boolean {
@@ -96,7 +119,14 @@ function findScrollableAncestor(el: Element): Element | null {
 export function useRubberBandScroll() {
   useEffect(() => {
     let drag: DragState | null = null;
+    let fling: FlingState | null = null;
     let springTimer = 0;
+    let flingTimer = 0;
+    let flingOutTimer = 0;
+    let flingFrame = 0;
+    let pullFrame = 0;
+    let pendingPullOffset = 0;
+    let movementSurface: HTMLElement = document.body;
 
     function maxScroll() {
       return Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
@@ -105,22 +135,106 @@ export function useRubberBandScroll() {
     // px > 0 pushes the page down (top-edge pull), px < 0 lifts it up
     // (bottom-edge pull).
     function setOffset(px: number) {
-      document.body.style.position = "relative";
-      document.body.style.top = `${px}px`;
+      if (movementSurface === document.body) {
+        document.body.style.position = "relative";
+        document.body.style.willChange = "top";
+        document.body.style.top = `${px}px`;
+        return;
+      }
+      movementSurface.style.willChange = "transform";
+      movementSurface.style.transform = `translate3d(0, ${px}px, 0)`;
+    }
+
+    function setOffsetTransition(value: string) {
+      const transition = !value || value === "none"
+        ? value
+        : `${movementSurface === document.body ? "top" : "transform"} ${value}`;
+      if (movementSurface === document.body) {
+        document.body.style.transition = transition;
+      } else {
+        movementSurface.style.transition = transition;
+      }
+    }
+
+    // Touch hardware can deliver more move events than the display can paint.
+    // Keep preventDefault() in the event itself, but collapse visual writes to
+    // at most one per animation frame so repeated body positioning cannot do
+    // redundant main-thread work between two visible frames.
+    function schedulePullOffset(px: number) {
+      pendingPullOffset = px;
+      if (pullFrame) return;
+      pullFrame = window.requestAnimationFrame(() => {
+        pullFrame = 0;
+        setOffsetTransition("none");
+        setOffset(pendingPullOffset);
+      });
+    }
+
+    function cancelPullFrame() {
+      window.cancelAnimationFrame(pullFrame);
+      pullFrame = 0;
     }
 
     function clearOffset() {
       window.clearTimeout(springTimer);
-      document.body.style.transition = "";
-      document.body.style.top = "";
-      document.body.style.position = "";
+      window.clearTimeout(flingOutTimer);
+      window.cancelAnimationFrame(flingFrame);
+      cancelPullFrame();
+      if (movementSurface === document.body) {
+        document.body.style.transition = "";
+        document.body.style.top = "";
+        document.body.style.position = "";
+        document.body.style.willChange = "";
+      } else {
+        movementSurface.style.transition = "";
+        movementSurface.style.transform = "";
+        movementSurface.style.willChange = "";
+      }
+    }
+
+    function clearFling() {
+      fling = null;
+      window.clearTimeout(flingTimer);
     }
 
     function springBack() {
-      document.body.style.transition = `top ${SPRING_BACK_MS}ms cubic-bezier(0.2, 0, 0, 1)`;
-      document.body.style.top = "0px";
+      cancelPullFrame();
+      setOffsetTransition(`${SPRING_BACK_MS}ms cubic-bezier(0.2, 0, 0, 1)`);
+      setOffset(0);
       window.clearTimeout(springTimer);
       springTimer = window.setTimeout(clearOffset, SPRING_BACK_MS);
+    }
+
+    function startFlingBounce(edge: "top" | "bottom", speedPxMs: number) {
+      clearFling();
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || document.hidden) return;
+
+      const pull = Math.min(MAX_FLING_PULL_PX, MIN_FLING_PULL_PX + speedPxMs * 8);
+      clearOffset();
+      setOffset(0);
+      setOffsetTransition("none");
+      flingFrame = window.requestAnimationFrame(() => {
+        setOffsetTransition(`${FLING_OUT_MS}ms cubic-bezier(0.2, 0, 0.2, 1)`);
+        setOffset(edge === "top" ? pull : -pull);
+        flingOutTimer = window.setTimeout(springBack, FLING_OUT_MS);
+      });
+    }
+
+    function maybeBounceFling() {
+      if (!fling) return;
+      if (performance.now() > fling.expiresAt || (fling.scrollEl && !fling.scrollEl.isConnected)) {
+        clearFling();
+        return;
+      }
+
+      const scrollTop = fling.scrollEl ? fling.scrollEl.scrollTop : window.scrollY;
+      const scrollMax = fling.scrollEl
+        ? fling.scrollEl.scrollHeight - fling.scrollEl.clientHeight
+        : maxScroll();
+      const atEdge = fling.edge === "top"
+        ? scrollTop <= 0
+        : scrollTop >= scrollMax - BOTTOM_EPSILON_PX;
+      if (atEdge) startFlingBounce(fling.edge, fling.speedPxMs);
     }
 
     function onTouchStart(e: TouchEvent) {
@@ -140,17 +254,34 @@ export function useRubberBandScroll() {
       if (e.target instanceof Element && e.target.closest("[data-no-rubber-band]")) return;
       // A previous pull may still be springing back; snap it home rather
       // than letting a stale transition animate over the new gesture.
+      clearFling();
       clearOffset();
+      movementSurface = e.target instanceof Element
+        ? e.target.closest<HTMLElement>("[data-rubber-band-surface]") ?? document.body
+        : document.body;
       const y = e.touches[0].clientY;
       const scrollEl = e.target instanceof Element ? findScrollableAncestor(e.target) : null;
-      drag = { edge: "top", active: false, lastY: y, armedAtY: y, scrollEl };
+      drag = {
+        edge: "top",
+        active: false,
+        lastY: y,
+        lastMoveAt: performance.now(),
+        velocityPxMs: 0,
+        armedAtY: y,
+        scrollEl,
+      };
     }
 
     function onTouchMove(e: TouchEvent) {
       if (!drag || e.touches.length !== 1) return;
       const currentY = e.touches[0].clientY;
       const moveDelta = currentY - drag.lastY;
+      const now = performance.now();
+      const elapsed = Math.max(1, now - drag.lastMoveAt);
+      const instantaneousVelocity = moveDelta / elapsed;
+      drag.velocityPxMs = drag.velocityPxMs * 0.55 + instantaneousVelocity * 0.45;
       drag.lastY = currentY;
+      drag.lastMoveAt = now;
 
       if (!drag.active) {
         // Measured against the touch's own scrollable ancestor when it has
@@ -196,8 +327,7 @@ export function useRubberBandScroll() {
       }
 
       const pull = Math.min(MAX_PULL_PX, raw * RESISTANCE);
-      document.body.style.transition = "none";
-      setOffset(drag.edge === "top" ? pull : -pull);
+      schedulePullOffset(drag.edge === "top" ? pull : -pull);
       // Only once we're actually mid-pull — never on a normal scroll touch,
       // which must keep its default native handling. Guarded on `cancelable`
       // because a gesture that reached the bottom edge *after* native
@@ -208,19 +338,56 @@ export function useRubberBandScroll() {
     }
 
     function onTouchEnd() {
+      if (drag?.active) {
+        springBack();
+      } else if (
+        drag
+        && performance.now() - drag.lastMoveAt <= FLING_LIFT_GRACE_MS
+        && Math.abs(drag.velocityPxMs) >= MIN_FLING_VELOCITY_PX_MS
+      ) {
+        fling = {
+          edge: drag.velocityPxMs > 0 ? "top" : "bottom",
+          scrollEl: drag.scrollEl,
+          speedPxMs: Math.abs(drag.velocityPxMs),
+          expiresAt: performance.now() + FLING_MAX_AGE_MS,
+        };
+        window.clearTimeout(flingTimer);
+        flingTimer = window.setTimeout(clearFling, FLING_MAX_AGE_MS);
+        // Handles a lift that occurs on the same frame native scrolling
+        // reaches the boundary; later inertial positions arrive via scroll.
+        maybeBounceFling();
+      }
+      drag = null;
+    }
+
+    function onTouchCancel() {
       if (drag?.active) springBack();
       drag = null;
+      clearFling();
+    }
+
+    function onScroll(e: Event) {
+      if (!fling) return;
+      if (fling.scrollEl) {
+        if (e.target !== fling.scrollEl) return;
+      } else if (e.target !== document && e.target !== document.documentElement && e.target !== window) {
+        return;
+      }
+      maybeBounceFling();
     }
 
     window.addEventListener("touchstart", onTouchStart, { passive: true });
     window.addEventListener("touchmove", onTouchMove, { passive: false });
     window.addEventListener("touchend", onTouchEnd, { passive: true });
-    window.addEventListener("touchcancel", onTouchEnd, { passive: true });
+    window.addEventListener("touchcancel", onTouchCancel, { passive: true });
+    window.addEventListener("scroll", onScroll, true);
     return () => {
       window.removeEventListener("touchstart", onTouchStart);
       window.removeEventListener("touchmove", onTouchMove);
       window.removeEventListener("touchend", onTouchEnd);
-      window.removeEventListener("touchcancel", onTouchEnd);
+      window.removeEventListener("touchcancel", onTouchCancel);
+      window.removeEventListener("scroll", onScroll, true);
+      clearFling();
       clearOffset();
     };
   }, []);
