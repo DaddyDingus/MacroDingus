@@ -46,11 +46,18 @@ function Tab({ to, label, icon: Icon, attention = false }: { to: string; label: 
 
 export default function BottomNav() {
   const location = useLocation();
-  const { hidden } = useNavVisibility();
+  const { hidden, shortcutsHidden, dockedBarScrollVisible } = useNavVisibility();
   const coachStatus = useCoachStatus();
   const nextCheckinDueDate = coachStatus.data?.nextCheckinDueDate ?? null;
   const checkinDue = nextCheckinDueDate !== null && nextCheckinDueDate <= (coachStatus.data?.currentDate ?? "");
-  const hasDockedBar = location.pathname === "/" || location.pathname === "/log";
+  // Whether a docked bar is actually visible right now, not just whether
+  // this route can have one — ShortcutsBar hides itself on scroll-down
+  // independently of the route, and this border needs to track that (see
+  // ShortcutsBar's own dockedBarScrollVisible report). `shortcutsHidden`
+  // true means multi-select swapped it for LogActionBar, which doesn't
+  // scroll-hide, so it's presumed visible whenever active.
+  const hasDockedBarRoute = location.pathname === "/" || location.pathname === "/log";
+  const hasDockedBar = hasDockedBarRoute && (shortcutsHidden || dockedBarScrollVisible);
   // The Strategy wizard screens (New Goal/Edit Goal/New Program/Edit
   // Program) are full-screen takeovers, same intent as MacroFactor's own —
   // none of their screenshots show a bottom tab bar during a wizard, and
@@ -68,7 +75,7 @@ export default function BottomNav() {
   return (
     <nav
       id="app-bottom-nav"
-      className={`fixed bottom-0 inset-x-0 bg-dashboardBg border-t flex z-40 pb-[env(safe-area-inset-bottom)] ${
+      className={`fixed bottom-0 inset-x-0 bg-dashboardBg border-t flex z-40 pb-[env(safe-area-inset-bottom)] transition-colors duration-200 ${
         hasDockedBar ? "border-dashboardBg" : "border-dashboardDivider"
       }`}
     >

@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import useHideOnScroll from "../lib/useHideOnScroll";
 import { Copy, ChevronLeft, ChevronRight } from "lucide-react";
 import type { LogEntry } from "../api/types";
 import { useDayLog, useDeleteLog, useMoveLogEntries, useLoggedDates } from "../api/logs";
@@ -14,11 +15,23 @@ import CopyDaySheet from "../components/CopyDaySheet";
 import CalendarJumpSheet from "../components/CalendarJumpSheet";
 import LogActionBar, { type LogSelection } from "../components/LogActionBar";
 import ConfirmDeleteSheet from "../components/ConfirmDeleteSheet";
-import { useHideShortcutsBar } from "../lib/navVisibility";
+import { useHideShortcutsBar, useNavVisibility } from "../lib/navVisibility";
 import { staggerStyle } from "../lib/stagger";
 import { useAnnounceViewedDate } from "../lib/viewedDate";
 
 const EMPTY_TOTALS = { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0, saturatedFat: 0, sodiumMg: 0 };
+
+// Must match LogActionBar's own transition-transform duration-200 — this is
+// how long displaySelection below stays mounted with stale content after a
+// real deselect, purely so LogActionBar has something to slide away with
+// instead of unmounting mid-animation.
+const SELECTION_BAR_EXIT_MS = 200;
+
+// Must be >= the macro summary's own transition-[grid-template-rows]
+// duration-200 below — a small buffer past the CSS transition's own 200ms
+// so the scroll-suppression window (see suppressScrollHide below) outlasts
+// the animation itself rather than lapsing a frame or two early.
+const MACRO_COLLAPSE_TRANSITION_MS = 260;
 
 // Blank-by-default timeline: no Breakfast/Lunch/Dinner/Snacks sections
 // (removed app-wide — see backend/src/db/schema.ts and every route/hook that
@@ -62,17 +75,59 @@ export default function TodayScreen() {
   // while a selection is active — see useHideShortcutsBar's own comment for
   // why this goes through context now rather than just not rendering it.
   useHideShortcutsBar(!!selection);
+  // Same scroll-hide signal ShortcutsBar already uses (its own separate
+  // call, not shared state — both react to the same real scroll and land in
+  // sync). The macro summary is the tallest part of this screen's sticky
+  // header, permanently claiming close to a fifth of the screen on a tab
+  // that's fundamentally a list; collapsing it away while actively browsing
+  // and bringing it back on scroll-up (or near the top) reclaims that
+  // space without losing quick access to it.
+  const macroSummaryVisible = useHideOnScroll();
+  // This collapse animates the header's real height over
+  // MACRO_COLLAPSE_TRANSITION_MS — long enough for the resulting scrollY
+  // correction (see navVisibility's own comment on suppressScrollHide) to
+  // read as a sustained, multi-frame, real-looking scroll gesture, not just
+  // a single stray sample. Every useHideOnScroll instance app-wide
+  // (including ShortcutsBar's own, independent call) needs to ignore scroll
+  // input for the full transition, not just this screen's own — that's why
+  // this goes through shared context instead of a local guard.
+  const { suppressScrollHide } = useNavVisibility();
+  const macroSummaryVisiblePrevRef = useRef(macroSummaryVisible);
+  useEffect(() => {
+    if (macroSummaryVisiblePrevRef.current === macroSummaryVisible) return;
+    macroSummaryVisiblePrevRef.current = macroSummaryVisible;
+    suppressScrollHide(MACRO_COLLAPSE_TRANSITION_MS);
+  }, [macroSummaryVisible, suppressScrollHide]);
+
+  // Keeps LogActionBar mounted (with the last real selection) for one
+  // transition's worth of time after deselecting, so it slides out with
+  // its actual content instead of unmounting the instant `selection` goes
+  // null and leaving nothing for the exit animation to show.
+  const [displaySelection, setDisplaySelection] = useState<LogSelection | null>(null);
+  useEffect(() => {
+    if (selection) {
+      setDisplaySelection(selection);
+      return;
+    }
+    const timer = window.setTimeout(() => setDisplaySelection(null), SELECTION_BAR_EXIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [selection]);
 
   function openEdit(entry: LogEntry) {
     setEditingEntry(entry);
     setQuickAddLoggedAt(null);
     setSheetOpen(true);
   }
-  function openQuickAddToGroup(groupEntries: LogEntry[]) {
+  // useCallback here (and on the other handlers TimeBlockGroup receives)
+  // isn't just tidiness: TimeBlockGroup is memoized specifically so a
+  // selection toggle doesn't re-render every group in the day, and a
+  // freshly-created function prop on every TodayScreen render would defeat
+  // that for every group, not just the one that actually changed.
+  const openQuickAddToGroup = useCallback((groupEntries: LogEntry[]) => {
     setEditingEntry(null);
     setQuickAddLoggedAt(groupEntries[0].loggedAt);
     setSheetOpen(true);
-  }
+  }, []);
   function closeSheet() {
     setSheetOpen(false);
     setEditingEntry(null);
@@ -80,17 +135,17 @@ export default function TodayScreen() {
   }
 
   // Tapping a food row toggles its selection in our multi-select list.
-  function selectEntry(entry: LogEntry) {
+  const selectEntry = useCallback((entry: LogEntry) => {
     setSelection((prev) => {
       const current = prev ?? [];
       const exists = current.some((e) => e.id === entry.id);
       const next = exists ? current.filter((e) => e.id !== entry.id) : [...current, entry];
       return next.length > 0 ? next : null;
     });
-  }
+  }, []);
 
   // Tapping a group's shared timestamp selects or deselects all entries in the group.
-  function selectGroup(groupEntries: LogEntry[]) {
+  const selectGroup = useCallback((groupEntries: LogEntry[]) => {
     setSelection((prev) => {
       const current = prev ?? [];
       const allSelected = groupEntries.every((ge) => current.some((c) => c.id === ge.id));
@@ -105,16 +160,24 @@ export default function TodayScreen() {
       }
       return next.length > 0 ? next : null;
     });
-  }
+  }, []);
+
+  // Read via a ref rather than closed over directly: `selection` changes on
+  // every single toggle, and this function is a shared prop on every
+  // TimeBlockGroup, so if its identity changed every toggle too, the memo
+  // bailout below would never fire for anyone.
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
 
   // Moves the selected entry or group of entries onto the target group's
   // shared timestamp, merging them into that group.
-  function moveSelectedInto(targetGroupEntries: LogEntry[]) {
-    if (!selection) return;
-    const ids = selection.map((e) => e.id);
+  const moveSelectedInto = useCallback((targetGroupEntries: LogEntry[]) => {
+    const current = selectionRef.current;
+    if (!current) return;
+    const ids = current.map((e) => e.id);
     moveEntries.mutate({ ids, loggedAt: targetGroupEntries[0].loggedAt });
     setSelection(null);
-  }
+  }, [moveEntries]);
 
   const entries = dayLog.data?.entries ?? [];
   const totals = dayLog.data?.totals ?? EMPTY_TOTALS;
@@ -129,7 +192,13 @@ export default function TodayScreen() {
     ? { calories: dayTargets.calories, proteinG: dayTargets.proteinG, fatG: dayTargets.fatG, carbsG: dayTargets.carbsG }
     : null;
 
-  const groups = groupLogEntriesByTime(entries);
+  // useMemo (not a plain call) because this screen re-renders on every
+  // selection toggle, and TimeBlockGroup below is memoized specifically to
+  // skip re-rendering unaffected groups on those toggles — a fresh array of
+  // fresh group objects every render would hand every group a new `entries`
+  // reference regardless, defeating that memo for the whole day, not just
+  // the group that changed.
+  const groups = useMemo(() => groupLogEntriesByTime(entries), [entries]);
 
   return (
     <div className="min-h-dvh bg-dashboardBg">
@@ -137,10 +206,22 @@ export default function TodayScreen() {
           rubber-band without turning the fixed selection bar below into a
           descendant containing block. Sheets are portaled to body. */}
       <div data-rubber-band-surface className="min-h-dvh pb-40 bg-dashboardBg">
-      {/* Glass rather than a flat opaque background: content scrolling under
-          the sticky header continues softly out of view instead of meeting a
-          hard cutoff at its bottom edge. */}
-      <div className="sticky top-0 z-10 bg-dashboardBg/70 backdrop-blur-xl">
+      {/* Solid, not glass: backdrop-blur-xl here used to recomposite every
+          scroll frame based on whatever was scrolling underneath it, since
+          this header is sticky and blur can't be cached like a flat fill —
+          a real, measurable cost on every frame of food-log scrolling, not
+          just an occasional one. Loses the soft fade-under-header look for
+          a plain cutoff; worth it since this is the one sticky+blur header
+          in the app sitting directly above the screen's own scroll content
+          (contrast BarcodeScanner's blur, which is on static controls, not
+          something continuously repainted by scrolling). The bottom border
+          mirrors BottomNav's own default top border (also
+          border-dashboardDivider) — that component only hides its border
+          when a docked bar sits above it so the two read as one surface;
+          here the header borders real scrollable content directly, the
+          same situation as BottomNav's own default, so it gets the same
+          visible divider rather than no edge at all. */}
+      <div className="sticky top-0 z-10 bg-dashboardBg border-b border-dashboardDivider">
         <header className="px-4 pt-5 pb-2 max-w-md mx-auto">
           <div className="grid grid-cols-3 items-center">
             <button
@@ -176,8 +257,20 @@ export default function TodayScreen() {
           </div>
         </header>
 
-        <div className="px-4 pb-3 max-w-md mx-auto">
-          <MacroSummaryBar totals={totals} targets={targets} />
+        {/* Same collapse mechanic as AddFoodSheet's own ActionBar (grid-rows
+            0fr/1fr, not a conditional unmount) — see that component's own
+            comment. A conditional unmount would restart MacroSummaryBar's
+            own internal state (its swipeable page position) on every
+            collapse/reveal; this only changes the space it's given. */}
+        <div
+          className="grid transition-[grid-template-rows] duration-200 ease-out"
+          style={{ gridTemplateRows: macroSummaryVisible ? "1fr" : "0fr" }}
+        >
+          <div className="overflow-hidden">
+            <div className="px-4 pb-3 max-w-md mx-auto">
+              <MacroSummaryBar totals={totals} targets={targets} />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -191,21 +284,31 @@ export default function TodayScreen() {
                 out (right: 3.5px) so its own center lands on that same 4px point. */}
             <div className="absolute top-2 bottom-2 w-px bg-dashboardDivider" style={{ right: "27px" }} />
             <div className="space-y-6">
-              {groups.map((group, i) => (
-                <div key={group.id} className="tile-enter" style={staggerStyle(i, 60, 5)}>
-                  <TimeBlockGroup
-                    entries={group.entries}
-                    selectedEntryIds={selection ? selection.map((e) => e.id) : []}
-                    groupSelected={group.entries.length > 0 && group.entries.every((ge) => selection?.some((s) => s.id === ge.id) ?? false)}
-                    anySelected={!!selection}
-                    onSelectEntry={selectEntry}
-                    onSelectGroup={selectGroup}
-                    onQuickAdd={openQuickAddToGroup}
-                    onMergeInto={moveSelectedInto}
-                    onDelete={(entry) => setPendingDeleteEntry(entry)}
-                  />
-                </div>
-              ))}
+              {groups.map((group, i) => {
+                // A string, not a filtered array: unaffected groups get the
+                // exact same primitive value on every render (see
+                // TimeBlockGroup's own comment on why that matters for its
+                // memo to actually skip work).
+                const selectedMask = selection
+                  ? group.entries.map((e) => (selection.some((s) => s.id === e.id) ? "1" : "0")).join("")
+                  : "";
+                const groupSelected = selectedMask.length > 0 && !selectedMask.includes("0");
+                return (
+                  <div key={group.id} className="tile-enter" style={staggerStyle(i, 60, 5)}>
+                    <TimeBlockGroup
+                      entries={group.entries}
+                      selectedMask={selectedMask}
+                      groupSelected={groupSelected}
+                      anySelected={!!selection}
+                      onSelectEntry={selectEntry}
+                      onSelectGroup={selectGroup}
+                      onQuickAdd={openQuickAddToGroup}
+                      onMergeInto={moveSelectedInto}
+                      onDelete={setPendingDeleteEntry}
+                    />
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -234,10 +337,11 @@ export default function TodayScreen() {
         />
       )}
 
-      {selection && (
+      {displaySelection && (
         <div data-no-rubber-band>
           <LogActionBar
-            selection={selection}
+            selection={displaySelection}
+            active={!!selection}
             sourceDate={date}
             onClose={() => setSelection(null)}
             onEdit={openEdit}

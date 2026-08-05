@@ -1,3 +1,4 @@
+import { memo, useEffect, useState } from "react";
 import { Flame, Plus, ArrowRight, Check } from "lucide-react";
 import type { LogEntry } from "../api/types";
 import { formatLogTime } from "../lib/date";
@@ -17,9 +18,20 @@ function fmt(n: number): string {
 // what lets TodayScreen's absolute timeline line use one fixed `right`
 // offset that lines up with every block's dot, independent of that block's
 // time-string length ("7 AM" vs "12:45 PM").
-export default function TimeBlockGroup({
+// Memoized because TodayScreen re-renders this whole list on every selection
+// toggle (React state can't change without a new top-level render) — without
+// this, checking one food re-rendered every group and every card for the
+// entire day, not just the one that changed. `selectedMask` (a "1010"-style
+// string, one char per entry, computed by the caller) is what makes the
+// memo bailout actually work: unaffected groups get the exact same string
+// value each render (primitive equality, unlike a freshly-filtered array,
+// which would be a new reference every time even with identical contents).
+// `entries` staying reference-stable across a selection-only re-render
+// requires the caller to useMemo() groupLogEntriesByTime's result — see
+// TodayScreen's own comment on `groups`.
+const TimeBlockGroup = memo(function TimeBlockGroup({
   entries,
-  selectedEntryIds,
+  selectedMask,
   groupSelected,
   anySelected,
   onSelectEntry,
@@ -29,7 +41,8 @@ export default function TimeBlockGroup({
   onDelete,
 }: {
   entries: LogEntry[];
-  selectedEntryIds: string[];
+  // One char per entry in `entries`, same order — "1" selected, "0" not.
+  selectedMask: string;
   groupSelected: boolean;
   // True while some group or entry is selected — every group's
   // left-of-timestamp button switches from "+" to a move/merge arrow while
@@ -51,7 +64,16 @@ export default function TimeBlockGroup({
 
   // Disable the merge/move target button if this group is either the selected group
   // or contains any of the selected entries (since moving them here is a no-op).
-  const isOrigin = groupSelected || entries.some((e) => selectedEntryIds.includes(e.id));
+  const isOrigin = groupSelected || selectedMask.includes("1");
+
+  // Which row (if any) currently has its swipe-to-delete action revealed —
+  // scoped to this one group rather than lifted to TodayScreen, so opening a
+  // swipe elsewhere on the day doesn't invalidate every other group's memo
+  // bailout (see this component's own comment above on why that matters).
+  const [openSwipeId, setOpenSwipeId] = useState<string | null>(null);
+  useEffect(() => {
+    if (anySelected) setOpenSwipeId(null);
+  }, [anySelected]);
 
   return (
     // A soft low-opacity fill on this whole container (rather than a ring/
@@ -119,13 +141,16 @@ export default function TimeBlockGroup({
         </button>
       </div>
       <div className="space-y-1 mt-1.5 pr-14">
-        {entries.map((entry) => {
-          const isChecked = selectedEntryIds.includes(entry.id);
+        {entries.map((entry, idx) => {
+          const isChecked = selectedMask[idx] === "1";
           return (
             <div key={entry.id} className="relative">
               <FoodItemCard
                 entry={entry}
                 selected={isChecked}
+                swipeEnabled={!anySelected}
+                open={openSwipeId === entry.id}
+                onOpenChange={(nextOpen) => setOpenSwipeId(nextOpen ? entry.id : null)}
                 onSelect={() => onSelectEntry(entry)}
                 onDelete={() => onDelete(entry)}
               />
@@ -152,4 +177,6 @@ export default function TimeBlockGroup({
       </div>
     </div>
   );
-}
+});
+
+export default TimeBlockGroup;

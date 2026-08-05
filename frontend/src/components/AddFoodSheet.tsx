@@ -1414,6 +1414,15 @@ export default function AddFoodSheet({
               <button
                 onClick={() => {
                   setEditingRecipeId(null);
+                  // Edit/Duplicate/Import all leave a prefilled draft in
+                  // recipeImportInitial (see the pendingRecipeAction effect
+                  // and submitRecipeImport above) that only ever gets
+                  // cleared on the sheet's own open transition — without
+                  // this, starting a genuinely blank recipe right after
+                  // duplicating/editing a different one in the same sheet
+                  // session inherited that other recipe's servings (and
+                  // ingredients) as if they were defaults.
+                  setRecipeImportInitial(null);
                   changeStep("recipe");
                 }}
                 className="w-full flex items-center gap-3 rounded-2xl bg-surface p-4 text-left active:bg-surface-raised"

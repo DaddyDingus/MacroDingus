@@ -34,14 +34,34 @@ function Chip({ icon: Icon, label, onClick }: { icon: LucideIcon; label: string;
 export default function LogActionBar({
   selection,
   sourceDate,
+  active,
   onClose,
   onEdit,
 }: {
   selection: LogSelection;
   sourceDate: string;
+  // Drives the slide in/out — TodayScreen keeps this component mounted with
+  // its last real selection for one transition's worth of time after
+  // deselecting, rather than unmounting immediately, so it has something to
+  // slide away with instead of vanishing mid-animation. `active` (not just
+  // "is this mounted") is what actually reflects on-screen vs. sliding out.
+  active: boolean;
   onClose: () => void;
   onEdit: (entry: LogEntry) => void;
 }) {
+  // Mounts already `active`, but a CSS transition needs a real "from" state
+  // to animate from — starting `entered` false for exactly one frame forces
+  // the off-screen position to actually paint before flipping to shown, so
+  // the slide-in isn't just a snap. ShortcutsBar doesn't need this trick
+  // since it's mounted once at app start and only ever transitions after
+  // that; this component remounts fresh every selection.
+  const [entered, setEntered] = useState(false);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setEntered(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  const show = active && entered;
+
   const [view, setView] = useState<RootView>("root");
   const [pendingSheet, setPendingSheet] = useState<PendingSheet>(null);
   const [recipeSheetOpen, setRecipeSheetOpen] = useState(false);
@@ -128,7 +148,12 @@ export default function LogActionBar({
 
   return (
     <>
-      <div className="fixed inset-x-0 z-30" style={{ bottom: navHeight }}>
+      <div
+        className={`fixed inset-x-0 z-30 transition-transform duration-200 ease-out ${
+          show ? "translate-y-0" : "translate-y-full pointer-events-none"
+        }`}
+        style={{ bottom: navHeight }}
+      >
         <div className="bg-dashboardBg border-t border-dashboardDivider flex items-center gap-1 px-3 py-2">
           {view !== "root" ? (
             <button

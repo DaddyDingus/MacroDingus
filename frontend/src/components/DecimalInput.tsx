@@ -126,7 +126,13 @@ export default function DecimalInput({
         aria-expanded={open}
         className={className}
       >
-        {value || <span className="text-muted/50">{placeholder ?? ""}</span>}
+        {/* A truly empty inline element (no placeholder passed, value
+            cleared to "") can collapse the trigger's line box in some
+            browsers since there's no text content to size against — a
+            non-breaking space keeps a real glyph present even when there's
+            nothing else to show, so the button's height never depends on
+            whether a caller happened to pass a placeholder. */}
+        {value || <span className="text-muted/50">{placeholder || " "}</span>}
       </button>
       {open && (
         <BottomSheet

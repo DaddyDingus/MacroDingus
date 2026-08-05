@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { SHORTCUT_CATALOG, SHORTCUT_COLOR_CATALOG, useDashboardShortcuts, type ShortcutId } from "../lib/shortcuts";
 import useHideOnScroll from "../lib/useHideOnScroll";
 import useBottomNavHeight from "../lib/useBottomNavHeight";
@@ -17,19 +17,33 @@ export default function ShortcutsBar() {
   const [runningAction, setRunningAction] = useState<ShortcutId | null>(null);
   const visible = useHideOnScroll();
   const navHeight = useBottomNavHeight();
-  const { shortcutsHidden } = useNavVisibility();
+  const { shortcutsHidden, setDockedBarScrollVisible } = useNavVisibility();
 
-  if (shortcutsHidden) return null;
+  // Reports scroll-visibility only (not shortcutsHidden — BottomNav already
+  // has that directly from context and combines the two itself, since
+  // multi-select is presumed to keep LogActionBar on screen in this same
+  // slot regardless of scroll position).
+  useEffect(() => {
+    setDockedBarScrollVisible(visible);
+  }, [visible, setDockedBarScrollVisible]);
+
+  // Folded into the same scroll-hide transform rather than an early
+  // `return null` — TodayScreen's multi-select swaps this out for
+  // LogActionBar in the same slot, and unmounting this instantly (with
+  // LogActionBar snapping straight in) read as a hard cut. Sliding both
+  // out/in together (LogActionBar mirrors this exact transform/duration —
+  // see its own comment) makes it read as one bar handing off to the other.
+  const hidden = !visible || shortcutsHidden;
 
   return (
     <>
       <div
         className={`fixed inset-x-0 z-30 transition-transform duration-200 ease-out ${
-          visible ? "translate-y-0" : "translate-y-full pointer-events-none"
+          hidden ? "translate-y-full pointer-events-none" : "translate-y-0"
         }`}
         style={{ bottom: navHeight }}
       >
-        <div className="bg-dashboardBg flex">
+        <div className="bg-dashboardBg border-t border-dashboardDivider flex">
           {shortcuts.map((id) => {
             const s = SHORTCUT_CATALOG.find((c) => c.id === id);
             if (!s) return null;

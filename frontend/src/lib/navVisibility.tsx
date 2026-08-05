@@ -7,6 +7,25 @@ interface NavVisibilityContextValue {
   shortcutsHidden: boolean;
   pushShortcuts: () => void;
   popShortcuts: () => void;
+  // ShortcutsBar's own scroll-driven visibility (see its useHideOnScroll
+  // call), reported up so BottomNav can tell whether a docked bar is
+  // actually on screen right now rather than just inferring it from the
+  // route — see setDockedBarScrollVisible's own comment.
+  dockedBarScrollVisible: boolean;
+  setDockedBarScrollVisible: (visible: boolean) => void;
+  // Tells every useHideOnScroll instance app-wide to ignore scroll events
+  // for the next `ms` — call this immediately before starting any animated
+  // layout change that alters real document height (a collapsing sticky
+  // header, not a `transform`-only hide like ShortcutsBar's own). A CSS
+  // transition isn't instant: it can clamp window.scrollY a little on every
+  // frame for its whole duration, which reads to every scroll listener as a
+  // real, sustained, multi-frame scroll gesture — indistinguishable from
+  // genuine input by direction/consistency alone, and long enough that a
+  // "confirm with the next sample" jitter guard doesn't help either. Plain
+  // mutable ref rather than state: read synchronously inside a scroll
+  // handler, not meant to trigger a render of its own.
+  suppressScrollHide: (ms: number) => void;
+  isScrollHideSuppressed: () => boolean;
 }
 
 const NavVisibilityContext = createContext<NavVisibilityContextValue | null>(null);
@@ -16,6 +35,8 @@ export function NavVisibilityProvider({ children }: { children: ReactNode }) {
   const [hidden, setHidden] = useState(false);
   const shortcutsCountRef = useRef(0);
   const [shortcutsHidden, setShortcutsHidden] = useState(false);
+  const [dockedBarScrollVisible, setDockedBarScrollVisible] = useState(true);
+  const suppressedUntilRef = useRef(0);
 
   function push() {
     countRef.current++;
@@ -33,9 +54,31 @@ export function NavVisibilityProvider({ children }: { children: ReactNode }) {
     shortcutsCountRef.current = Math.max(0, shortcutsCountRef.current - 1);
     setShortcutsHidden(shortcutsCountRef.current > 0);
   }
+  function suppressScrollHide(ms: number) {
+    // max, not overwrite: an overlapping second call (e.g. another toggle
+    // before the first transition finished) should extend the window, never
+    // shorten it.
+    suppressedUntilRef.current = Math.max(suppressedUntilRef.current, performance.now() + ms);
+  }
+  function isScrollHideSuppressed() {
+    return performance.now() < suppressedUntilRef.current;
+  }
 
   return (
-    <NavVisibilityContext.Provider value={{ hidden, push, pop, shortcutsHidden, pushShortcuts, popShortcuts }}>
+    <NavVisibilityContext.Provider
+      value={{
+        hidden,
+        push,
+        pop,
+        shortcutsHidden,
+        pushShortcuts,
+        popShortcuts,
+        dockedBarScrollVisible,
+        setDockedBarScrollVisible,
+        suppressScrollHide,
+        isScrollHideSuppressed,
+      }}
+    >
       {children}
     </NavVisibilityContext.Provider>
   );

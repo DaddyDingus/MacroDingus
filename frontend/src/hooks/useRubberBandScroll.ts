@@ -90,6 +90,12 @@ interface DragState {
   // the inner container ever got to scroll — the reported symptom was a
   // wizard step whose content simply couldn't be scrolled into view at all.
   scrollEl: Element | null;
+  // Whether this gesture's touchmove listener was registered non-passive
+  // (able to preventDefault) — decided once, at touchstart, from whether
+  // the touch already rests at a scroll boundary. See attachTouchMove's own
+  // comment for why that's the only case worth paying the blocking-listener
+  // cost for.
+  blocking: boolean;
 }
 
 interface FlingState {
@@ -127,9 +133,51 @@ export function useRubberBandScroll() {
     let pullFrame = 0;
     let pendingPullOffset = 0;
     let movementSurface: HTMLElement = document.body;
+    // Whether the currently-registered touchmove listener is non-passive.
+    // Re-registered per gesture (see attachTouchMove) rather than fixed once
+    // at mount, since a non-passive listener forces Chromium to run this
+    // handler on the main thread before it can scroll *every* touchmove of
+    // *every* gesture on *every* screen — not just the ones that actually
+    // end up pulling. Most scrolling never gets anywhere near an edge, so
+    // paying that cost unconditionally was a real, measurable source of
+    // scroll jank on ordinary lists (e.g. the food log).
+    let touchMoveBlocking = false;
+    let touchMoveAttached = false;
 
     function maxScroll() {
       return Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    }
+
+    function scrollBoundary(scrollEl: Element | null) {
+      const scrollTop = scrollEl ? scrollEl.scrollTop : window.scrollY;
+      const scrollMax = scrollEl ? scrollEl.scrollHeight - scrollEl.clientHeight : maxScroll();
+      return { scrollTop, scrollMax };
+    }
+
+    // A gesture can only ever need preventDefault if it's already resting at
+    // a boundary when it starts — pulling further is the very first move,
+    // before any native scroll for this touch has happened, so it's still
+    // reliably cancelable. A gesture that starts mid-list and scrolls all
+    // the way to an edge within one continuous touch can still arm (see
+    // onTouchMove) and still renders its own offset correctly, but by then
+    // Chromium has already begun scrolling this gesture natively and
+    // preventDefault is a documented no-op regardless of listener
+    // passive-ness — so registering non-passive for every gesture bought
+    // that case nothing, while costing every other gesture main-thread
+    // scrolling. Attaching non-passive only when it can actually matter
+    // keeps the rest of scrolling on the fast compositor path.
+    function attachTouchMove(blocking: boolean) {
+      if (touchMoveAttached && blocking === touchMoveBlocking) return;
+      if (touchMoveAttached) window.removeEventListener("touchmove", onTouchMove);
+      touchMoveBlocking = blocking;
+      window.addEventListener("touchmove", onTouchMove, { passive: !blocking });
+      touchMoveAttached = true;
+    }
+
+    function detachTouchMove() {
+      if (!touchMoveAttached) return;
+      window.removeEventListener("touchmove", onTouchMove);
+      touchMoveAttached = false;
     }
 
     // px > 0 pushes the page down (top-edge pull), px < 0 lifts it up
@@ -261,6 +309,9 @@ export function useRubberBandScroll() {
         : document.body;
       const y = e.touches[0].clientY;
       const scrollEl = e.target instanceof Element ? findScrollableAncestor(e.target) : null;
+      const { scrollTop, scrollMax } = scrollBoundary(scrollEl);
+      const blocking = scrollTop <= 0 || scrollTop >= scrollMax - BOTTOM_EPSILON_PX;
+      attachTouchMove(blocking);
       drag = {
         edge: "top",
         active: false,
@@ -269,6 +320,7 @@ export function useRubberBandScroll() {
         velocityPxMs: 0,
         armedAtY: y,
         scrollEl,
+        blocking,
       };
     }
 
@@ -290,8 +342,7 @@ export function useRubberBandScroll() {
         // reads as permanently "at the boundary" (window never moves), and
         // arms a bounce instead of letting the container's native scroll
         // run.
-        const scrollTop = drag.scrollEl ? drag.scrollEl.scrollTop : window.scrollY;
-        const scrollMax = drag.scrollEl ? drag.scrollEl.scrollHeight - drag.scrollEl.clientHeight : maxScroll();
+        const { scrollTop, scrollMax } = scrollBoundary(drag.scrollEl);
         // Arms only while the finger is moving in the pull direction *and*
         // we're already sitting at that boundary — never mid-scroll, so a
         // normal scroll gesture keeps its native handling (momentum,
@@ -328,13 +379,15 @@ export function useRubberBandScroll() {
 
       const pull = Math.min(MAX_PULL_PX, raw * RESISTANCE);
       schedulePullOffset(drag.edge === "top" ? pull : -pull);
-      // Only once we're actually mid-pull — never on a normal scroll touch,
-      // which must keep its default native handling. Guarded on `cancelable`
-      // because a gesture that reached the bottom edge *after* native
-      // scrolling had already begun is no longer cancelable in Chromium;
-      // the offset above still renders correctly there, this call would just
-      // log a console warning for nothing.
-      if (e.cancelable) e.preventDefault();
+      // Only once we're actually mid-pull, and only if this gesture's
+      // listener was registered non-passive in the first place — calling
+      // preventDefault from inside a passive invocation just logs a console
+      // warning and does nothing. Guarded on `cancelable` too, because a
+      // gesture that reached the bottom edge *after* native scrolling had
+      // already begun is no longer cancelable in Chromium even when
+      // blocking; the offset above still renders correctly there, this call
+      // would just log a console warning for nothing.
+      if (drag.blocking && e.cancelable) e.preventDefault();
     }
 
     function onTouchEnd() {
@@ -358,12 +411,14 @@ export function useRubberBandScroll() {
         maybeBounceFling();
       }
       drag = null;
+      detachTouchMove();
     }
 
     function onTouchCancel() {
       if (drag?.active) springBack();
       drag = null;
       clearFling();
+      detachTouchMove();
     }
 
     function onScroll(e: Event) {
@@ -376,14 +431,16 @@ export function useRubberBandScroll() {
       maybeBounceFling();
     }
 
+    // touchmove itself is attached per-gesture by onTouchStart (see
+    // attachTouchMove) rather than statically here, so its passive-ness can
+    // vary per gesture.
     window.addEventListener("touchstart", onTouchStart, { passive: true });
-    window.addEventListener("touchmove", onTouchMove, { passive: false });
     window.addEventListener("touchend", onTouchEnd, { passive: true });
     window.addEventListener("touchcancel", onTouchCancel, { passive: true });
     window.addEventListener("scroll", onScroll, true);
     return () => {
       window.removeEventListener("touchstart", onTouchStart);
-      window.removeEventListener("touchmove", onTouchMove);
+      detachTouchMove();
       window.removeEventListener("touchend", onTouchEnd);
       window.removeEventListener("touchcancel", onTouchCancel);
       window.removeEventListener("scroll", onScroll, true);

@@ -60,7 +60,7 @@ export default function RecipeForm({
   const [icon, setIcon] = useState<string | null>(initial?.icon ?? null);
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [ingredients, setIngredients] = useState<Ingredient[]>(initial?.ingredients ?? []);
-  const [servings, setServings] = useState(String(initial?.servings ?? 4));
+  const [servings, setServings] = useState(String(initial?.servings ?? 1));
   const [weightOverride, setWeightOverride] = useState(
     initial && initial.totalWeightGrams !== initial.ingredients.reduce((s, i) => s + i.quantityGrams, 0)
       ? String(initial.totalWeightGrams)
@@ -303,6 +303,7 @@ export default function RecipeForm({
               label="Recipe servings"
               value={servings}
               onChange={setServings}
+              placeholder="1"
               className="tabular w-full rounded-md bg-surface-raised border border-line px-3 py-2.5 text-sm text-white text-left focus:outline-none focus:border-accent"
             />
           </label>
