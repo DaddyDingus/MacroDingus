@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Plus, Heart, ChevronLeft, ChevronDown, Pencil, PackageOpen, Copy, Trash2 } from "lucide-react";
+import { Plus, Heart, ChevronLeft, ChevronDown, Pencil, PackageOpen, Copy, Trash2, Flame, ArrowUpDown } from "lucide-react";
 import ConfirmDeleteSheet from "./ConfirmDeleteSheet";
 import type { Food, Nutrition } from "../api/types";
 import type { MacroTargets } from "./MacroSummaryBar";
@@ -453,7 +453,18 @@ export default function FoodDetailScreen({
   const [unit, setUnit] = useState("g");
   const [quantityInput, setQuantityInput] = useState(String(initialQuantityGrams ?? 100));
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  useEffect(() => setUnit("g"), [food.id]);
+  // Lets quantityInput mean either "amount of activeUnit" or "amount of
+  // macroKey" depending on mode — see the toggle button next to the unit
+  // chips. Reset alongside `unit` whenever the food changes so a leftover
+  // macro-mode entry from a previous food (different per-100g values) can't
+  // be misread as a raw gram amount.
+  const [entryMode, setEntryMode] = useState<"unit" | "macro">("unit");
+  const [macroKey, setMacroKey] = useState<"calories" | "protein" | "fat" | "carbs">("calories");
+  useEffect(() => {
+    setUnit("g");
+    setEntryMode("unit");
+    setMacroKey("calories");
+  }, [food.id]);
   // Quantity entry is a custom keypad, not a real <input> — a real one was
   // tried here before and reverted specifically because a back press had
   // nothing keyboard-shaped to close first, so it exited this whole screen
@@ -542,14 +553,59 @@ export default function FoodDetailScreen({
   ];
   const activeUnit = units.find((candidate) => candidate.key === unit) ?? units[0];
   const gramsPerUnit = activeUnit.grams;
+  // Grams-per-unit for each macro, used to solve grams from an entered macro
+  // amount (grams = entered * 100 / per100g) — the inverse of scaleNutrition.
+  const macroPer100g: Record<"calories" | "protein" | "fat" | "carbs", number> = {
+    calories: food.caloriesPer100g,
+    protein: food.proteinPer100g,
+    fat: food.fatPer100g,
+    carbs: food.carbsPer100g,
+  };
   const quantity = Number(quantityInput) || 0;
-  const quantityGrams = Math.max(0, quantity * gramsPerUnit);
+  const quantityGrams =
+    entryMode === "macro"
+      ? macroPer100g[macroKey] > 0
+        ? Math.max(0, (quantity * 100) / macroPer100g[macroKey])
+        : 0
+      : Math.max(0, quantity * gramsPerUnit);
 
   function selectUnit(nextKey: string) {
     const next = units.find((candidate) => candidate.key === nextKey);
     if (!next || next.key === activeUnit.key) return;
     setQuantityInput(String(Number((quantityGrams / next.grams).toFixed(3))));
     setUnit(next.key);
+    setAllSelected(true);
+  }
+
+  // Mirrors selectUnit: re-expresses the current quantityGrams in the newly
+  // chosen macro's terms so switching (e.g. Calories -> Protein) doesn't
+  // silently change how much food is about to be logged.
+  function selectMacro(nextKey: "calories" | "protein" | "fat" | "carbs") {
+    if (nextKey === macroKey || macroPer100g[nextKey] <= 0) return;
+    setQuantityInput(String(Number((quantityGrams * (macroPer100g[nextKey] / 100)).toFixed(1))));
+    setMacroKey(nextKey);
+    setAllSelected(true);
+  }
+
+  // The swap button next to the unit/macro chips: flips between typing a
+  // serving size directly and typing a target macro amount (e.g. "I have 100
+  // calories left, how much of this can I have?") with the equivalent grams
+  // computed live. Both directions re-express the current quantityGrams
+  // under the new mode, same principle as selectUnit/selectMacro above.
+  function toggleEntryMode() {
+    if (entryMode === "unit") {
+      const startKey =
+        macroPer100g.calories > 0
+          ? "calories"
+          : (["protein", "fat", "carbs"] as const).find((k) => macroPer100g[k] > 0) ?? "calories";
+      const per100g = macroPer100g[startKey];
+      setQuantityInput(String(Number((per100g > 0 ? quantityGrams * (per100g / 100) : 0).toFixed(1))));
+      setMacroKey(startKey);
+      setEntryMode("macro");
+    } else {
+      setQuantityInput(String(Number((quantityGrams / gramsPerUnit).toFixed(3))));
+      setEntryMode("unit");
+    }
     setAllSelected(true);
   }
 
@@ -658,12 +714,27 @@ export default function FoodDetailScreen({
           bar/notch the same way BrowseHeader's does, since this sits at the
           very top of the same full-screen modal once "detail" is the active
           step. */}
-      {/* +1px — bisected together with BrowseHeader's own matching +9px
-          (see its comment) between -2 (undershot per the first report) and
-          +4 (the next attempt, which overshot per a follow-up screenshot).
-          Keep these two in lockstep, not just this one against TodayScreen
-          — still a converging guess, not a final number. */}
-      <div className="shrink-0" style={{ paddingTop: "calc(env(safe-area-inset-top) + 1px)" }}>
+      {/* +9px, matching BrowseHeader's own value exactly (see its comment) —
+          not a fresh guess. A 2026-08-06 device trace (sendBeacon off a real
+          phone, see the temporary effect above headerRowRef) proved
+          `env(safe-area-inset-top)` resolves to a real, literal 0px on this
+          device/PWA despite `viewport-fit=cover` being set — it's a
+          display-cutout signal, not a general "avoid the status bar" one,
+          and this phone has no cutout. Every prior round here (16 -> ... ->
+          1) was unknowingly bisecting the *entire* visible gap down to
+          nothing, one arbitrary constant at a time, without knowing the
+          env() term was contributing zero the whole time — the previous
+          value (+1px) left this header's own row sitting flush against the
+          true top of the screen, which is what got reported this round.
+          BrowseHeader's own "+9px" is the one number in this exact pairing
+          that's field-validated as correct (unreported as broken) under the
+          identical env()=0 condition, so reusing it here keeps the two
+          headers' NutrientStatusBar rows aligned per the comment above
+          instead of introducing a third guessed constant. Still worth a
+          fresh screenshot before ever touching this again — a phone with a
+          real display cutout will add its own inset on top of this, which
+          nothing here has been checked against. */}
+      <div className="shrink-0" style={{ paddingTop: "calc(env(safe-area-inset-top) + 9px)" }}>
         {/* pb-1.5 (6px) — matches BrowseHeader's flex-col gap-3 between its
             own top row and NutrientStatusBar exactly, so the "Remaining
             Today" block lands at the same vertical offset on both screens. */}
@@ -896,43 +967,68 @@ export default function FoodDetailScreen({
           right after Impact on Targets for how much of the pane's own
           content is visible before this). */}
       <div className="shrink-0 border-t border-dashboardDivider/60 bg-dashboardBg px-4 pt-1 pb-1">
-        <button
-          type="button"
-          onTouchStart={() => triggerHaptic(12)}
-          onClick={() => {
-            triggerHaptic(12);
-            setKeypadOpen((v) => !v);
-          }}
-          aria-expanded={keypadOpen}
-          aria-label="Quantity"
-          className={`w-full rounded-xl bg-dashboardCard border transition-all duration-200 px-4 mb-1.5 flex items-center justify-between gap-1.5 active:scale-[0.99] ${
-            keypadOpen ? "border-accent h-11" : "border-white/15 h-9"
-          }`}
-        >
-          <span className={`flex items-center tabular font-semibold text-white transition-all duration-200 ${keypadOpen ? "text-lg" : "text-sm"}`}>
-            {/* keypadOpen-gated: this is a fake caret/selection on a plain
-                <button>, not a real input, so neither should show while
-                collapsed (nothing to be "focused" then). allSelected shows
-                a selection-style highlight (matches a real input's tap-in
-                behavior — see its own comment above) *and* keeps the caret
-                visible right after it — a real input wouldn't show both at
-                once, but this control has no other affordance telling the
-                user it's the thing about to receive taps, so the caret
-                stays as a constant "you can type here" signal regardless
-                of selection state instead of only appearing after the
-                first keystroke. */}
-            {keypadOpen && allSelected ? (
-              <span className="bg-accent/30 rounded px-0.5 -mx-0.5">{quantityInput}</span>
-            ) : (
-              quantityInput
-            )}
-            {keypadOpen && <span className="caret-blink w-[3px] h-[1.1em] bg-white ml-1 shrink-0" />}
-          </span>
-          <span className="flex items-center gap-1 shrink-0 text-muted">
-            <span className="text-xs">{activeUnit.label}</span>
-            <ChevronDown size={14} strokeWidth={2.5} className={`transition-transform duration-200 ${keypadOpen ? "rotate-180" : ""}`} />
-          </span>
-        </button>
+        {/* In macro mode a second, read-only box appears beside the main
+            quantity button so the derived serving size stays visible while
+            typing a macro amount — e.g. typing "100" calories shows the
+            equivalent grams right next to it, instead of requiring a swap
+            back to check. Plain flex stretch (no explicit height) so it
+            always matches the main button's own open/collapsed height. */}
+        <div className="flex gap-2 mb-1.5">
+          <button
+            type="button"
+            onTouchStart={() => triggerHaptic(12)}
+            onClick={() => {
+              triggerHaptic(12);
+              setKeypadOpen((v) => !v);
+            }}
+            aria-expanded={keypadOpen}
+            aria-label="Quantity"
+            className={`flex-1 min-w-0 rounded-xl bg-dashboardCard border transition-all duration-200 px-4 flex items-center justify-between gap-1.5 active:scale-[0.99] ${
+              keypadOpen ? "border-accent h-11" : "border-white/15 h-9"
+            }`}
+          >
+            <span className={`flex items-center tabular font-semibold text-white transition-all duration-200 ${keypadOpen ? "text-lg" : "text-sm"}`}>
+              {/* keypadOpen-gated: this is a fake caret/selection on a plain
+                  <button>, not a real input, so neither should show while
+                  collapsed (nothing to be "focused" then). allSelected shows
+                  a selection-style highlight (matches a real input's tap-in
+                  behavior — see its own comment above) *and* keeps the caret
+                  visible right after it — a real input wouldn't show both at
+                  once, but this control has no other affordance telling the
+                  user it's the thing about to receive taps, so the caret
+                  stays as a constant "you can type here" signal regardless
+                  of selection state instead of only appearing after the
+                  first keystroke. */}
+              {keypadOpen && allSelected ? (
+                <span className="bg-accent/30 rounded px-0.5 -mx-0.5">{quantityInput}</span>
+              ) : (
+                quantityInput
+              )}
+              {keypadOpen && <span className="caret-blink w-[3px] h-[1.1em] bg-white ml-1 shrink-0" />}
+            </span>
+            <span className="flex items-center gap-1 shrink-0 text-muted">
+              {entryMode === "macro" ? (
+                macroKey === "calories" ? (
+                  <Flame size={14} className="text-calories" strokeWidth={2.5} />
+                ) : (
+                  <span className={`text-xs font-bold ${RING_METRICS.find((m) => m.key === macroKey)!.colorClass}`}>
+                    {macroKey === "protein" ? "P" : macroKey === "fat" ? "F" : "C"}
+                  </span>
+                )
+              ) : (
+                <span className="text-xs">{activeUnit.label}</span>
+              )}
+              <ChevronDown size={14} strokeWidth={2.5} className={`transition-transform duration-200 ${keypadOpen ? "rotate-180" : ""}`} />
+            </span>
+          </button>
+
+          {entryMode === "macro" && (
+            <div className="shrink-0 w-24 rounded-xl bg-dashboardCard border border-white/10 px-3 flex items-center justify-between gap-1 text-muted">
+              <span className="text-sm tabular truncate">{String(Number((quantityGrams / gramsPerUnit).toFixed(3)))}</span>
+              <span className="text-xs shrink-0">{activeUnit.label}</span>
+            </div>
+          )}
+        </div>
 
         {/* Same outlined-pill treatment as the staged-plate editor's own
             QuantityPresetBar (AddFoodSheet.tsx) — border-accent/text-accent
@@ -949,21 +1045,69 @@ export default function FoodDetailScreen({
         <div className="grid transition-[grid-template-rows] duration-200 ease-out" style={{ gridTemplateRows: keypadOpen ? "1fr" : "0fr" }}>
           <div className="overflow-hidden">
             <div className="flex gap-2 overflow-x-auto no-scrollbar pb-3">
-              {units.map((u) => (
-                <button
-                  key={u.key}
-                  onTouchStart={() => triggerHaptic(10)}
-                  onClick={() => {
-                    triggerHaptic(10);
-                    selectUnit(u.key);
-                  }}
-                  className={`shrink-0 h-8 rounded-full px-3.5 border text-xs font-medium whitespace-nowrap flex items-center justify-center transition-all duration-75 active:scale-[0.96] select-none ${
-                    unit === u.key ? "border-accent text-accent bg-accent/[0.06]" : "border-white/10 text-white/80 active:bg-white/5"
-                  }`}
-                >
-                  {u.label}
-                </button>
-              ))}
+              {/* Flips quantityInput's meaning between "amount of the
+                  selected unit" and "amount of the selected macro" — see
+                  toggleEntryMode's own comment. Sits before the chip set so
+                  it reads as the mode switch, not one more unit choice. */}
+              <button
+                type="button"
+                onTouchStart={() => triggerHaptic(10)}
+                onClick={() => {
+                  triggerHaptic(10);
+                  toggleEntryMode();
+                }}
+                aria-label={entryMode === "unit" ? "Enter by macro amount instead" : "Enter by serving size instead"}
+                className="shrink-0 h-8 w-8 rounded-full border border-white/10 text-white/80 flex items-center justify-center transition-all duration-75 active:scale-[0.96] active:bg-white/5 select-none"
+              >
+                <ArrowUpDown size={14} strokeWidth={2.5} />
+              </button>
+
+              {entryMode === "unit"
+                ? units.map((u) => (
+                    <button
+                      key={u.key}
+                      onTouchStart={() => triggerHaptic(10)}
+                      onClick={() => {
+                        triggerHaptic(10);
+                        selectUnit(u.key);
+                      }}
+                      className={`shrink-0 h-8 rounded-full px-3.5 border text-xs font-medium whitespace-nowrap flex items-center justify-center transition-all duration-75 active:scale-[0.96] select-none ${
+                        unit === u.key ? "border-accent text-accent bg-accent/[0.06]" : "border-white/10 text-white/80 active:bg-white/5"
+                      }`}
+                    >
+                      {u.label}
+                    </button>
+                  ))
+                : RING_METRICS.map((m) => {
+                    const disabled = macroPer100g[m.key] <= 0;
+                    return (
+                      <button
+                        key={m.key}
+                        type="button"
+                        disabled={disabled}
+                        onTouchStart={() => !disabled && triggerHaptic(10)}
+                        onClick={() => {
+                          if (disabled) return;
+                          triggerHaptic(10);
+                          selectMacro(m.key);
+                        }}
+                        aria-label={m.label}
+                        className={`shrink-0 h-8 w-11 rounded-full border flex items-center justify-center transition-all duration-75 active:scale-[0.96] select-none ${
+                          disabled
+                            ? "border-white/5 opacity-30"
+                            : macroKey === m.key
+                            ? "border-accent bg-accent/[0.06]"
+                            : "border-white/10 active:bg-white/5"
+                        }`}
+                      >
+                        {m.key === "calories" ? (
+                          <Flame size={14} className="text-calories" strokeWidth={2.5} />
+                        ) : (
+                          <span className={`text-xs font-bold ${m.colorClass}`}>{m.label[0]}</span>
+                        )}
+                      </button>
+                    );
+                  })}
             </div>
 
             {/* Fixed-height 3x4 grid, unlike a real system keyboard's

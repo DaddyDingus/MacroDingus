@@ -78,18 +78,20 @@ const TimeBlockGroup = memo(function TimeBlockGroup({
   return (
     // A soft low-opacity fill on this whole container (rather than a ring/
     // border here plus one on every card inside, which read as messy) is the
-    // group's selected indicator. `-mx-2 px-2` cancel out horizontally so
-    // the timestamp dot's x-position never moves (TodayScreen's absolute
-    // timeline line is calibrated against it) regardless of selection state;
-    // `py-2` only applies when selected, so the wash gets real breathing
-    // room above/below the header and last card instead of hiding behind
-    // their own opaque backgrounds with nothing but a sliver showing through
-    // the gaps. Cards themselves stay visually untouched by group selection
-    // (see selected prop below) — only a genuinely single-selected entry
-    // gets its own wash.
+    // group's selected indicator. `-mx-2 px-2` and `-my-2 py-2` cancel out on
+    // both axes regardless of selection state, so neither the timestamp dot's
+    // x-position (TodayScreen's absolute timeline line is calibrated against
+    // it) nor this group's contribution to the `space-y-6` list ever moves —
+    // selecting used to grow this box by the vertical padding alone and push
+    // every group below it down the page. Padding is applied unconditionally
+    // (not just when selected) so the reserved breathing room above/below the
+    // header and last card is identical in both states; only the paint
+    // (background/border color) toggles with `groupSelected`. Cards
+    // themselves stay visually untouched by group selection (see selected
+    // prop below) — only a genuinely single-selected entry gets its own wash.
     <div
-      className={`rounded-2xl -mx-2 px-2 border transition-all duration-150 ${
-        groupSelected ? "bg-accent/[0.08] border-accent/15 py-2" : "border-transparent"
+      className={`rounded-2xl -mx-2 px-2 -my-2 py-2 border transition-all duration-150 ${
+        groupSelected ? "bg-accent/[0.08] border-accent/15" : "border-transparent"
       }`}
     >
       <div className="flex items-center gap-2">

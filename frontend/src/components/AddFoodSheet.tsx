@@ -671,17 +671,18 @@ export default function AddFoodSheet({
   // stray keyboard open over e.g. the create/scan steps, with nothing left
   // focused for anything afterward to blur.
   //
-  // Except when heading to "detail": FoodDetailScreen's own quantity input
-  // is autoFocus, so it grabs focus the moment it mounts regardless. Blurring
-  // the search input first (closing the keyboard) only to have that new
-  // input immediately reopen it made tapping a search result look like two
-  // back-to-back keyboard-resize jolts, which visually swamped
-  // FoodDetailScreen's own step-enter fade/slide — it technically still
-  // played, just underneath a much bigger, jankier viewport resize. Leaving
-  // the old input focused lets the browser hand focus straight to the new
-  // one instead (a normal focus-to-focus transfer, not focus-to-nothing-to-
-  // focus), so the keyboard just stays put and the entrance animation is
-  // actually visible against a stable layout.
+  // Used to skip this for "detail" on the theory that FoodDetailScreen's own
+  // quantity input would immediately reclaim focus (a real autoFocus <input>
+  // back then), so the old keyboard could just stay put instead of closing
+  // and reopening. That input became a fake on-page keypad (see its own
+  // comment in FoodDetailScreen.tsx — a real input made back-dismiss exit
+  // the whole screen) which never calls focus() on anything, so nothing was
+  // left to reclaim the keyboard: the search input unmounts with it still
+  // technically focused, and the real on-screen keyboard can linger with a
+  // stale visualViewport (AddFoodSheet's own modal is sized off
+  // viewportHeight/viewportOffsetTop) — reads as the whole modal, header
+  // included, squeezed upward against a keyboard nothing on screen still
+  // wants open. Blurring unconditionally here, same as every other step.
   //
   // Also remembers whether the search input specifically was the thing
   // focused when leaving "browse" — restored via the ref below when
@@ -693,7 +694,7 @@ export default function AddFoodSheet({
     if (next !== "browse") {
       returnFocusToSearchRef.current = activeTab === "search" && document.activeElement === searchInputRef.current;
     }
-    if (next !== "detail" && document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     setStep(next);
     if (next === "browse" && returnFocusToSearchRef.current) {
       returnFocusToSearchRef.current = false;
