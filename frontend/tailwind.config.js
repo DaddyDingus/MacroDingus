@@ -98,7 +98,7 @@ export default {
         dashboardTrack: "rgb(var(--color-divider) / <alpha-value>)",
       },
       fontFamily: {
-        sans: ["IBM Plex Sans", "system-ui", "sans-serif"],
+        sans: ["Space Grotesk", "system-ui", "sans-serif"],
         mono: ["IBM Plex Mono", "ui-monospace", "monospace"],
       },
     },
