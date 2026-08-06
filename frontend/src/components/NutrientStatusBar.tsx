@@ -1,7 +1,7 @@
-import { Pencil } from "lucide-react";
+import { Flame, Pencil } from "lucide-react";
 import type { Nutrition } from "../api/types";
 import type { MacroTargets } from "./MacroSummaryBar";
-import { useEnergyUnit, kcalToUnit, energyUnitLabel } from "../lib/energyUnit";
+import { useEnergyUnit, kcalToUnit } from "../lib/energyUnit";
 
 function fmt(n: number): string {
   return Math.round(n).toLocaleString();
@@ -119,47 +119,98 @@ export default function NutrientStatusBar({
           exactly (see MacroSummaryBar's comment — h-2.5 and h-1.5 were both
           tried and both measured objectively thicker than that reference,
           not just perceived that way). Was h-[3px] originally. */}
-      <div className="grid grid-cols-4 gap-3 w-full">
+      {/* px-1 matches MacroSummaryBar's own grid exactly (added there
+          2026-08-06 as a seam-bleed buffer on its swipeable carousel — this
+          screen has no seam to bleed across, but the inset needs to match
+          anyway so the two screens' bars land at the same horizontal
+          position; without it this row sits 4px further out/left than the
+          Food Log's, which reads as misaligned when moving between the two
+          screens). */}
+      <div className="grid grid-cols-4 gap-3 w-full px-1">
         <BudgetBadge
-          label={targets ? `${fmt(kcalToUnit(targets.calories - consumedCal, energyUnit))} ${energyUnitLabel(energyUnit)}` : "—"}
+          icon
+          value={targets ? fmt(kcalToUnit(targets.calories - consumedCal, energyUnit)) : "—"}
           pctValue={calPct}
           colorClass="bg-calories"
+          textColorClass="text-calories"
         />
         <BudgetBadge
-          label={targets ? `${fmt(targets.proteinG - consumedProtein)}P` : "—"}
+          letter="P"
+          value={targets ? fmt(targets.proteinG - consumedProtein) : "—"}
           pctValue={proteinPct}
           colorClass="bg-protein"
+          textColorClass="text-protein"
         />
         <BudgetBadge
-          label={targets ? `${fmt(targets.fatG - consumedFat)}F` : "—"}
+          letter="F"
+          value={targets ? fmt(targets.fatG - consumedFat) : "—"}
           pctValue={fatPct}
           colorClass="bg-fat"
+          textColorClass="text-fat"
         />
         <BudgetBadge
-          label={targets ? `${fmt(targets.carbsG - consumedCarbs)}C` : "—"}
+          letter="C"
+          value={targets ? fmt(targets.carbsG - consumedCarbs) : "—"}
           pctValue={carbsPct}
           colorClass="bg-carbs"
+          textColorClass="text-carbs"
         />
       </div>
     </div>
   );
 }
 
-// colorClass ties each badge's fill to that macro's established categorical
-// color (bg-calories/bg-protein — same all-pairs-validated palette used
-// everywhere else a macro gets a color, e.g. FoodDetailScreen's Impact rings)
-// rather than the generic bg-white/70 this used to hardcode.
-function BudgetBadge({ label, pctValue, colorClass }: { label: string; pctValue: number; colorClass: string }) {
+// colorClass/textColorClass tie each badge's fill and icon/letter to that
+// macro's established categorical color (bg-calories/text-calories — same
+// all-pairs-validated palette used everywhere else a macro gets a color,
+// e.g. FoodDetailScreen's Impact rings) rather than the generic bg-white/70
+// this used to hardcode. Icon/letter + bare number (not one plain "112P"
+// string) matches MacroSummaryBar's own row exactly — this used to be the
+// same shape (number-above-bar, four equal columns) but plain white text
+// throughout, which read as a different, unrelated design next to the Food
+// Log header showing the same numbers just one screen away.
+function BudgetBadge({
+  icon,
+  letter,
+  value,
+  pctValue,
+  colorClass,
+  textColorClass,
+}: {
+  icon?: boolean;
+  letter?: string;
+  value: string;
+  pctValue: number;
+  colorClass: string;
+  textColorClass: string;
+}) {
   return (
-    <span className="flex flex-col items-center gap-1 min-w-0">
+    // No gap here (MacroSummaryBar/StagedPlateSection don't have one either)
+    // — spacing before the bar is the bar's own mt-1.5 only, one source of
+    // truth instead of a parent gap and a margin both contributing.
+    <span className="flex flex-col items-center min-w-0">
       {/* truncate (not whitespace-nowrap alone) — the parent column is now a
           fixed 1/4-grid-width, not sized to this label, so a long value
-          needs somewhere to go instead of overflowing into the next badge. */}
-      <span className="h-5 flex items-center text-[11px] font-medium text-white truncate tabular">{label}</span>
+          needs somewhere to go instead of overflowing into the next badge.
+          No fixed h-5 here (there used to be one) — sizing this to its own
+          natural content, same as MacroSummaryBar/StagedPlateSection's
+          number row, is what keeps the gap to the bar below actually
+          matching theirs instead of just approximating it: a fixed height
+          taller than the content centers the text with empty space on both
+          sides, shrinking the *visible* gap to the bar beneath even if the
+          margin value were identical. */}
+      <span className="flex items-center justify-center gap-1 text-[11px] font-medium text-white truncate tabular">
+        {icon ? (
+          <Flame className={`w-3 h-3 shrink-0 ${textColorClass}`} strokeWidth={2.4} />
+        ) : (
+          <span className={`font-bold shrink-0 ${textColorClass}`}>{letter}</span>
+        )}
+        {value}
+      </span>
       {/* w-full resolves against the equal grid column width now, same as
           MacroSummaryBar's bars — every badge's track is the same length
           regardless of how many digits/characters its label has. */}
-      <span className="block h-1 w-full rounded-full bg-dashboardTrack overflow-hidden">
+      <span className="block h-1 w-full rounded-full bg-dashboardTrack overflow-hidden mt-1.5">
         <span className={`block h-full rounded-full ${colorClass}`} style={{ width: `${pctValue}%` }} />
       </span>
     </span>

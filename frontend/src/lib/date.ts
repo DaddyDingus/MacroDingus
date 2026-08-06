@@ -99,6 +99,7 @@ export function formatDayLabel(dateStr: string): string {
   const today = localDateString();
   if (dateStr === today) return "Today";
   if (dateStr === addDays(today, -1)) return "Yesterday";
+  if (dateStr === addDays(today, 1)) return "Tomorrow";
   const [y, m, d] = dateStr.split("-").map(Number);
   return new Date(y, m - 1, d).toLocaleDateString(undefined, {
     weekday: "short",

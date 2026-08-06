@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronLeft, ChevronRight, CookingPot, Pencil, Plus, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, CookingPot, Pencil, Plus } from "lucide-react";
 import type { Food } from "../api/types";
 import { scaleNutrition, sumNutrition } from "../lib/nutrition";
 import { localDateString } from "../lib/date";
@@ -18,6 +18,7 @@ import { useCreateFood } from "../api/foods";
 import type { CookwareItem } from "../api/cookware";
 import CookwareSheet from "./CookwareSheet";
 import DecimalInput from "./DecimalInput";
+import SwipeToDeleteRow from "./SwipeToDeleteRow";
 
 interface Ingredient {
   food: Food;
@@ -261,7 +262,12 @@ export default function RecipeForm({
         {ingredients.length > 0 && (
           <div className="rounded-2xl bg-dashboardCard overflow-hidden divide-y divide-dashboardDivider">
             {ingredients.map((ing, i) => (
-              <div key={i} className="flex items-center gap-3 pl-4 pr-2.5 py-2">
+              <SwipeToDeleteRow
+                key={i}
+                onDelete={() => removeIngredient(i)}
+                deleteLabel={`Remove ${ing.food.name}`}
+                rowClassName="flex items-center gap-3 pl-4 pr-2.5 py-2 bg-dashboardCard"
+              >
                 <button
                   type="button"
                   onClick={() => setDetailIndex(i)}
@@ -279,19 +285,8 @@ export default function RecipeForm({
                     className="tabular w-14 bg-dashboardChip rounded-lg px-2 py-1.5 text-sm text-white text-right focus:outline-none focus:ring-1 focus:ring-accent"
                   />
                   <span className="text-xs text-muted">g</span>
-                  {/* h-9 w-9, not the original bare "×" glyph — that was a
-                      ~24px hit area at best, easy to miss next to the gram
-                      input right beside it. */}
-                  <button
-                    type="button"
-                    onClick={() => removeIngredient(i)}
-                    aria-label={`Remove ${ing.food.name}`}
-                    className="h-9 w-9 shrink-0 flex items-center justify-center rounded-full text-muted active:bg-white/10 active:text-white"
-                  >
-                    <X size={16} strokeWidth={2} />
-                  </button>
                 </div>
-              </div>
+              </SwipeToDeleteRow>
             ))}
           </div>
         )}

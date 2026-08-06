@@ -658,7 +658,12 @@ export default function FoodDetailScreen({
           bar/notch the same way BrowseHeader's does, since this sits at the
           very top of the same full-screen modal once "detail" is the active
           step. */}
-      <div className="shrink-0" style={{ paddingTop: "calc(env(safe-area-inset-top) + 8px)" }}>
+      {/* +1px — bisected together with BrowseHeader's own matching +9px
+          (see its comment) between -2 (undershot per the first report) and
+          +4 (the next attempt, which overshot per a follow-up screenshot).
+          Keep these two in lockstep, not just this one against TodayScreen
+          — still a converging guess, not a final number. */}
+      <div className="shrink-0" style={{ paddingTop: "calc(env(safe-area-inset-top) + 1px)" }}>
         {/* pb-1.5 (6px) — matches BrowseHeader's flex-col gap-3 between its
             own top row and NutrientStatusBar exactly, so the "Remaining
             Today" block lands at the same vertical offset on both screens. */}

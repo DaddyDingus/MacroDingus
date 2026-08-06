@@ -3,10 +3,46 @@ import { z } from "zod";
 import { eq, and, gte, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "../db/index.js";
-import { logs, foods } from "../db/schema.js";
+import { logs, foods, recipes, recipeIngredients } from "../db/schema.js";
 import { scaleNutrition, sumNutrition, EMPTY_NUTRITION } from "../engine/nutrition.js";
 import { addDaysToDateString } from "../engine/trendWeight.js";
 import { householdDateString } from "../lib/householdDate.js";
+
+const INGREDIENT_PREVIEW_LIMIT = 3;
+
+// Attaches up to 3 {name, icon} ingredient previews onto recipe-sourced
+// foods that have no custom icon of their own — RecipeIconStack renders
+// these client-side as a collage instead of a single generic avatar. Mutates
+// each entry's `food` object in place (adding `ingredientPreview`) rather
+// than rebuilding the array, since callers already hold references into it.
+// Icon *resolution* (emoji vs. letter-avatar fallback) stays purely
+// client-side in lib/foodEmoji.ts — this just supplies the raw name/icon
+// pairs the same way any other food is described.
+async function attachIngredientPreviews(entries: { food: typeof foods.$inferSelect }[]) {
+  const recipeFoodIds = [
+    ...new Set(entries.filter((e) => e.food.source === "recipe" && !e.food.icon).map((e) => e.food.id)),
+  ];
+  if (recipeFoodIds.length === 0) return;
+
+  const rows = await db
+    .select({ recipeFoodId: recipes.foodId, name: foods.name, icon: foods.icon })
+    .from(recipes)
+    .innerJoin(recipeIngredients, eq(recipeIngredients.recipeId, recipes.id))
+    .innerJoin(foods, eq(recipeIngredients.foodId, foods.id))
+    .where(inArray(recipes.foodId, recipeFoodIds));
+
+  const byFoodId = new Map<string, { name: string; icon: string | null }[]>();
+  for (const row of rows) {
+    const list = byFoodId.get(row.recipeFoodId) ?? [];
+    if (list.length < INGREDIENT_PREVIEW_LIMIT) list.push({ name: row.name, icon: row.icon });
+    byFoodId.set(row.recipeFoodId, list);
+  }
+
+  for (const entry of entries) {
+    const preview = byFoodId.get(entry.food.id);
+    if (preview) (entry.food as typeof entry.food & { ingredientPreview?: typeof preview }).ingredientPreview = preview;
+  }
+}
 
 const logInput = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -50,6 +86,7 @@ export function registerLogRoutes(app: FastifyInstance) {
       food,
       nutrition: scaleNutrition(food, log.quantityGrams),
     }));
+    await attachIngredientPreviews(entries);
 
     const totals = sumNutrition(entries.map((e) => e.nutrition));
     return { date, entries, totals };

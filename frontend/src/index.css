@@ -97,6 +97,17 @@
     @apply font-sans antialiased;
   }
 
+  /* Permanently promoted to its own GPU layer (not just while a gesture is
+     live) — see useRubberBandScroll.ts's clearOffset for why: toggling
+     will-change on/off per-gesture forced the browser to redo layer
+     promotion + a full rasterization of the whole surface (food cards,
+     icons, timeline line, everything) at the start of every single bounce,
+     which is exactly the moment that needs to be cheap. Paying that cost
+     once per screen instead of once per gesture. */
+  [data-rubber-band-surface] {
+    will-change: transform;
+  }
+
   /* Treat rendered UI copy like native app chrome: a long press should not
      select headings, labels, values, or buttons. Real editing surfaces opt
      back in so selection handles and copy/paste keep working inside them. */

@@ -36,6 +36,11 @@ export interface Food {
   // response, so the frontend never needs to check this field itself.
   hiddenAt: string | null;
   createdAt: string;
+  // Only present on `source: 'recipe'` foods with no custom `icon` — up to 3
+  // ingredients (name + their own icon override) for RecipeIconStack to
+  // render as a collage in place of a single generic avatar. Attached by
+  // GET /api/logs (see attachIngredientPreviews); absent everywhere else.
+  ingredientPreview?: { name: string; icon: string | null }[];
 }
 
 export interface Nutrition {

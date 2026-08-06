@@ -94,13 +94,31 @@ const TimeBlockGroup = memo(function TimeBlockGroup({
     >
       <div className="flex items-center gap-2">
         <div className="shrink-0 min-w-0 flex items-center gap-2.5 text-[10px] text-muted tabular bg-white/5 rounded-full px-2.5 py-1.5">
-          <span className="flex items-center gap-0.5 shrink-0 text-calories">
-            <Flame className="w-3 h-3" strokeWidth={2} />
-            {fmt(kcalToUnit(totals.calories, energyUnit))}
+          {/* Letter-prefix (P119, not 119P) to match MacroSummaryBar's own
+              convention above — this pill and the sticky header used to
+              disagree with each other on which side of the number the
+              letter goes. Only the flame/letter carries the macro color,
+              the value itself stays plain white — also matching
+              MacroSummaryBar, which colors just its icon/letter and leaves
+              its number white. This pill used to color the whole span
+              (letter+number together), a second disagreement between the
+              two on top of the ordering one. */}
+          <span className="flex items-center gap-0.5 shrink-0">
+            <Flame className="w-3 h-3 text-calories" strokeWidth={2} />
+            <span className="text-white">{fmt(kcalToUnit(totals.calories, energyUnit))}</span>
           </span>
-          <span className="shrink-0 text-protein">{fmt(totals.protein)}P</span>
-          <span className="shrink-0 text-fat">{fmt(totals.fat)}F</span>
-          <span className="shrink-0 text-carbs">{fmt(totals.carbs)}C</span>
+          <span className="shrink-0">
+            <span className="text-protein">P</span>
+            <span className="text-white">{fmt(totals.protein)}</span>
+          </span>
+          <span className="shrink-0">
+            <span className="text-fat">F</span>
+            <span className="text-white">{fmt(totals.fat)}</span>
+          </span>
+          <span className="shrink-0">
+            <span className="text-carbs">C</span>
+            <span className="text-white">{fmt(totals.carbs)}</span>
+          </span>
         </div>
         <div className="flex-1" />
         {anySelected ? (

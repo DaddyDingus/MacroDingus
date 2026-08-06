@@ -16,6 +16,17 @@ const FLING_LIFT_GRACE_MS = 120;
 const FLING_OUT_MS = 90;
 const MIN_FLING_PULL_PX = 12;
 const MAX_FLING_PULL_PX = 32;
+// On a short/barely-scrollable page, the whole scroll range can already sit
+// at a boundary at touchstart (see isRealScrollContainer's caller comments
+// below), so a fast flick's own raw finger movement — not just its
+// momentum — reaches the far edge while the finger is still down. That
+// arms this as a live drag a few ms before touchend instead of ever
+// reaching the fling path above, but with next to no accumulated pull
+// distance to show for it (armedAtY resets right as it arms), so the
+// resulting bounce is real but visually imperceptible. If touchend follows
+// arming by less than this, treat it like a fling instead of a live drag —
+// same fast-flick intent, just caught a few ms later.
+const INSTANT_ARM_MAX_AGE_MS = 60;
 // How close to the bottom still counts as "at the bottom" — sub-pixel
 // viewport heights (browser chrome, zoom) mean scrollY often stops a
 // fraction short of the computed maximum.
@@ -80,6 +91,10 @@ interface DragState {
   // straight to full stretch because the whole gesture's delta was already
   // larger than MAX_PULL_PX.
   armedAtY: number;
+  // performance.now() at the moment `active` flipped true, or null while
+  // still unarmed. See onTouchEnd's own comment on why this matters
+  // separately from armedAtY.
+  armedAt: number | null;
   // The nearest real scrollable ancestor of the touch's start element, if
   // any — null means the touch started somewhere that only the document
   // itself can scroll (e.g. Dashboard). Screens like WizardShell scroll an
@@ -236,7 +251,21 @@ export function useRubberBandScroll() {
       } else {
         movementSurface.style.transition = "";
         movementSurface.style.transform = "";
-        movementSurface.style.willChange = "";
+        // willChange is deliberately NOT reset here (found 2026-08-06) — a
+        // [data-rubber-band-surface] page's own content (many food cards,
+        // icons, the timeline line) can be large enough that promoting it
+        // to its own GPU layer isn't free, and resetting willChange to ''
+        // after every single gesture discarded that layer, forcing the
+        // browser to redo the promotion + a full rasterization of the
+        // surface from scratch at the *start* of the next bounce — which is
+        // exactly the frame(s) that need to be cheap for the bounce to read
+        // as smooth. index.css keeps `will-change: transform` permanently
+        // on every [data-rubber-band-surface] for the same reason (so the
+        // very first gesture on a freshly-mounted screen doesn't pay this
+        // cost either); this mirrors that by simply never undoing it here.
+        // The one-time cost is a small, constant amount of GPU memory for
+        // as long as that screen is mounted — an easy trade against a
+        // guaranteed hitch on every single bounce.
       }
     }
 
@@ -319,6 +348,7 @@ export function useRubberBandScroll() {
         lastMoveAt: performance.now(),
         velocityPxMs: 0,
         armedAtY: y,
+        armedAt: null,
         scrollEl,
         blocking,
       };
@@ -357,6 +387,7 @@ export function useRubberBandScroll() {
         }
         drag.active = true;
         drag.armedAtY = currentY;
+        drag.armedAt = now;
         // Falls through rather than returning: `raw` is 0 on this very move,
         // which is fine (a 0px offset) and — critically — this is the move
         // that calls preventDefault first, which is what stops the browser
@@ -392,7 +423,16 @@ export function useRubberBandScroll() {
 
     function onTouchEnd() {
       if (drag?.active) {
-        springBack();
+        const armedForMs = drag.armedAt === null ? null : performance.now() - drag.armedAt;
+        if (
+          armedForMs !== null
+          && armedForMs <= INSTANT_ARM_MAX_AGE_MS
+          && Math.abs(drag.velocityPxMs) >= MIN_FLING_VELOCITY_PX_MS
+        ) {
+          startFlingBounce(drag.edge, Math.abs(drag.velocityPxMs));
+        } else {
+          springBack();
+        }
       } else if (
         drag
         && performance.now() - drag.lastMoveAt <= FLING_LIFT_GRACE_MS

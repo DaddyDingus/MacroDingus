@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 import { Trash2 } from "lucide-react";
 import type { LogEntry } from "../api/types";
 import FoodIconAvatar from "./FoodIconAvatar";
+import RecipeIconStack from "./RecipeIconStack";
 import { useEnergyUnit, kcalToUnit } from "../lib/energyUnit";
 
 function fmt(n: number): string {
@@ -166,7 +167,25 @@ export default function FoodItemCard({
           transition: dragging ? "none" : `transform ${SNAP_MS}ms cubic-bezier(0.2, 0, 0, 1), background-color 150ms, border-color 150ms`,
           touchAction: "pan-y",
         }}
-        data-no-rubber-band
+        // No data-no-rubber-band here (removed 2026-08-06) — it was an
+        // upfront, whole-row opt-out applied at touchstart, before this
+        // component's own horizontal-vs-vertical check (above) has any
+        // chance to run. Since most of a food log's vertical space is food
+        // rows, that silently killed useRubberBandScroll's fling-based
+        // bounce (a fast flick that lifts the finger before the real edge,
+        // then bounces once native momentum reaches it — see that hook's
+        // own comments) for almost every scroll gesture in the app, while a
+        // slow drag starting on blank space (header, group timestamps)
+        // still worked. This component's own drag doesn't actually need
+        // the opt-out to be safe: a plain vertical scroll starting here
+        // already hands off untouched (dragStart.current = null above, no
+        // setPointerCapture, no preventDefault), and a confirmed horizontal
+        // swipe drives its visuals from React state (dragX) via
+        // setPointerCapture, not from the browser's native touch handling —
+        // so it doesn't depend on the touch event's default action being
+        // preserved even in the rare case both gestures' recognizers are
+        // live at once (already at the list's top/bottom edge with a swipe
+        // that has a little incidental vertical wobble).
         // Rounds only the left side while actually slid open (dragX < 0,
         // which can only happen when swipeEnabled — selected/multi-select
         // always keeps dragX at exactly 0). The right side needs to be
@@ -181,15 +200,28 @@ export default function FoodItemCard({
           selected ? "bg-accent/[0.12] border-accent/25" : "bg-dashboardCard border-transparent"
         }`}
       >
-        <FoodIconAvatar name={entry.food.name} icon={entry.food.icon} />
-        <button onClick={onSelect} className="flex-1 min-w-0 text-left active:opacity-70">
-          <span className="block text-sm text-white leading-tight truncate">{entry.food.name}</span>
-          <span className="block text-xs text-muted tabular leading-tight truncate -mt-0.5">
-            {fmt(entry.quantityGrams)} g · {fmt(entry.nutrition.protein)}P {fmt(entry.nutrition.fat)}F{" "}
-            {fmt(entry.nutrition.carbs)}C
+        {/* Whole row (icon, name/macros, and the calorie count) is one
+            button now — the calorie number used to sit outside it as a bare
+            sibling span, a dead zone where a tap did nothing instead of
+            toggling selection like the rest of the row. */}
+        <button onClick={onSelect} className="flex-1 min-w-0 flex items-center gap-2.5 text-left active:opacity-70">
+          {entry.food.source === "recipe" && !entry.food.icon && entry.food.ingredientPreview?.length ? (
+            <RecipeIconStack ingredients={entry.food.ingredientPreview} />
+          ) : (
+            <FoodIconAvatar name={entry.food.name} icon={entry.food.icon} />
+          )}
+          <span className="flex-1 min-w-0">
+            <span className="block text-sm text-white leading-tight truncate">{entry.food.name}</span>
+            {/* Macros before serving size (was serving size first) — the
+                three macros are what's actually being compared entry to
+                entry, so they lead; the gram weight is supporting detail. */}
+            <span className="block text-xs text-muted tabular leading-tight truncate -mt-0.5">
+              P{fmt(entry.nutrition.protein)} F{fmt(entry.nutrition.fat)} C{fmt(entry.nutrition.carbs)} ·{" "}
+              {fmt(entry.quantityGrams)} g
+            </span>
           </span>
+          <span className="tabular text-sm text-white shrink-0">{fmt(kcalToUnit(entry.nutrition.calories, energyUnit))}</span>
         </button>
-        <span className="tabular text-sm text-white shrink-0">{fmt(kcalToUnit(entry.nutrition.calories, energyUnit))}</span>
       </div>
     </div>
   );

@@ -30,11 +30,17 @@ export default function CalendarJumpSheet({
   markedDates,
   onSelect,
   onClose,
+  allowFuture = false,
 }: {
   selectedDate: string;
   markedDates: string[];
   onSelect: (date: string) => void;
   onClose: () => void;
+  // Off by default: Photos/LogWeightInline are logging something that
+  // happened, so a future date is never valid there. The Food Log passes
+  // this — logging in advance (e.g. a planned meal) is a real use case, and
+  // its own ‹/› day nav already has no future cap to match.
+  allowFuture?: boolean;
 }) {
   const [y, m] = selectedDate.split("-").map(Number);
   const [viewYear, setViewYear] = useState(y);
@@ -69,9 +75,14 @@ export default function CalendarJumpSheet({
     ...Array.from({ length: numDays }, (_, i) => toDateStr(viewYear, viewMonth, i + 1)),
   ];
   const monthLabel = new Date(viewYear, viewMonth, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
-  // Disallow paging past the current month — there's nothing logged in the
-  // future, and the ›› arrow elsewhere in this screen already stops at today.
   const atCurrentMonth = viewYear === Number(today.slice(0, 4)) && viewMonth === Number(today.slice(5, 7)) - 1;
+  // Disallow paging past the current month — there's nothing logged in the
+  // future, and the ›› arrow elsewhere in this screen already stops at
+  // today. Skipped when allowFuture (Food Log); atCurrentMonth itself still
+  // needs to reflect the real month for the "Today" shortcut's own check
+  // below, so this is a separate flag rather than folding allowFuture into
+  // atCurrentMonth directly.
+  const blockNextMonth = !allowFuture && atCurrentMonth;
 
   return (
     <BottomSheet
@@ -113,7 +124,7 @@ export default function CalendarJumpSheet({
               <p className="text-sm font-medium text-white">{monthLabel}</p>
               <button
                 onClick={() => shiftMonth(1)}
-                disabled={atCurrentMonth}
+                disabled={blockNextMonth}
                 aria-label="Next month"
                 className="h-8 w-8 flex items-center justify-center rounded-full text-muted active:bg-white/10 active:text-white disabled:opacity-30"
               >
@@ -132,7 +143,7 @@ export default function CalendarJumpSheet({
                 const dayNum = Number(date.slice(-2));
                 const isSelected = date === selectedDate;
                 const isToday = date === today;
-                const isFuture = date > today;
+                const isFuture = !allowFuture && date > today;
                 const hasEntries = markedSet.has(date);
                 return (
                   <button

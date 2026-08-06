@@ -14,6 +14,7 @@ import {
   ChevronRight,
   ChefHat,
   Link2,
+  Flame,
   type LucideIcon,
 } from "lucide-react";
 import type { Food, LogEntry, Nutrition } from "../api/types";
@@ -40,6 +41,7 @@ import PhotoSourceSheet from "./PhotoSourceSheet";
 import DiscardWarningSheet from "./DiscardWarningSheet";
 import { foodMeasures } from "../lib/foodMeasures";
 import DecimalInput from "./DecimalInput";
+import SwipeToDeleteRow from "./SwipeToDeleteRow";
 
 // zxing's decoder is ~400kB and only ever needed for the occasional barcode
 // scan, not the everyday search-and-log path — split it into its own chunk
@@ -130,15 +132,15 @@ const BASE_TAB_BAR_ITEMS: { id: Tab | "scan"; label: string; icon: LucideIcon }[
 // collapsed content gets clipped.
 const SHEET_COLLAPSED_PEEK_PX = 96;
 
-const NUTRITION_METRICS: { key: "calories" | "protein" | "fat" | "carbs"; label: string; unit: string; color: string }[] = [
+const NUTRITION_METRICS: { key: "calories" | "protein" | "fat" | "carbs"; label: string; letter: string; color: string }[] = [
   // Same categorical hex values as tailwind.config.js / MacroSummaryBar.tsx
   // (calories=blue, protein=orange, fat=yellow, carbs=green) — reused as-is
   // rather than introducing a separate "coral" for protein, since this
   // exact four-color set is the one used everywhere else in the app.
-  { key: "calories", label: "Calories", unit: "", color: "#749EF4" },
-  { key: "protein", label: "Protein", unit: "g", color: "#EF8D6A" },
-  { key: "fat", label: "Fat", unit: "g", color: "#F7D372" },
-  { key: "carbs", label: "Carbs", unit: "g", color: "#5ABC80" },
+  { key: "calories", label: "Calories", letter: "", color: "#749EF4" },
+  { key: "protein", label: "Protein", letter: "P", color: "#EF8D6A" },
+  { key: "fat", label: "Fat", letter: "F", color: "#F7D372" },
+  { key: "carbs", label: "Carbs", letter: "C", color: "#5ABC80" },
 ];
 
 function fmt(n: number): string {
@@ -1857,8 +1859,16 @@ function BrowseHeader({
     // affordance.
     // pt accounts for the status bar/notch now that this sits at the very
     // top of a genuinely full-screen modal, not a few percent down inside a
-    // rounded sheet.
-    <div className="flex flex-col gap-3 px-4 pb-3 shrink-0" style={{ paddingTop: "calc(env(safe-area-inset-top) + 16px)" }}>
+    // rounded sheet. +9px — bisected (2026-08-06) between +6 (user reported
+    // this bar sitting visibly higher than MacroSummaryBar's on the Food
+    // Log) and +12 (the next attempt, which overshot the other way per a
+    // follow-up screenshot). Both data points came from live device
+    // screenshots, not a pixel probe, so treat +9 as the converging guess,
+    // not a final number — check a fresh screenshot before nudging again.
+    // Change both together — this and FoodDetailScreen's matching offset
+    // (see its own comment) are tuned against each other, not just against
+    // TodayScreen alone.
+    <div className="flex flex-col gap-3 px-4 pb-3 shrink-0" style={{ paddingTop: "calc(env(safe-area-inset-top) + 9px)" }}>
       <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
         <button
           onClick={onClose}
@@ -2065,9 +2075,11 @@ function StagedPlateSection({
           const n = scaleNutrition(item.food, item.quantityGrams);
           const isEditingQty = editingPlateKey === item.key;
           return (
-            <div
+            <SwipeToDeleteRow
               key={item.key}
-              className="w-full flex items-center gap-3 px-4 py-2.5 border-b border-dashboardDivider/60"
+              onDelete={() => removeFromPlate(item.key)}
+              deleteLabel={`Remove ${item.food.name}`}
+              rowClassName="w-full flex items-center gap-3 px-4 py-2.5 border-b border-dashboardDivider/60 bg-dashboardBg"
             >
               <FoodIconAvatar name={item.food.name} icon={item.food.icon} />
               <span className="flex-1 min-w-0">
@@ -2094,14 +2106,7 @@ function StagedPlateSection({
                   {fmt(item.quantityGrams)} g
                 </button>
               )}
-              <button
-                onClick={() => removeFromPlate(item.key)}
-                aria-label={`Remove ${item.food.name}`}
-                className="text-muted text-lg leading-none px-1 shrink-0 active:text-white"
-              >
-                ×
-              </button>
-            </div>
+            </SwipeToDeleteRow>
           );
         })
       )}
@@ -2134,55 +2139,47 @@ function StagedPlateSection({
         </button>
       </div>
 
-      <div className="px-4 pb-4 grid grid-cols-2 gap-3">
+      {/* Matches MacroSummaryBar's own row exactly (icon/letter + number,
+          thin bar below) rather than a separate, heavier tile format — the
+          old version (spelled-out label, big number, "143g protein in
+          plate" subtext, h-2 bar) was the same information shown two
+          different ways depending on which screen you were on. The
+          "in plate"/"today" distinction the subtext used to spell out is
+          still available via the Plate/Day pill above; it's just implicit
+          now instead of repeated on every tile. */}
+      <div className="px-4 pb-4 grid grid-cols-4 gap-3">
         {NUTRITION_METRICS.map((m) => {
           const plateVal = plateTotals[m.key];
           const shownVal = nutritionView === "plate" ? plateVal : (totals?.[m.key] ?? 0) + plateVal;
           const target = targetFor(targets, m.key);
-          // NUTRITION_METRICS leaves calories' own `unit` blank (nothing to
-          // show inline next to a bare kcal figure elsewhere in the app), but
-          // the subtext line here needs a real unit word regardless.
-          const unitLabel = m.key === "calories" ? energyUnitLabel(energyUnit) : m.unit;
           // Grams are unit-invariant; calories converts to the global
           // preference. The progress bar keeps using the raw kcal-scale
           // shownVal/target — the same conversion factor on both sides of a
           // ratio cancels out, so there's nothing to convert there.
           const displayVal = m.key === "calories" ? kcalToUnit(shownVal, energyUnit) : shownVal;
+          const displayTarget = m.key === "calories" ? kcalToUnit(target, energyUnit) : target;
           return (
-            <div key={m.key} className="rounded-2xl bg-dashboardCard px-3.5 py-3">
-              <p className="text-[11px] text-muted">{m.label}</p>
-              <p className="tabular text-base font-semibold text-white mt-0.5">{fmt(displayVal)}</p>
-              <p className="text-[11px] text-muted mt-0.5">
-                {fmt(displayVal)} {unitLabel} {nutritionView === "plate" ? "in plate" : "today"}
+            <div key={m.key} className="min-w-0 flex flex-col items-center text-center" aria-label={m.label}>
+              <p className="tabular flex items-center justify-center gap-1 truncate" aria-hidden="true">
+                {m.key === "calories" ? (
+                  <Flame className="w-3 h-3 shrink-0" strokeWidth={2.4} style={{ color: m.color }} />
+                ) : (
+                  <span className="text-[11px] font-bold shrink-0" style={{ color: m.color }}>
+                    {m.letter}
+                  </span>
+                )}
+                <span className="text-[11px] font-medium text-white">{fmt(displayVal)}</span>
+                {/* Only meaningful against a real daily target — RecipeForm's
+                    ingredient picker opens this same sheet with no totals/
+                    targets prop at all (a recipe has no "day"), so target is
+                    always 0 there. */}
+                {target > 0 && <span className="text-[9px] text-muted">/{fmt(displayTarget)}</span>}
               </p>
-              {/* Only meaningful against a real daily target — RecipeForm's
-                  ingredient picker opens this same sheet with no totals/
-                  targets prop at all (a recipe has no "day"), so target is
-                  always 0 there and this bar would otherwise render a
-                  permanently empty track that never fills as ingredients are
-                  added, reading as broken/stuck rather than just N/A. */}
               {target > 0 && (
-                // h-2, not the header badges' hairline h-[3px] — these tiles
-                // sit right under a bold text-base number, and matched the
-                // header's thinner treatment made the bar read as an
-                // afterthought next to that much heavier text. h-2 matches
-                // the Dashboard's own stat-tile progress bars (e.g. Goal
-                // Progress in DashboardTileSections.tsx), the closest visual
-                // analog to this "big number + bar" tile shape.
-                <span className="block h-2 w-full rounded-full bg-dashboardTrack overflow-hidden mt-2">
-                  {/* minWidth floor (only once there's a real value) — a small
-                      amount against a whole day's target can be a low single-
-                      digit percentage, rendering as a near-invisible sliver
-                      next to the number above it. Guaranteeing a legible
-                      minimum keeps the fill readable at any percentage
-                      without lying about 0 (no floor while shownVal is 0). */}
+                <span className="block h-1 w-full rounded-full bg-dashboardTrack overflow-hidden mt-1.5">
                   <span
                     className="block h-full rounded-full"
-                    style={{
-                      width: `${pct(shownVal, target)}%`,
-                      minWidth: shownVal > 0 ? "28px" : undefined,
-                      backgroundColor: m.color,
-                    }}
+                    style={{ width: `${pct(shownVal, target)}%`, backgroundColor: m.color }}
                   />
                 </span>
               )}
