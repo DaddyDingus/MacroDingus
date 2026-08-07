@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
 import fastifyMultipart from "@fastify/multipart";
+import fastifyRateLimit from "@fastify/rate-limit";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,7 +33,28 @@ configureAnthropicKeyStore(DATA_DIR);
 
 runMigrations();
 
-const app = Fastify({ logger: true });
+// Behind a reverse proxy every request arrives from the proxy's address. Without
+// trustProxy the rate limiter below buckets ALL traffic under that one address,
+// so a single hostile client locks out everybody — the limiter would actively
+// make things worse than having none. Only enable it when a proxy really is in
+// front, since it makes X-Forwarded-For (client-controlled) authoritative.
+const TRUST_PROXY = process.env.MACRODINGUS_TRUST_PROXY !== "false";
+
+const app = Fastify({ logger: true, trustProxy: TRUST_PROXY });
+
+// Global ceiling. Generous — this is a backstop against runaway clients and
+// scrapers, not the login control; that is the much tighter per-route bucket
+// in auth.ts. In-memory on purpose: a single-instance app does not need Redis,
+// and a restart resetting the counters is an acceptable trade for one fewer
+// moving part.
+await app.register(fastifyRateLimit, {
+  global: true,
+  max: 300,
+  timeWindow: "1 minute",
+  // Health checks come from the container runtime on every interval and must
+  // never be throttled, or a busy moment marks the container unhealthy.
+  allowList: (req) => req.raw.url === "/api/health",
+});
 
 await registerAuth(app, DATA_DIR);
 await app.register(fastifyMultipart, {

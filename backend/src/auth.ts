@@ -16,7 +16,19 @@ declare module "fastify" {
 }
 
 const COOKIE_NAME = "mt_session";
-const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Sessions are stateless signed cookies with no server-side store, so a
+// stolen one cannot be revoked individually — not even by changing the
+// password. 7 days rather than the previous 30 bounds that exposure without
+// making daily use annoying. The break-glass "log everyone out now" control
+// is rotating MACRODINGUS_COOKIE_SECRET (or deleting data/.cookie-secret).
+const SESSION_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Secure cookies are the default and are what production runs. The opt-out
+// exists only for running with no TLS at all on a trusted LAN; a browser will
+// refuse to store a Secure cookie over plain http, so leaving this on in that
+// setup silently breaks login rather than failing loudly.
+const COOKIE_SECURE = process.env.MACRODINGUS_COOKIE_SECURE !== "false";
 
 function loadOrCreateSecret(dataDir: string): string {
   const secretPath = path.join(dataDir, ".cookie-secret");
@@ -31,6 +43,7 @@ function signSession(reply: import("fastify").FastifyReply, userId: string) {
     path: "/",
     httpOnly: true,
     sameSite: "lax",
+    secure: COOKIE_SECURE,
     signed: true,
     maxAge: SESSION_MS / 1000,
   });
@@ -70,17 +83,40 @@ const INVALID_CREDENTIALS = "Incorrect name or password";
 // signup writes.
 const DUMMY_HASH = "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
 
+const ALLOW_SIGNUP = process.env.MACRODINGUS_ALLOW_SIGNUP === "true";
+
+// Tight bucket for the two unauthenticated endpoints. Deliberately much
+// stricter than the global limit: nobody legitimately gets their own password
+// wrong six times in a quarter of an hour, and this is the control standing
+// between a single guessable password and every food log, weigh-in and
+// progress photo in the database.
+export const AUTH_RATE_LIMIT = { max: 5, timeWindow: "15 minutes" };
+
 export async function registerAuth(app: FastifyInstance, dataDir: string) {
-  const secret = process.env.COOKIE_SECRET ?? loadOrCreateSecret(dataDir);
+  // Prefer an explicitly managed secret so rotation is a config change rather
+  // than deleting a file inside a volume. COOKIE_SECRET is kept as an alias
+  // for anyone tracking upstream. Falling back to the on-disk file keeps a
+  // fresh install working with no configuration at all.
+  const secret =
+    process.env.MACRODINGUS_COOKIE_SECRET?.trim() ||
+    process.env.COOKIE_SECRET?.trim() ||
+    loadOrCreateSecret(dataDir);
   await app.register(fastifyCookie, { secret });
   app.decorateRequest("userId", undefined);
 
-  // Anyone who can reach this instance over the tailnet can create an account —
-  // there's no invite/approval step. That's fine for a closed household app
-  // where Tailscale ACLs are already the real access boundary (same model as
-  // every other service in this stack); it would need rethinking if this ever
-  // stopped being just-the-household.
-  app.post("/api/auth/signup", async (req, reply) => {
+  // Self-service signup is OFF by default. Turn it on only long enough to
+  // create the account, then turn it back off. Upstream left this permanently
+  // open because Tailscale ACLs were the real boundary; with the sidecar gone
+  // an open signup endpoint is just unauthenticated write surface.
+  //
+  // 404 rather than 403 deliberately: a 403 confirms the endpoint exists and
+  // is merely disabled, which tells a scanner this app has accounts worth
+  // attacking. A 404 is indistinguishable from the route not being there.
+  app.post("/api/auth/signup", { config: { rateLimit: AUTH_RATE_LIMIT } }, async (req, reply) => {
+    if (!ALLOW_SIGNUP) {
+      reply.code(404);
+      return { error: "not found" };
+    }
     const parsed = signupSchema.safeParse(req.body);
     if (!parsed.success) {
       reply.code(400);
@@ -108,7 +144,7 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
   // handful of concurrent requests saturated libuv's threadpool and stalled
   // the process. `users.name` was already NOT NULL UNIQUE, so this needed no
   // migration — just the lookup it should always have been.
-  app.post("/api/auth/login", async (req, reply) => {
+  app.post("/api/auth/login", { config: { rateLimit: AUTH_RATE_LIMIT } }, async (req, reply) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
       reply.code(401);
@@ -137,7 +173,14 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
   });
 
   app.post("/api/auth/logout", async (_req, reply) => {
-    reply.clearCookie(COOKIE_NAME, { path: "/" });
+    // Attributes must match those the cookie was set with, or some browsers
+    // keep the original alongside the cleared one and the session survives.
+    reply.clearCookie(COOKIE_NAME, {
+      path: "/",
+      httpOnly: true,
+      sameSite: "lax",
+      secure: COOKIE_SECURE,
+    });
     return { ok: true };
   });
 

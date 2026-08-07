@@ -11,6 +11,7 @@
     "@anthropic-ai/sdk": "^0.115.0",
     "@fastify/cookie": "^11.0.2",
     "@fastify/multipart": "^9.0.3",
+    "@fastify/rate-limit": "^10.2.2",
     "@fastify/static": "^10.1.2",
     "bcrypt": "^6.0.0",
     "better-sqlite3": "^12.10.0",
