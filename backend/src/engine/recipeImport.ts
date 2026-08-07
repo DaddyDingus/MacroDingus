@@ -3,6 +3,7 @@ import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { foods, logs } from "../db/schema.js";
 import { getAnthropicClient } from "./anthropicClient.js";
+import { assertPublicUrl, BlockedUrlError } from "./urlGuard.js";
 
 export interface ImportedIngredient {
   // Always a real, persisted foods row by the time this returns — matches
@@ -98,39 +99,74 @@ function stripHtml(html: string): string {
     .trim();
 }
 
-async function fetchPageText(url: string): Promise<string> {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error("That doesn't look like a valid URL");
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("Only http/https links are supported");
-  }
+// Reading an unbounded body into memory is its own denial-of-service: a
+// pathological URL can stream gigabytes into a container with a 256 MB cap.
+// Only enough bytes to comfortably contain a recipe are ever buffered.
+const MAX_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_REDIRECTS = 3;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  let res: Response;
+async function readBounded(res: Response): Promise<string> {
+  const reader = res.body?.getReader();
+  if (!reader) return "";
+  const decoder = new TextDecoder("utf-8");
+  const chunks: string[] = [];
+  let total = 0;
   try {
-    res = await fetch(parsed.toString(), {
-      signal: controller.signal,
-      redirect: "follow",
-      // A bare Node fetch UA gets blocked or served a stripped-down page by
-      // several popular recipe sites — a normal browser UA avoids that.
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-        Accept: "text/html,application/xhtml+xml",
-      },
-    });
-  } catch {
-    throw new Error("Couldn't reach that link");
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      chunks.push(decoder.decode(value, { stream: true }));
+      if (total >= MAX_BODY_BYTES) break; // truncate rather than fail — a recipe is near the top
+    }
   } finally {
-    clearTimeout(timeout);
+    await reader.cancel().catch(() => {});
   }
-  if (!res.ok) throw new Error(`That link returned an error (${res.status})`);
+  return chunks.join("");
+}
 
-  const html = await res.text();
+async function fetchPageText(url: string): Promise<string> {
+  // Redirects are followed by hand so that EVERY hop is re-validated. With
+  // `redirect: "follow"` a public URL can 302 straight to an internal one and
+  // only the first host would ever have been checked.
+  let current = await assertPublicUrl(url);
+  let res: Response | null = null;
+
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      res = await fetch(current.toString(), {
+        signal: controller.signal,
+        redirect: "manual",
+        // A bare Node fetch UA gets blocked or served a stripped-down page by
+        // several popular recipe sites — a normal browser UA avoids that.
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml",
+        },
+      });
+    } catch {
+      throw new BlockedUrlError();
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get("location");
+      if (!location) throw new BlockedUrlError();
+      current = await assertPublicUrl(new URL(location, current).toString());
+      continue;
+    }
+    break;
+  }
+
+  // Every failure below collapses to the same message as a blocked URL.
+  // Distinguishing "not found" from "forbidden" from "unreachable" is what
+  // would let this endpoint map the network it runs on.
+  if (!res || !res.ok) throw new BlockedUrlError();
+
+  const html = await readBounded(res);
   const text = stripHtml(html).slice(0, MAX_TEXT_CHARS);
   if (text.length < 200) throw new Error("Couldn't find any real content at that link");
   return text;
