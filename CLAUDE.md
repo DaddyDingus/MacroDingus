@@ -1,12 +1,24 @@
 # CLAUDE.md
 
+> **This is a hardened fork** of DaddyDingus/MacroDingus (forked at `8a6201a`).
+> The architecture notes and gotchas below are upstream's work and are kept
+> because they are genuinely good. Fork-specific deployment, auth and security
+> changes are documented in `README.md`, `SECURITY_AND_DEPLOYMENT_REVIEW.md`
+> and `REMEDIATION_PLAN.md` — read those before changing anything in
+> `auth.ts`, `oidc.ts`, `engine/urlGuard.ts`, `Dockerfile` or `compose.yaml`.
+>
+> **Deployment differs from upstream.** This fork runs on a homelab host behind
+> an existing Traefik + Authentik stack, deployed from a separate repo's stack
+> file via Portainer GitOps — NOT via `docker compose` on the host, and NOT
+> with the Tailscale sidecar (removed). Do not run `docker compose build && up`
+> against the live deployment; build via the GitHub Actions workflow and bump
+> the pinned image tag.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## What this is
 
 macrotrack is a personal nutrition/macro tracking PWA (MacroFactor-style), built for a single household on their own homelab server. Backend and frontend are separate npm packages in one repo; there is no root `package.json`.
-
-When the user asks to check the latest screenshot without giving another location, inspect the newest file in `/home/daddydingus/screenshots`.
 
 ## Commands
 
@@ -28,7 +40,7 @@ No lint script or test suite — don't invent one. Type-check with each package'
 
 `better-sqlite3` and `bcrypt` are native modules — host installation needs a C toolchain; build via Docker instead if unavailable. Node 24 requires `better-sqlite3` 12.1+; 11.10 compiled but later crashed under real queries in `RemoveEnvironmentCleanupHook`. Production deploys via `docker compose build && docker compose up -d`. `DATA_DIR` controls where SQLite, the cookie secret, and photos live — point it at a scratch dir for test runs.
 
-**After any code change the user should be able to see: redeploy the live container** — `docker compose build && docker compose up -d`, then `docker ps` + `curl .../api/health`. Skipping this means the user's phone shows the old build regardless of how hard they refresh.
+**After any code change the user should be able to see: it must be built and deployed.** In this fork that is NOT `docker compose build` on the host — the live deployment is a Portainer git-stack running a pinned `ghcr.io/zriec1/macrodingus` tag. Ship a change by running the `macrodingus.yml` GitHub Actions workflow with a NEW version (never reuse a tag — the registry silently overwrites it and Portainer's GitOps diff sees no change), then bumping the tag in the homelab repo's stack file. Skipping this means the user's phone shows the old build regardless of how hard they refresh.
 
 ## Architecture
 
@@ -39,7 +51,7 @@ No lint script or test suite — don't invent one. Type-check with each package'
 - **Logs have no `meal` concept** — removed in migration `0006`. `date` and `loggedAt` are the only temporal fields. Copy-a-day always copies the whole day.
 - **Goals and Programs are separate tables.** A Goal (`goals`) is WHAT the user wants; a Program (`programs`) is HOW. `program_days` holds per-weekday calorie/macro targets — always exactly 7 rows (uniform, not sparse). `checkins` is a pure TDEE snapshot — neither table carries target calories.
 
-**Auth** (`backend/src/auth.ts`): password-only login — `/api/auth/login` iterates every user with `bcrypt.compare` until one matches. Session is a signed httpOnly cookie (30-day expiry). Access control is at the network layer (Tailscale), not the app layer.
+**Auth** (`backend/src/auth.ts`, `backend/src/oidc.ts`): name + password login — a single indexed lookup on `users.name`, then one `bcrypt.compare`. An unknown name still burns a bcrypt against a dummy hash so timing cannot be used to enumerate accounts, and both failure modes return one identical message. Session is a signed httpOnly `Secure` cookie (7-day expiry), stateless — there is no server-side store, so individual sessions **cannot be revoked**; rotating `MACRODINGUS_COOKIE_SECRET` is the mass-logout break-glass. `/api/auth/login` and `/api/auth/signup` are rate limited (5 / 15 min); signup returns `404` unless `MACRODINGUS_ALLOW_SIGNUP=true`. Optional Authentik OIDC (Code + PKCE, JWKS-verified ID token, optional group gate) runs alongside local login, which stays as break-glass. Access control is at the app layer now, not purely the network layer as upstream had it.
 
 **Onboarding gate** (`App.tsx`'s `needsOnboarding`): gated on persisted `profiles.onboardingCompletedAt`, not derived live from weights/goal state — deleting your only weigh-in or ending a goal no longer bounces an onboarded user back into `OnboardingFlow`. Stamped by whichever fires first: first `POST /api/goals`, or OnboardingFlow's weight-step "Skip for now". Consequence: **"no active goal" is a real, possibly long-lived Dashboard state**, not transient — `DashboardScreen.tsx`'s "Set a goal" card is the permanent reminder, and every "New Goal" entry routes through `goToNewGoal()`, which opens `LogWeightFirstSheet` first when `trendWeightKg` is null (a soft nudge with a "Continue without weighing in" escape hatch, not a hard block).
 

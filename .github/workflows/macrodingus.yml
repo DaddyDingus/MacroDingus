@@ -1,0 +1,105 @@
+name: macrodingus build
+
+# Checks run on every PR and push to the hardening branch. The image
+# build/publish job is workflow_dispatch ONLY, never a tag or branch push.
+#
+# Why dispatch-only: a version tag must be built from exactly one deliberate
+# ref. Re-running against a different ref silently overwrites the tag on GHCR,
+# and Portainer's GitOps diff only compares the compose file text — the tag
+# string never changed, so it has no signal the image underneath moved and a
+# redeploy just recreates from the stale cached layer. NEVER reuse a version
+# number; mint a new one.
+#
+# Pre-build from the PR branch before merging a compose tag bump:
+#   gh workflow run macrodingus.yml --ref <branch> -f version=X.Y.Z
+
+on:
+  pull_request:
+  push:
+    branches: [main, master, homelab-hardening]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Image version to build and push (e.g. 1.0.0) — leave empty to run checks only'
+        required: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  check:
+    name: Type-check, build, SSRF guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # better-sqlite3 and bcrypt are native modules; the runner needs a
+      # toolchain to compile them, same as the Dockerfile's backend stage.
+      - name: Backend — install, type-check, build
+        working-directory: backend
+        run: |
+          npm ci
+          npx tsc -p tsconfig.json --noEmit
+          npm run build
+
+      # The one security control in this repo with executable checks. It has
+      # already caught a real bypass (an IPv4-mapped IPv6 host that new URL()
+      # normalises to hex form), so it gates the build rather than being
+      # something you remember to run.
+      - name: SSRF guard checks
+        working-directory: backend
+        run: node dist/scripts/check-url-guard.js
+
+      - name: Frontend — install, type-check, build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      # Advisory only. `npm audit` fails on transitive dev-dependency findings
+      # that never reach the runtime image (the Dockerfile runs
+      # `npm prune --omit=dev`), so a hard failure here would block every build
+      # on noise. Surfaced in the log for review instead.
+      - name: Dependency audit (advisory)
+        continue-on-error: true
+        run: |
+          echo "── backend ──"  && (cd backend  && npm audit --omit=dev || true)
+          echo "── frontend ──" && (cd frontend && npm audit --omit=dev || true)
+
+  build-push:
+    name: Build & push to GHCR
+    needs: check
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.version != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}   # built-in; packages:write above
+
+      # NOTE: a new repository's workflow has no write grant to its GHCR
+      # package until the owner adds it under the package's
+      # "Manage Actions access" in the web UI. The first run WILL fail with a
+      # permissions error and that is not a bug — grant it, then re-run.
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/macrodingus:${{ github.event.inputs.version }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ github.event.inputs.version }}
+            org.opencontainers.image.title=macrodingus
