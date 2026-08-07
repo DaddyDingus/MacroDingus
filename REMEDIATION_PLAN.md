@@ -9,26 +9,43 @@
 
 | # | Decision | Chosen |
 |---|---|---|
-| D-1 | Host | **CT100**, joined to `proxy`, **no published port**, Authentik forward-auth |
-| D-2 | Image | **GitHub Actions → `ghcr.io/zriec1/macrodingus`**, pinned tags |
+| D-1 | Host | **CT106** (`192.168.20.55`), the personal-apps host — **standard treatment, same as every other app** |
+| D-2 | Image | **GitHub Actions → `ghcr.io/zriec1/macrodingus`**, pinned tags (mandatory: `build:` does not work on a Portainer agent endpoint) |
 | D-3 | Hostname | `macros.nyxcloud.com.au` *(proposed — say if you want another)* |
-| D-4 | Auth model | Forward-auth now; in-app OIDC not attempted |
+| D-4 | Auth model | Authentik forward-auth at Traefik; in-app OIDC not attempted |
 | D-5 | Signup | Disabled after the first account is created |
-| — | F-01 app hardening | **Promoted to required-before-deploy** — forward-auth may prove PWA-incompatible (it broke the HA companion app and Jellyfin iOS), so the app's own login must not be the weak point if the gate has to come off |
+| — | F-01 app hardening | **Required before deploy** — see below |
+
+### Revision note — this supersedes the CT100 recommendation
+
+The earlier draft of this plan put MacroDingus on CT100 with no published port. That
+recommendation rested entirely on a constraint in the opening brief ("do not publish the
+application port to the host"), not on how this homelab actually works. **That constraint is
+withdrawn, and CT106 with a published port behind the Phase 8g firewall is the correct call** —
+it is the established pattern for personal apps, and inventing a special case for one app makes
+the fleet harder to reason about, not safer.
+
+What genuinely carries over is the security substance, and one item gets *more* important:
+
+**R4 (login throttle + signup lockdown) is now load-bearing, not belt-and-braces.** The
+[service-auth audit](https://github.com/zriec1/homelab/blob/main/docs/security/service-auth-audit.md)
+run alongside this work established the fleet rule: *a published port should never be the only
+thing between an attacker and data worth taking.* On CT106 the app **will** publish a port, so
+its own login has to be real. Without R4, MacroDingus would land as the fleet's weakest Tier-B
+service while holding some of its most sensitive data.
+
+**Honest caveat:** even with R4, MacroDingus is **Tier B-plus, not Tier A.** Its login has no
+username — the credential is a bare password compared against every user row. A throttle and a
+strong password make that defensible for one user; they do not make it equivalent to
+`nyx-pockets-v2`'s OIDC self-auth. That gap is recorded, accepted, and is the trigger condition
+for revisiting F-01 properly if a second account ever exists.
 
 ## Two repositories, two PRs
-
-Work splits cleanly and the split matters for blast radius:
 
 | Repo | Contents | Risk |
 |---|---|---|
 | `zriec1/MacroDingus` (this fork) | App code, Dockerfile, compose, CI workflow, docs | **Self-contained.** Touches no running service |
-| `zriec1/homelab` | Stack file, alert allowlist, backup job + freshness target, runbook, service catalog | **Touches shared infra** — see §5 |
-
-**A deliberate reduction:** because CT100 services configure Traefik via container labels, the
-per-app security-headers middleware goes on the MacroDingus container itself. **`traefik.yml` is
-not modified at all.** That avoids editing the single most outage-prone shared file in the
-homelab (gotcha #20) and removes an entire class of rollback risk.
+| `zriec1/homelab` | Stack file, Traefik file-route, firewall rule, alert allowlist, backup job + freshness target, runbook, service catalog | **Touches shared infra** — see §5 |
 
 ---
 
@@ -48,8 +65,8 @@ removed in lockstep with R2/R6, never before.
 `.gitignore` / `.dockerignore` (drop `tailscale-state/`), `.env.example` (drop `TS_*`),
 `README.md`.
 
-**Behavioural impact.** No HTTPS hostname from the app itself. Until R6 lands, the app is
-reachable only over the `proxy` Docker network — which is the intended end state anyway.
+**Behavioural impact.** No HTTPS hostname from the app itself. Until R6 lands nothing is
+deployed at all, so there is no interim exposure.
 
 **Test.** `docker compose config` parses and lists exactly one service. `grep -ri tailscale .`
 returns only historical mentions in review docs.
@@ -62,8 +79,13 @@ gitignored and was never populated in this clone.
 ### R2 · SSRF guard on recipe import — **F-02**
 
 **Problem.** `fetchPageText` validates only the URL scheme, follows redirects, and returns
-distinguishable errors — an authenticated user can scan and partially read the homelab from a
-container sitting on the `proxy` network beside Traefik, Authentik and Portainer.
+distinguishable errors — an authenticated user can scan and partially read the homelab from
+inside it.
+
+**Still High on CT106.** The CT100-adjacency argument no longer applies, but CT106's per-guest
+firewall is `policy_out: ACCEPT` — outbound is unrestricted. A container on CT106 can reach
+Portainer on `192.168.20.50:9000`, the Proxmox API on `192.168.20.111:8006`, every other guest's
+published port, and the router. Moving hosts changed the *route*, not the *reach*.
 
 **Files.** `backend/src/engine/recipeImport.ts` (new `assertPublicUrl()` helper + rework of
 `fetchPageText`).
@@ -107,8 +129,9 @@ password change.
 renames and documents it) falling back to the current file behaviour.
 
 **Behavioural impact.** Re-login every 7 days instead of 30. The cookie stops being sent over
-plain HTTP — **which means `http://macrodingus:3000` direct testing can no longer authenticate.**
-That's intended, and V-6 accounts for it by asserting `401`, not by logging in.
+plain HTTP — **so direct `http://192.168.20.55:8099` testing can no longer authenticate.** That
+is intended and is exactly the property the step-7 classification check wants: a direct port hit
+should meet a login it cannot complete.
 
 **Test.** `curl -i` the login response; assert `Secure`, `HttpOnly`, `SameSite=Lax` on
 `Set-Cookie`. Confirm login still works through the HTTPS route.
@@ -194,40 +217,98 @@ photo and scan a label to exercise `sharp` under the cap.
 
 ---
 
-### R6 · Homelab compose stack + Traefik/Authentik wiring — **F-05, D-1..D-5**
+### R6 · CT106 stack, Traefik file-route, firewall rule — **F-05, D-1..D-5**
 
 **Problem.** No deployment exists; the app needs an access boundary and security headers.
 
-**Files.** *(homelab repo)* new `docker/portainer/macrodingus.yml`.
-**`docker/portainer/traefik.yml` is NOT touched** — headers ride on container labels.
+**Files.** *(homelab repo)*
+- new `docker/apps/macrodingus.yml` — CT106 convention, modelled on `nyx-pockets-v2.yml`
+- `docker/portainer/traefik.yml` — file-based router + service + security-headers middleware
+- `/etc/pve/firewall/106.fw` on Proxmox — add the port to the CT100-source rule
+- `docs/runbooks/proxmox-firewall.md` — mirror the rule in the table
 
-**Approach — key labels:**
+**Port: `8099`.** CT106 currently uses 2586, 8080, 8090, 8094, 8096, 8098, 9001, 9100. `8099` is
+free and adjacent to `nyx-pockets-v2`'s 8098. *(Note: `8095` and `8097` are still in CT106's
+firewall allow-list from decommissioned services — finding F-A3 in the auth audit. Not reusing
+either, so a stale rule can't silently front this app.)*
+
+**Compose (following `nyx-pockets-v2.yml`):**
 ```yaml
-labels:
-  - traefik.enable=true
-  - traefik.http.routers.macrodingus.rule=Host(`macros.${DOMAIN}`)
-  - traefik.http.routers.macrodingus.entrypoints=web
-  # Router-level, never entrypoint-level (gotcha #20). Order matters: bouncer first.
-  - traefik.http.routers.macrodingus.middlewares=crowdsec-bouncer@docker,https-headers@docker,error-pages@docker,ratelimit@docker,authentik@docker,macrodingus-headers@docker
-  - traefik.http.services.macrodingus.loadbalancer.server.port=3000
-  - traefik.http.middlewares.macrodingus-headers.headers.frameDeny=true
-  - traefik.http.middlewares.macrodingus-headers.headers.contentTypeNosniff=true
-  - traefik.http.middlewares.macrodingus-headers.headers.referrerPolicy=strict-origin-when-cross-origin
-networks: [ proxy ]          # proxy only — no observability, app exports no metrics
-volumes: [ macrodingus_data:/app/data ]
-# no `ports:` key at all
+services:
+  macrodingus:
+    image: ghcr.io/zriec1/macrodingus:<pinned>
+    container_name: macrodingus
+    restart: unless-stopped
+    security_opt: [ "no-new-privileges:true" ]
+    cap_drop: [ ALL ]
+    deploy:
+      resources:
+        limits: { cpus: '0.5', memory: 256m }
+    labels:
+      # Private GHCR image — Watchtower can't check it; updates flow via CI + tag bump.
+      - com.centurylinklabs.watchtower.enable=false
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATA_DIR=/app/data
+      - APP_TIME_ZONE=Australia/Sydney
+      - MACRODINGUS_COOKIE_SECRET=${MACRODINGUS_COOKIE_SECRET}
+      - MACRODINGUS_ALLOW_SIGNUP=${MACRODINGUS_ALLOW_SIGNUP:-false}
+    volumes:
+      - macrodingus_data:/app/data
+    ports:
+      - "8099:3000"
+    healthcheck: { ... }         # /api/health, per R5
+volumes:
+  macrodingus_data:
 ```
+
+**Traefik file-route** (`traefik.yml`, mirroring the `nyx-pockets` block):
+```yaml
+routers:
+  macrodingus:
+    rule: "Host(`macros.${DOMAIN}`)"
+    entrypoints: web
+    service: macrodingus
+    middlewares:                    # router-level, never entrypoint-level (gotcha #20)
+      - crowdsec-bouncer@docker
+      - https-headers@docker
+      - error-pages@docker
+      - ratelimit@docker
+      - authentik@docker
+      - macrodingus-security-headers@file
+services:
+  macrodingus:
+    loadBalancer:
+      servers: [ { url: "http://192.168.20.55:8099" } ]
+middlewares:
+  macrodingus-security-headers:
+    headers:
+      frameDeny: true
+      contentTypeNosniff: true
+      referrerPolicy: "strict-origin-when-cross-origin"
+```
+
 Plus, outside the repo: a new Authentik Proxy Provider + application gated on `homelab-admins`,
 and a Cloudflare CNAME for `macros` → existing tunnel.
 
 **Behavioural impact.** `https://macros.nyxcloud.com.au` redirects to Authentik when
-unauthenticated; authenticated `homelab-admins` members reach the app's own login. Nothing
-listens on any LAN interface.
+unauthenticated; `homelab-admins` members then reach the app's own login. Port 8099 is reachable
+on the LAN **only from CT100**, per the Phase 8g default-deny.
 
-**Test.** V-1 … V-5, V-13 from the review's verification plan.
+**Test.** Review checks V-3 (now: reachable from CT100, refused from a non-mgmt host), V-4, V-5,
+V-13. **Plus the new step-7 classification check** — `curl` 8099 from CT106's localhost and
+confirm it presents a real login, not a bare `200`.
 
-**Rollback.** Delete the Portainer stack; remove the Authentik application + provider; delete the
-Cloudflare record; revert the homelab PR. The volume survives deliberately.
+**Rollback.** Delete the Portainer stack; revert the `traefik.yml` block; remove `8099` from
+`106.fw`; remove the Authentik application + provider; delete the Cloudflare record. The volume
+survives deliberately.
+
+**⚠ This now touches `traefik.yml`** — unavoidable on CT106, since Traefik's Docker provider only
+sees CT100's socket. That file is the most outage-prone in the homelab (gotcha #20). Mitigations:
+append-only (no existing router touched), all middlewares referenced at **router** level, and a
+`docker exec traefik traefik healthcheck` plus a spot-check of two existing hostnames immediately
+after redeploy.
 
 ---
 
@@ -237,7 +318,8 @@ Cloudflare record; revert the homelab PR. The volume survives deliberately.
 2 minutes.
 
 **Files.** *(homelab repo)* `docker/portainer/observability.yml` — add `|macrodingus` to the
-`name!~` regex at line ~820.
+`name!~` regex at line ~820. CT106 containers are scraped the same as CT100's, so this applies
+regardless of host.
 
 **Behavioural impact.** None, beyond suppressing a false alarm.
 
@@ -265,7 +347,9 @@ input, mirroring `nyx-pockets-v2.yml`.
 
 **Test.** Run the workflow; confirm the package appears and CT100 can pull it.
 
-**Rollback.** Delete the workflow; fall back to `build: .` on CT100 (which works there).
+**Rollback.** Delete the workflow and pin the previous tag. **There is no `build:` fallback on
+CT106** — BuildKit dies in the Portainer agent tunnel, which is why GHCR is mandatory rather
+than preferred here.
 
 **Two known traps, both already documented in your CLAUDE.md:**
 - **Never reuse a version tag** (gotcha #24) — a re-run silently overwrites the tag and Portainer
@@ -383,6 +467,8 @@ these will be made without your go-ahead at the time.**
 
 | Change | Blast radius | Mitigation | Rollback |
 |---|---|---|---|
+| **`traefik.yml` file-route** (R6) | **Highest-risk item in this plan.** Every external hostname routes through this file; a bad edit can 404 the whole estate (gotcha #20) | Append-only — no existing router, service or middleware modified. Middlewares referenced at router level only. Validate, redeploy, then immediately spot-check two unrelated hostnames | Revert the block + redeploy Traefik. ~1 min |
+| **`/etc/pve/firewall/106.fw`** (R6) | Adds one dport to CT106's CT100-source rule. Applies within ~10 s. A syntax error could drop the rule set and cut CT100→CT106 for *all* CT106 apps | Single-token change; verify with `pve-firewall compile` before saving; confirm an existing CT106 app still loads | Remove the token. Immediate |
 | **`observability.yml` allowlist regex** (R7) | Holds *all* Prometheus alert rules. A malformed regex could break rule evaluation fleet-wide | Validate before merge; redeploy while watching; confirm existing alerts still evaluate | `git revert` + redeploy. ~2 min |
 | **New Authentik application + Proxy Provider** (R6) | Adding an application shouldn't affect others, but they share the embedded outpost. A bad outpost edit affects **every** gated service | Add only — change no existing provider, and do **not** touch outpost advanced settings (gotcha #10) | Delete the application + provider. Immediate |
 | **Cloudflare DNS CNAME** (R6) | New hostname only | Zone-wide AU geo-block applies automatically (gotcha #40) | Delete the record |
@@ -390,8 +476,9 @@ these will be made without your go-ahead at the time.**
 | **New n8n workflow** (R11) | Additive. But n8n runs the other Tier-1 jobs — scheduled at 17:30, clear of the 16:00/17:00/17:15 jobs | Import via the **CLI recipe**, never the UI's Import-from-File (memory `n8n-workflow-git-sync`: UI import *merges* a duplicate copy — 12→24 nodes, two live triggers) | Disable the node |
 | **CT100 resource use** | +256 MiB against 4.2 GiB available; inside CT100's existing 7168 MiB allocation, so **host overcommit is unchanged** | Hard memory limit; verified before/after with `free -h` | Stop the stack |
 
-**Not touched:** `traefik.yml`, any firewall rule, any existing stack, any existing Authentik
-provider, any Docker network definition, UniFi, or the Cloudflare tunnel configuration.
+**Not touched:** any existing stack, any existing Traefik router/service/middleware, any
+existing Authentik provider, any Docker network definition, UniFi, or the Cloudflare tunnel
+configuration.
 
 ---
 
@@ -406,7 +493,7 @@ provider, any Docker network definition, UniFi, or the Cloudflare tunnel configu
 | 5 | `chore(docker): run as non-root with limits and a health check` (R5) | fork |
 | 6 | `ci: build and publish to GHCR` (R8) | fork |
 | 7 | `docs: rewrite README for homelab deployment` (R9, R10) | fork |
-| 8 | `feat: add macrodingus stack, alert allowlist, backup + runbook` (R6, R7, R11, R12, R19) | homelab |
+| 8 | `feat: add macrodingus stack, traefik route, alert allowlist, backup + runbook` (R6, R7, R11, R12, R19) | homelab |
 
 Commits 1–7 change nothing running. Commit 8 is the only one that touches live infrastructure,
 and I will not open it without your say-so.
