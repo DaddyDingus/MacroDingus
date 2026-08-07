@@ -1,59 +1,114 @@
+# MacroDingus — self-hosted nutrition/macro tracking PWA.
+#
+# This file is the reference deployment for a generic self-hosted install. It
+# publishes a host port and expects you to put your own HTTPS reverse proxy in
+# front of it. Do NOT expose this port directly to the internet: camera, photo
+# and AI features all require a secure context, and the app is designed to sit
+# behind a proxy that terminates TLS.
+#
+# The homelab deployment this fork was hardened for uses its own stack file
+# (zriec1/homelab -> docker/apps/macrodingus.yml) and does not use this file.
+# Keep the two in sync when changing anything security-relevant.
+
 services:
-  macrotrack:
+  macrodingus:
     build: .
-    container_name: macrotrack
+    image: macrodingus:local
+    container_name: macrodingus
     restart: unless-stopped
-    volumes:
-      - ./data:/app/data
+
+    # Least privilege. The app needs no capabilities at all: it binds an
+    # unprivileged port, runs as a non-root user (see Dockerfile), and only
+    # writes inside its own data volume.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    # Generous for a single-user Node + SQLite process (~120 MB steady state).
+    # The headroom is for `sharp`, which spikes while decoding a phone-camera
+    # photo during a label scan or progress-photo upload. Raise to 384m if the
+    # container is OOM-killed mid-upload.
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256m
+
     environment:
       - NODE_ENV=production
       - PORT=3000
       - DATA_DIR=/app/data
+
       # Calendar-day boundaries (check-ins, history windows) follow the
-      # household rather than UTC. Override this IANA timezone for a fork.
-      - APP_TIME_ZONE=${APP_TIME_ZONE:-Australia/Brisbane}
-      # Optional installation-wide fallback. Each account can instead save
-      # its own key under More > AI features; account keys take precedence.
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      # Optional integration with a separate weight-sync relay. Both values
-      # must be set; otherwise weight mutations remain entirely local.
-      - WEIGHT_SYNC_RELAY_URL=${WEIGHT_SYNC_RELAY_URL}
-      - WEIGHT_SYNC_USER_NAME=${WEIGHT_SYNC_USER_NAME}
-      # Accounts are self-service (login screen has a "Create an account" link) —
-      # nothing to configure here. Passwords are bcrypt-hashed in the database,
-      # so a forgotten one can't be looked up; reset it from the host with:
-      #   docker exec -it macrotrack node dist/scripts/reset-password.js "Name" "new-password"
-    networks:
-      - proxy
+      # household rather than UTC. Use an IANA zone that matches where you
+      # actually live — a zone with the wrong DST behaviour shifts every day
+      # boundary by an hour for half the year.
+      - APP_TIME_ZONE=${APP_TIME_ZONE:-Australia/Sydney}
 
-  # Optional Tailscale sidecar: gives the PWA its own HTTPS hostname and
-  # reverse-proxies to the app over the shared Docker network. Configure a
-  # fresh auth key in .env; Tailscale fills in its own certificate domain.
-  macrotrack-tailscale:
-    image: tailscale/tailscale:stable
-    container_name: macrotrack-tailscale
-    restart: unless-stopped
-    # TS_HOSTNAME is the Tailscale node name; do not set Docker's `hostname`
-    # to the same value as the app service or Docker DNS becomes ambiguous.
-    environment:
-      - TS_AUTHKEY=${TS_AUTHKEY}
-      - TS_HOSTNAME=${TS_HOSTNAME:-macrotrack}
-      - TS_STATE_DIR=/var/lib/tailscale
-      - TS_SERVE_CONFIG=/config/serve.json
-      - TS_USERSPACE=false
+      # Session cookie signing key. Set this explicitly so it is a managed
+      # secret you can rotate, rather than a file auto-generated on first boot.
+      # Rotating it invalidates every existing session — which is also the
+      # break-glass "log everyone out now" control.
+      #   openssl rand -hex 32
+      - MACRODINGUS_COOKIE_SECRET=${MACRODINGUS_COOKIE_SECRET}
+
+      # Self-service signup. Leave false. Set true only long enough to create
+      # your account, then set it back and redeploy. While false the endpoint
+      # returns 404, so it does not advertise its own existence.
+      - MACRODINGUS_ALLOW_SIGNUP=${MACRODINGUS_ALLOW_SIGNUP:-false}
+
+      # Behind a reverse proxy this MUST be true, or express-style client-IP
+      # detection sees only the proxy and the login rate limiter buckets every
+      # request together — one hostile client would lock out everyone.
+      # Set to false only when running with no proxy at all.
+      - MACRODINGUS_TRUST_PROXY=${MACRODINGUS_TRUST_PROXY:-true}
+
+      # ── Optional: Authentik (or any OIDC provider) single sign-on ──────────
+      # When all four are set, the login screen offers "Sign in with <name>"
+      # and local password login stays available as break-glass. Leave unset
+      # for password-only.
+      - MACRODINGUS_OIDC_ISSUER=${MACRODINGUS_OIDC_ISSUER}
+      - MACRODINGUS_OIDC_CLIENT_ID=${MACRODINGUS_OIDC_CLIENT_ID}
+      - MACRODINGUS_OIDC_CLIENT_SECRET=${MACRODINGUS_OIDC_CLIENT_SECRET}
+      - MACRODINGUS_OIDC_REDIRECT_URI=${MACRODINGUS_OIDC_REDIRECT_URI}
+      # Optional authorisation gate — only members of this group may sign in.
+      - MACRODINGUS_OIDC_REQUIRED_GROUP=${MACRODINGUS_OIDC_REQUIRED_GROUP}
+      - MACRODINGUS_OIDC_PROVIDER_NAME=${MACRODINGUS_OIDC_PROVIDER_NAME:-Authentik}
+
+      # ── Deliberately NOT set ──────────────────────────────────────────────
+      # ANTHROPIC_API_KEY   — an installation-wide fallback any account can
+      #                       spend. Use the per-account key under
+      #                       More > AI features instead; it is stored 0600 on
+      #                       the server and never returned by any API.
+      # WEIGHT_SYNC_RELAY_URL / WEIGHT_SYNC_USER_NAME
+      #                     — when BOTH are set, every weight mutation POSTs
+      #                       your entire weight history to that URL and
+      #                       silently swallows failures. An absent variable is
+      #                       safer than an empty one.
+
     volumes:
-      - ./tailscale-state:/var/lib/tailscale
-      # Tailscale requires the containing directory (not one file) to be
-      # mounted so containerboot can reconcile Serve config on startup.
-      - ./tailscale-config:/config:ro
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    devices:
-      - /dev/net/tun:/dev/net/tun
-    networks:
-      - proxy
+      - macrodingus_data:/app/data
 
-networks:
-  proxy:
-    external: true
+    # Bind to localhost only by default: your reverse proxy runs on this host.
+    # Change to "8099:3000" if the proxy is on a different machine, and firewall
+    # the port so only the proxy can reach it.
+    ports:
+      - "127.0.0.1:8099:3000"
+
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  # Holds the SQLite database, progress photos, the cookie signing secret and
+  # per-account AI keys. Every backup of this volume is a credential store —
+  # treat it as one. See README.md "Backup and restore".
+  macrodingus_data:
