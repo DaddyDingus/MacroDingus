@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { LineChart } from "lucide-react";
 import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import type { DailyExpenditurePoint } from "../api/coach";
 import { useEnergyUnit, kcalToUnit, energyUnitLabel } from "../lib/energyUnit";
@@ -204,8 +205,33 @@ export default function TdeeChart({
 
   if (dailyAsc.length < 2) {
     return (
-      <div className="flex items-center justify-center" style={{ height }}>
-        <p className="text-sm text-muted">Keep weighing in and logging to see a trend.</p>
+      <div className="relative flex flex-col items-center justify-center gap-2" style={{ height }}>
+        {/* Ghost of the real chart: faint gridlines + a dashed placeholder
+            trend, so the empty state reads as "this space is reserved for
+            your chart" rather than a blank box. Non-scaling-stroke keeps the
+            dashed line's width consistent despite the viewBox being
+            stretched non-uniformly by preserveAspectRatio="none". */}
+        <svg
+          className="absolute inset-0 w-full h-full pointer-events-none"
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        >
+          <line x1="0" y1="25" x2="100" y2="25" stroke={GRID} strokeWidth="1" vectorEffect="non-scaling-stroke" />
+          <line x1="0" y1="50" x2="100" y2="50" stroke={GRID} strokeWidth="1" vectorEffect="non-scaling-stroke" />
+          <line x1="0" y1="75" x2="100" y2="75" stroke={GRID} strokeWidth="1" vectorEffect="non-scaling-stroke" />
+          <polyline
+            points="0,68 16,58 32,62 48,42 64,48 80,30 100,36"
+            fill="none"
+            stroke={MUTED}
+            strokeWidth="1.5"
+            strokeOpacity="0.35"
+            strokeDasharray="5 5"
+            vectorEffect="non-scaling-stroke"
+          />
+        </svg>
+        <LineChart className="relative w-6 h-6 text-muted opacity-30" strokeWidth={1.5} />
+        <p className="relative text-sm text-muted text-center px-8">Keep weighing in and logging to see a trend.</p>
       </div>
     );
   }

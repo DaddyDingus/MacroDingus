@@ -62,14 +62,32 @@ export function buildLoggedAt(dateStr: string, time: string): string {
   return `${dateStr}T${time}:00.000Z`;
 }
 
-function minutesSinceMidnight(loggedAt: string): number {
-  const match = loggedAt.match(/T(\d{2}):(\d{2})/);
-  if (!match) return 0;
-  return Number(match[1]) * 60 + Number(match[2]);
+// Which hour bucket (0-23) a loggedAt string falls into — see
+// groupLogEntriesByTime in logGrouping.ts. Same fake-UTC-is-actually-local
+// extraction as formatLogTime above.
+export function hourOfLoggedAt(loggedAt: string): number {
+  const match = loggedAt.match(/T(\d{2}):/);
+  return match ? Number(match[1]) : 0;
 }
 
-export function minutesBetweenLoggedAt(a: string, b: string): number {
-  return Math.abs(minutesSinceMidnight(b) - minutesSinceMidnight(a));
+// "10 AM" / "11 PM" label for a calendar-hour bucket (0-23) — TimeBlockGroup's
+// header chip is one per hour, not the exact timestamp of its first entry.
+export function formatHourLabel(hour: number): string {
+  const suffix = hour >= 12 ? "PM" : "AM";
+  const h = hour % 12 || 12;
+  return `${h} ${suffix}`;
+}
+
+// Same extraction as formatLogTime, minus the AM/PM suffix — each food row
+// shows its own exact time nested under a group header that already
+// establishes AM/PM via formatHourLabel above.
+export function formatLogTimeShort(loggedAt: string): string {
+  const match = loggedAt.match(/T(\d{2}):(\d{2})/);
+  if (!match) return "";
+  let hour = Number(match[1]);
+  const minute = match[2];
+  hour = hour % 12 || 12;
+  return `${hour}:${minute}`;
 }
 
 // Same fake-UTC-is-actually-local regex extraction as the helpers above —

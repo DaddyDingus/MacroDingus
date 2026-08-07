@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode, type PointerEvent as React
 import { createPortal } from "react-dom";
 import { useVisualViewportMetrics } from "../lib/useVisualViewportMetrics";
 import { useBackDismiss } from "../lib/useBackDismiss";
+import { lockBodyScroll, unlockBodyScroll } from "../lib/bodyScrollLock";
 
 // Swipe-down-to-dismiss past this distance, or past this velocity even if
 // short — the standard "flick it away" escape hatch native sheets have.
@@ -118,27 +119,15 @@ export default function BottomSheet({
   // this lock is what caused the background to visibly scroll (and, via
   // useVisualViewportMetrics reacting to the resulting browser-chrome
   // show/hide, the sheet itself to jitter) while scrolling content inside a
-  // sheet.
+  // sheet. Goes through the shared lockBodyScroll/unlockBodyScroll (not a
+  // local save/restore) because two sheets can be mounted at once — e.g.
+  // DayMenuSheet's "Carry Forward" row opens CarryForwardSheet in the same
+  // click that starts DayMenuSheet's own close animation — and a local
+  // save/restore in each instance stomps on the other's snapshot, eventually
+  // stranding the page permanently unscrollable. See bodyScrollLock.ts.
   useEffect(() => {
-    const scrollY = window.scrollY;
-    const prevBodyOverflow = document.body.style.overflow;
-    const prevHtmlOverflow = document.documentElement.style.overflow;
-    const prevBodyPosition = document.body.style.position;
-    const prevBodyTop = document.body.style.top;
-    const prevBodyWidth = document.body.style.width;
-    document.body.style.overflow = "hidden";
-    document.documentElement.style.overflow = "hidden";
-    document.body.style.position = "fixed";
-    document.body.style.top = `-${scrollY}px`;
-    document.body.style.width = "100%";
-    return () => {
-      document.body.style.overflow = prevBodyOverflow;
-      document.documentElement.style.overflow = prevHtmlOverflow;
-      document.body.style.position = prevBodyPosition;
-      document.body.style.top = prevBodyTop;
-      document.body.style.width = prevBodyWidth;
-      window.scrollTo(0, scrollY);
-    };
+    lockBodyScroll();
+    return unlockBodyScroll;
   }, []);
 
   // Doesn't capture or commit to anything yet — just remembers where/when

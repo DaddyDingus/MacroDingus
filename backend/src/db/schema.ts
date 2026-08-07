@@ -328,6 +328,31 @@ export const checkins = sqliteTable("checkins", {
   userDateIdx: index("checkins_user_date_idx").on(table.userId, table.date),
 }));
 
+// One optional target boost per (user, date) — "Carry Forward Shortfall"
+// lets a user who came in under target one day add the difference to the
+// next day's target instead. Deliberately separate from `program_days`
+// (which is the weekday *template*, reused every week) rather than an edit
+// to it: this is a one-off, single-calendar-date adjustment, the first of
+// its kind in the schema. Upserted like `weights` (one row per date) so
+// re-triggering the action replaces rather than stacks. The exact amounts
+// are computed and capped client-side (lib/programTargets.ts's
+// targetsForDate has no server-side equivalent to compare against — targets
+// are resolved purely client-side from GET /api/programs); this table is
+// just a dumb store of the resulting numbers.
+export const dailyAdjustments = sqliteTable("daily_adjustments", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id),
+  date: text("date").notNull(), // the day the boost applies to
+  sourceDate: text("source_date").notNull(), // the day the shortfall was carried from, for display only
+  kcal: real("kcal").notNull(),
+  proteinG: real("protein_g").notNull(),
+  carbsG: real("carbs_g").notNull(),
+  fatG: real("fat_g").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => ({
+  userDateIdx: uniqueIndex("daily_adjustments_user_date_idx").on(table.userId, table.date),
+}));
+
 export const photos = sqliteTable("photos", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id),

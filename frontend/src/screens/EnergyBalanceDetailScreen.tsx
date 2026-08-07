@@ -170,9 +170,21 @@ export default function EnergyBalanceDetailScreen() {
             <span className="text-[11px] tracking-widest uppercase text-muted">{config.insightsLabel}</span>
           </div>
           {CHANGE_WINDOWS.map((w) => {
+            const avg = averageBalanceOverDays(allBalance, w);
+            if (avg === null) {
+              return (
+                <div key={w} className="flex items-center gap-3 px-4 py-2.5 border-b border-line/60 last:border-b-0">
+                  <span className="text-sm text-muted w-12 shrink-0">{w}-day</span>
+                  <div className="flex-1 h-7 min-w-0 flex items-center">
+                    <div className="w-full border-t border-dashed border-line/60" />
+                  </div>
+                  <span className="tabular text-sm w-24 text-right shrink-0 text-muted/40">--</span>
+                  <span className="w-[110px] shrink-0" />
+                </div>
+              );
+            }
             const windowStart = addDays(today, -w);
             const windowPoints = allBalance.filter((p) => p.date >= windowStart);
-            const avg = averageBalanceOverDays(allBalance, w);
             const dir = changeDirection(avg, BALANCE_EPSILON);
             const seriesInUnit = windowPoints.map((p) => kcalToUnit(p.balance, energyUnit));
             return (
@@ -182,7 +194,7 @@ export default function EnergyBalanceDetailScreen() {
                   <MiniLineSpark values={seriesInUnit} color={config.color} />
                 </div>
                 <span className="tabular text-sm w-24 text-right shrink-0 whitespace-nowrap">
-                  {avg !== null ? `${signed(kcalToUnit(avg, energyUnit))} ${energyUnitLabel(energyUnit)}` : "—"}
+                  {signed(kcalToUnit(avg, energyUnit))} {energyUnitLabel(energyUnit)}
                 </span>
                 <span className="flex items-center gap-1 text-xs text-muted w-[110px] justify-end shrink-0">
                   <ChangeDirectionIcon direction={dir} colorClassName={config.colorClassName} />

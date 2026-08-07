@@ -29,6 +29,7 @@ import { usePlateState, type PlateItem } from "../lib/quickAddPlate";
 import { useEnergyUnit, kcalToUnit, unitToKcal, energyUnitLabel, formatEnergy, type EnergyUnit } from "../lib/energyUnit";
 import { useVisualViewportMetrics } from "../lib/useVisualViewportMetrics";
 import { useBackDismissDepth } from "../lib/useBackDismiss";
+import { lockBodyScroll, unlockBodyScroll } from "../lib/bodyScrollLock";
 import FoodIconAvatar from "./FoodIconAvatar";
 import CreateFoodForm from "./CreateFoodForm";
 import RecipeForm, { type RecipeFormInitial } from "./RecipeForm";
@@ -290,6 +291,11 @@ export default function AddFoodSheet({
   // delete in the app goes through ConfirmDeleteSheet, this one used to call
   // removeEntry() straight away with no confirmation step.
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // Library's own Recipes/Foods swipe-to-delete (LibraryTab/FoodRow) — same
+  // ConfirmDeleteSheet convention as every other delete, unlike the Plate/
+  // Recipe-ingredient swipe rows this reuses the gesture from, which remove
+  // a draft/staged item immediately with no confirm.
+  const [pendingLibraryDelete, setPendingLibraryDelete] = useState<Food | null>(null);
   // What everything staged in this session actually logs under — starts at
   // forcedLoggedAt (a time-group's own time, set by the Food Log's per-group
   // "+" button) or "now", but is then just plain local state a tap on the
@@ -561,28 +567,17 @@ export default function AddFoodSheet({
   // this lock is what let the real background document scroll behind this
   // full-screen modal, which (via useVisualViewportMetrics reacting to the
   // resulting browser-chrome show/hide) made this modal's own
-  // viewport-tracked top/height jitter in step with it.
+  // viewport-tracked top/height jitter in step with it. Goes through the
+  // shared lockBodyScroll/unlockBodyScroll (not a local save/restore)
+  // because this sheet can have its own BottomSheet-based children open on
+  // top of it (ConfirmDeleteSheet, DiscardWarningSheet, ...) — a local
+  // save/restore in each instance stomps on the other's snapshot when both
+  // are briefly mounted together, eventually stranding the page permanently
+  // unscrollable. See bodyScrollLock.ts.
   useEffect(() => {
     if (!open) return;
-    const scrollY = window.scrollY;
-    const prevBodyOverflow = document.body.style.overflow;
-    const prevHtmlOverflow = document.documentElement.style.overflow;
-    const prevBodyPosition = document.body.style.position;
-    const prevBodyTop = document.body.style.top;
-    const prevBodyWidth = document.body.style.width;
-    document.body.style.overflow = "hidden";
-    document.documentElement.style.overflow = "hidden";
-    document.body.style.position = "fixed";
-    document.body.style.top = `-${scrollY}px`;
-    document.body.style.width = "100%";
-    return () => {
-      document.body.style.overflow = prevBodyOverflow;
-      document.documentElement.style.overflow = prevHtmlOverflow;
-      document.body.style.position = prevBodyPosition;
-      document.body.style.top = prevBodyTop;
-      document.body.style.width = prevBodyWidth;
-      window.scrollTo(0, scrollY);
-    };
+    lockBodyScroll();
+    return unlockBodyScroll;
   }, [open]);
 
   // Fires once the id set by requestRecipeAction above actually resolves to
@@ -761,6 +756,18 @@ export default function AddFoodSheet({
   function requestRecipeAction(food: Food, action: "edit" | "explode" | "duplicate") {
     const recipeId = recipeIdForFood(food.id);
     if (recipeId) setPendingRecipeAction({ recipeId, action });
+  }
+
+  // Same source-based branch Food Detail's own onDeleteFood already uses
+  // (see the "detail" step's render below) — a recipe deletes via its
+  // recipes.id, not the materialized foods.id LibraryTab's rows carry.
+  function deleteLibraryFood(food: Food) {
+    if (food.source === "recipe") {
+      const recipeId = recipeIdForFood(food.id);
+      if (recipeId) deleteRecipe.mutate(recipeId);
+    } else {
+      deleteFood.mutate(food.id);
+    }
   }
 
   function saveEditedQuantity(quantityGrams: number) {
@@ -1189,6 +1196,7 @@ export default function AddFoodSheet({
                           onQuickAdd={pickFood}
                           onCreateFood={() => changeStep("create")}
                           onCreateRecipe={() => changeStep("recipeChoice")}
+                          onRequestDelete={setPendingLibraryDelete}
                         />
                       )}
                     </div>
@@ -1602,6 +1610,20 @@ export default function AddFoodSheet({
         />
       )}
 
+      {pendingLibraryDelete && (
+        <ConfirmDeleteSheet
+          title="Delete Food"
+          message={`Delete "${pendingLibraryDelete.name}"? Any logs that used it stay in your history.`}
+          confirmLabel="Delete Food"
+          onConfirm={() => {
+            deleteLibraryFood(pendingLibraryDelete);
+            setPendingLibraryDelete(null);
+          }}
+          onClose={() => setPendingLibraryDelete(null)}
+          isPending={deleteFood.isPending || deleteRecipe.isPending}
+        />
+      )}
+
       {showDeleteConfirm && (
         <ConfirmDeleteSheet
           title="Delete Food"
@@ -1644,18 +1666,27 @@ function FoodRow({
   food,
   onOpen,
   onQuickAdd,
+  onDelete,
 }: {
   food: Food;
   onOpen: (food: Food) => void;
   onQuickAdd: (food: Food) => void;
+  // Only passed for Library's own Recipes/Foods views (not Favourites or
+  // Search results, which this same row also renders) — see LibraryTab's
+  // own wiring for why. Swipe reveals Delete same as the Plate/Recipe
+  // ingredient lists (SwipeToDeleteRow), but this fires a confirm sheet
+  // instead of deleting immediately: those two are removing a draft/staged
+  // item, this permanently deletes a library entry.
+  onDelete?: (food: Food) => void;
 }) {
   const refGrams = food.servingSizeGrams ?? 100;
   const n = scaleNutrition(food, refGrams);
   const { unit: energyUnit } = useEnergyUnit();
   const originLabel = food.brand?.trim()
     || (food.source === "afcd" ? "Generic" : food.source === "recipe" ? "Recipe" : food.source === "custom" ? "Custom food" : null);
-  return (
-    <div className="w-full flex items-center gap-3 px-4 py-2.5 border-b border-dashboardDivider/60">
+  const rowClassName = "w-full flex items-center gap-3 px-4 py-2.5 bg-dashboardBg border-b border-dashboardDivider/60";
+  const content = (
+    <>
       <button onClick={() => onOpen(food)} className="flex-1 flex items-center gap-3 min-w-0 text-left active:bg-white/5">
         <FoodIconAvatar name={food.name} icon={food.icon} />
         <span className="flex-1 min-w-0">
@@ -1674,7 +1705,13 @@ function FoodRow({
       >
         <Plus className="w-3.5 h-3.5" strokeWidth={2.5} />
       </button>
-    </div>
+    </>
+  );
+  if (!onDelete) return <div className={rowClassName}>{content}</div>;
+  return (
+    <SwipeToDeleteRow onDelete={() => onDelete(food)} deleteLabel={`Delete ${food.name}`} rowClassName={rowClassName}>
+      {content}
+    </SwipeToDeleteRow>
   );
 }
 
@@ -1696,6 +1733,7 @@ function LibraryTab({
   onQuickAdd,
   onCreateFood,
   onCreateRecipe,
+  onRequestDelete,
 }: {
   view: LibraryView;
   setView: (v: LibraryView) => void;
@@ -1706,6 +1744,9 @@ function LibraryTab({
   onQuickAdd: (food: Food) => void;
   onCreateFood: () => void;
   onCreateRecipe: () => void;
+  // Recipes/Foods only — see FoodRow's own comment on why Favourites/Search
+  // don't get this. Opens a confirm sheet, doesn't delete straight away.
+  onRequestDelete: (food: Food) => void;
 }) {
   const [libraryQuery, setLibraryQuery] = useState("");
   const items = view === "recipes" ? recipes?.map((r) => r.food) : view === "foods" ? customFoods : favorites;
@@ -1777,7 +1818,13 @@ function LibraryTab({
         <p className="px-4 py-6 text-sm text-muted text-center">No matches for "{libraryQuery.trim()}".</p>
       )}
       {filteredItems?.map((food) => (
-        <FoodRow key={food.id} food={food} onOpen={onOpen} onQuickAdd={onQuickAdd} />
+        <FoodRow
+          key={food.id}
+          food={food}
+          onOpen={onOpen}
+          onQuickAdd={onQuickAdd}
+          onDelete={view === "recipes" || view === "foods" ? onRequestDelete : undefined}
+        />
       ))}
     </div>
   );

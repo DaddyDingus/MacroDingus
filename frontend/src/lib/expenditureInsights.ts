@@ -52,6 +52,13 @@ export function expenditureChangeOverDays(dailyAsc: DailyExpenditurePoint[], win
   const today = localDateString();
   const latestSampleDate = today < dailyAsc[dailyAsc.length - 1].date ? dailyAsc[dailyAsc.length - 1].date : today;
   const cutoffDate = addDays(latestSampleDate, -windowDays);
+  // Mirrors trendChangeOverDays's coverage check: sampleDailyExpenditure
+  // silently clamps its start date up to the first real estimate, so
+  // without this, every window longer than real history reports the same
+  // repeated delta instead of "not enough data yet."
+  if (dailyAsc[0].date > cutoffDate) {
+    return { windowDays, deltaKcal: null, series: [] };
+  }
   const windowPoints = sampleDailyExpenditure(dailyAsc, cutoffDate, latestSampleDate);
   if (windowPoints.length < 2) {
     return { windowDays, deltaKcal: null, series: windowPoints.map((p) => p.tdee) };

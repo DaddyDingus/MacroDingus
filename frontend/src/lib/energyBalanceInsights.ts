@@ -40,6 +40,12 @@ export function averageBalanceOverDays(points: DailyBalancePoint[], windowDays: 
   if (points.length === 0) return null;
   const latestDate = points[points.length - 1].date;
   const cutoff = addDays(latestDate, -windowDays);
+  // Real history has to actually reach back to the window's start date, not
+  // just contain some points — otherwise every window longer than the
+  // available history clamps to the same full array and reports an
+  // identical average instead of "not enough data yet" (same fix as
+  // trendChangeOverDays/expenditureChangeOverDays).
+  if (points[0].date > cutoff) return null;
   const windowPoints = points.filter((p) => p.date >= cutoff);
   if (windowPoints.length === 0) return null;
   return windowPoints.reduce((sum, p) => sum + p.balance, 0) / windowPoints.length;

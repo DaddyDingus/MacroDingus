@@ -19,6 +19,7 @@ import { registerFavoriteRoutes } from "./routes/favorites.js";
 import { registerAccountRoutes } from "./routes/account.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerCookwareRoutes } from "./routes/cookware.js";
+import { registerAdjustmentRoutes } from "./routes/adjustments.js";
 import { configureAnthropicKeyStore } from "./engine/anthropicClient.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -52,6 +53,7 @@ registerFavoriteRoutes(app);
 registerAccountRoutes(app, DATA_DIR);
 registerSettingsRoutes(app);
 registerCookwareRoutes(app);
+registerAdjustmentRoutes(app);
 
 app.register(fastifyStatic, {
   root: STATIC_DIR,

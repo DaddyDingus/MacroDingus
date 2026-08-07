@@ -1,7 +1,7 @@
 import { memo, useEffect, useState } from "react";
 import { Flame, Plus, ArrowRight, Check } from "lucide-react";
 import type { LogEntry } from "../api/types";
-import { formatLogTime } from "../lib/date";
+import { formatHourLabel, formatLogTimeShort, hourOfLoggedAt } from "../lib/date";
 import { sumGroupTotals } from "../lib/logGrouping";
 import { useEnergyUnit, kcalToUnit } from "../lib/energyUnit";
 import FoodItemCard from "./FoodItemCard";
@@ -156,7 +156,7 @@ const TimeBlockGroup = memo(function TimeBlockGroup({
               groupSelected ? "bg-accent text-white" : "bg-dashboardChip text-muted"
             }`}
           >
-            {formatLogTime(entries[0].loggedAt)}
+            {formatHourLabel(hourOfLoggedAt(entries[0].loggedAt))}
           </span>
         </button>
       </div>
@@ -174,6 +174,28 @@ const TimeBlockGroup = memo(function TimeBlockGroup({
                 onSelect={() => onSelectEntry(entry)}
                 onDelete={() => onDelete(entry)}
               />
+              {/* Own exact time, in the same right-hand column as the
+                  group's hour chip above (right: -56px lands it across the
+                  pr-14 gutter, matching that pill's column) rather than on
+                  the card itself — mirrors MacroFactor's timeline, where
+                  every row's timestamp shares one alignment regardless of
+                  which hour-block it's in. TodayScreen's vertical line sits
+                  right in this column (that's the point — it's the line's
+                  own calibrated offset), so this needs an opaque
+                  page-background fill behind the text or the line visibly
+                  cuts through it; the hour chip above gets this for free
+                  from its own pill background, this is the plain-text
+                  equivalent. Hidden during multi-select: the selection
+                  circle below takes over this same column and the two would
+                  overlap. */}
+              {!anySelected && (
+                <span
+                  className="absolute top-1/2 -translate-y-1/2 w-[54px] py-0.5 text-center text-[8px] text-muted tabular pointer-events-none bg-dashboardBg"
+                  style={{ right: "-56px" }}
+                >
+                  {formatLogTimeShort(entry.loggedAt)}
+                </span>
+              )}
               {anySelected && (
                 <button
                   type="button"

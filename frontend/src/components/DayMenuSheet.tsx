@@ -1,4 +1,4 @@
-import { ListChecks, Copy, Trash2, type LucideIcon } from "lucide-react";
+import { ListChecks, Copy, Trash2, TrendingUp, type LucideIcon } from "lucide-react";
 import BottomSheet from "./BottomSheet";
 
 function Row({
@@ -40,15 +40,25 @@ function Row({
 // dismissing this menu doesn't also dismiss an in-flight confirmation.
 export default function DayMenuSheet({
   hasEntries,
+  hasAdjustment,
   onSelectAll,
   onCopyDay,
   onClearDay,
+  onCarryForward,
+  onRemoveAdjustment,
   onClose,
 }: {
   hasEntries: boolean;
+  // Whether this date already has a "Carry Forward Shortfall" boost applied
+  // — flips the row below between offering one and offering to undo it,
+  // rather than showing both at once (one adjustment per date; see
+  // api/adjustments.ts).
+  hasAdjustment: boolean;
   onSelectAll: () => void;
   onCopyDay: () => void;
   onClearDay: () => void;
+  onCarryForward: () => void;
+  onRemoveAdjustment: () => void;
   onClose: () => void;
 }) {
   return (
@@ -87,6 +97,15 @@ export default function DayMenuSheet({
                 label="Copy This Day"
                 onClick={() => {
                   onCopyDay();
+                  close();
+                }}
+              />
+              <Row
+                icon={TrendingUp}
+                label={hasAdjustment ? "Remove Carried-Forward Macros" : "Carry Forward Yesterday's Shortfall"}
+                onClick={() => {
+                  if (hasAdjustment) onRemoveAdjustment();
+                  else onCarryForward();
                   close();
                 }}
               />

@@ -23,6 +23,14 @@ export function trendChangeOverDays(points: TrendPoint[], windowDays: number): W
   if (points.length === 0) return { windowDays, deltaKg: null, series: [] };
   const latest = points[points.length - 1];
   const cutoffDate = addDays(latest.date, -windowDays);
+  // Real history has to actually reach back to the window's start date, not
+  // just contain >=2 points — otherwise a window longer than the available
+  // history clamps to the same full array every time, and every window
+  // beyond real coverage reports an identical delta instead of "not enough
+  // data yet."
+  if (points[0].date > cutoffDate) {
+    return { windowDays, deltaKg: null, series: [] };
+  }
   const windowPoints = points.filter((p) => p.date >= cutoffDate);
   if (windowPoints.length < 2) {
     return { windowDays, deltaKg: null, series: windowPoints.map((p) => p.trendKg) };

@@ -199,6 +199,18 @@ export default function WeightDetailScreen() {
           </div>
           {CHANGE_WINDOWS.map((w) => {
             const stat = trendChangeOverDays(insightPoints, w);
+            if (stat.deltaKg === null) {
+              return (
+                <div key={w} className="flex items-center gap-3 px-4 py-2.5 border-b border-line/60 last:border-b-0">
+                  <span className="text-sm text-muted w-12 shrink-0">{w}-day</span>
+                  <div className="flex-1 h-7 min-w-0 flex items-center">
+                    <div className="w-full border-t border-dashed border-line/60" />
+                  </div>
+                  <span className="tabular text-sm w-20 text-right shrink-0 text-muted/40">--</span>
+                  <span className="w-[86px] shrink-0" />
+                </div>
+              );
+            }
             const dir = changeDirection(stat.deltaKg, 0.05);
             const seriesInUnit = stat.series.map((kg) => kgToUnit(kg, unit));
             return (
@@ -208,7 +220,7 @@ export default function WeightDetailScreen() {
                   <MiniLineSpark values={seriesInUnit} color={WEIGHT_CHANGE_COLOR} />
                 </div>
                 <span className="tabular text-sm w-20 text-right shrink-0 whitespace-nowrap">
-                  {stat.deltaKg !== null ? `${signed(kgToUnit(stat.deltaKg, unit))} ${unit}` : "—"}
+                  {signed(kgToUnit(stat.deltaKg, unit))} {unit}
                 </span>
                 <span className="flex items-center gap-1 text-xs text-muted w-[86px] justify-end shrink-0">
                   <ChangeDirectionIcon direction={dir} colorClassName="text-weight" />

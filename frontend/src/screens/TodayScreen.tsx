@@ -3,14 +3,17 @@ import { MoreHorizontal, ChevronLeft, ChevronRight } from "lucide-react";
 import type { LogEntry } from "../api/types";
 import { useDayLog, useDeleteLog, useDeleteLogEntries, useMoveLogEntries, useLoggedDates } from "../api/logs";
 import { usePrograms } from "../api/programs";
+import { useAdjustment, useRemoveAdjustment } from "../api/adjustments";
 import { addDays, formatDayLabel, localDateString } from "../lib/date";
-import { targetsForDate } from "../lib/programTargets";
+import { targetsForDate, applyAdjustment } from "../lib/programTargets";
+import { useEnergyUnit, formatEnergy } from "../lib/energyUnit";
 import { groupLogEntriesByTime } from "../lib/logGrouping";
 import MacroSummaryBar from "../components/MacroSummaryBar";
 import TimeBlockGroup from "../components/TimeBlockGroup";
 import AddFoodSheet from "../components/AddFoodSheet";
 import CopyDaySheet from "../components/CopyDaySheet";
 import DayMenuSheet from "../components/DayMenuSheet";
+import CarryForwardSheet from "../components/CarryForwardSheet";
 import CalendarJumpSheet from "../components/CalendarJumpSheet";
 import LogActionBar, { type LogSelection } from "../components/LogActionBar";
 import ConfirmDeleteSheet from "../components/ConfirmDeleteSheet";
@@ -28,13 +31,13 @@ const SELECTION_BAR_EXIT_MS = 200;
 
 // Blank-by-default timeline: no Breakfast/Lunch/Dinner/Snacks sections
 // (removed app-wide — see backend/src/db/schema.ts and every route/hook that
-// used to take a `meal`). Entries are grouped purely by how close together in
-// time they were logged (lib/logGrouping.ts) into "time blocks" (see
-// components/TimeBlockGroup.tsx) — each block gets one rolled-up macro
-// header sharing a flex baseline with the block's timestamp node, plus its
-// own dark food cards (components/FoodItemCard.tsx) underneath, with a
-// shared timestamp per group acting as a node on the vertical timeline line
-// down the right edge.
+// used to take a `meal`). Entries are grouped into fixed calendar-hour
+// buckets (lib/logGrouping.ts, matching MacroFactor's own food timeline) into
+// "time blocks" (see components/TimeBlockGroup.tsx) — each block gets one
+// rolled-up macro header sharing a flex baseline with the block's hour-label
+// node, plus its own dark food cards (components/FoodItemCard.tsx)
+// underneath, each carrying its own exact logged time. The hour label acts
+// as a node on the vertical timeline line down the right edge.
 export default function TodayScreen() {
   const [date, setDate] = useState(localDateString());
   // Lets the globally-rendered FAB (App.tsx's <BottomNav/>, outside this
@@ -47,6 +50,9 @@ export default function TodayScreen() {
   const deleteEntries = useDeleteLogEntries();
   const moveEntries = useMoveLogEntries();
   const programs = usePrograms();
+  const adjustment = useAdjustment(date);
+  const removeAdjustment = useRemoveAdjustment(date);
+  const { unit: energyUnit } = useEnergyUnit();
 
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<LogEntry | null>(null);
@@ -61,6 +67,7 @@ export default function TodayScreen() {
   const [quickAddLoggedAt, setQuickAddLoggedAt] = useState<string | null>(null);
   const [copyOpen, setCopyOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [carryForwardOpen, setCarryForwardOpen] = useState(false);
   const [confirmClearDay, setConfirmClearDay] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [pendingDeleteEntry, setPendingDeleteEntry] = useState<LogEntry | null>(null);
@@ -160,8 +167,17 @@ export default function TodayScreen() {
   // then, rather than going target-less (and therefore permanently 0% full)
   // for every day except today.
   const dayTargets = targetsForDate(programs.data ?? [], date);
-  const targets = dayTargets
-    ? { calories: dayTargets.calories, proteinG: dayTargets.proteinG, fatG: dayTargets.fatG, carbsG: dayTargets.carbsG }
+  // Layers a "Carry Forward Shortfall" boost (see DayMenuSheet/
+  // CarryForwardSheet) on top of the base weekday target, if one's active
+  // for this exact date.
+  const adjustedTargets = dayTargets ? applyAdjustment(dayTargets, adjustment.data) : null;
+  const targets = adjustedTargets
+    ? {
+        calories: adjustedTargets.calories,
+        proteinG: adjustedTargets.proteinG,
+        fatG: adjustedTargets.fatG,
+        carbsG: adjustedTargets.carbsG,
+      }
     : null;
 
   // useMemo (not a plain call) because this screen re-renders on every
@@ -280,6 +296,11 @@ export default function TodayScreen() {
           header's own height on top of that. */}
       <div data-rubber-band-surface className="pb-40 bg-dashboardBg">
       <main className="px-4 pt-3 max-w-md mx-auto">
+        {adjustment.data && (
+          <p className="text-[11px] text-muted text-center pb-3">
+            +{formatEnergy(adjustment.data.kcal, energyUnit)} carried forward from {formatDayLabel(adjustment.data.sourceDate)}
+          </p>
+        )}
         {groups.length === 0 ? (
           <p className="text-sm text-muted text-center py-16">Nothing logged yet.</p>
         ) : (
@@ -336,12 +357,17 @@ export default function TodayScreen() {
       {menuOpen && (
         <DayMenuSheet
           hasEntries={entries.length > 0}
+          hasAdjustment={!!adjustment.data}
           onSelectAll={() => setSelection(entries)}
           onCopyDay={() => setCopyOpen(true)}
           onClearDay={() => setConfirmClearDay(true)}
+          onCarryForward={() => setCarryForwardOpen(true)}
+          onRemoveAdjustment={() => removeAdjustment.mutate()}
           onClose={() => setMenuOpen(false)}
         />
       )}
+
+      {carryForwardOpen && <CarryForwardSheet date={date} onClose={() => setCarryForwardOpen(false)} />}
 
       {confirmClearDay && (
         <ConfirmDeleteSheet

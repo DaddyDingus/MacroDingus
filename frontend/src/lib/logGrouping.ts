@@ -1,10 +1,9 @@
 import type { LogEntry } from "../api/types";
-import { minutesBetweenLoggedAt } from "./date";
-
-const GROUP_WINDOW_MINUTES = 60;
+import { hourOfLoggedAt } from "./date";
 
 export interface LogGroup {
   id: string;
+  hour: number;
   entries: LogEntry[];
 }
 
@@ -27,24 +26,26 @@ export function sumGroupTotals(entries: LogEntry[]): GroupTotals {
   );
 }
 
-// A rolling/pairwise window, not a fixed-start bucket: an entry joins the
-// current group if it's within GROUP_WINDOW_MINUTES of the *previous* entry
-// added to that group (not the group's first entry), so a slow trickle of
-// items each ~25 minutes apart still chains into one group, while any single
-// gap over the window always starts a new one. Entries are assumed to share
-// the same `date` (this only ever runs on one day's log at a time), so plain
-// minutes-of-day arithmetic is enough — no cross-midnight handling needed.
+// Fixed calendar-hour buckets (matches MacroFactor's own food timeline), not
+// a rolling minutes-since-last-item window — a prior version used the latter
+// and needed constant re-tuning of the threshold (60min, then 20, then 10)
+// since any single number is either too eager to merge a slow trickle of
+// entries or too quick to split a genuine one-sitting meal. Hour buckets need
+// no tuning and self-explain via the header ("10 AM"/"11 AM"), and each row
+// still carries its own exact time (see FoodItemCard) so nothing is actually
+// lost by two entries 43 minutes apart sharing a bucket. Entries are assumed
+// to share the same `date` (this only ever runs on one day's log at a time).
 export function groupLogEntriesByTime(entries: LogEntry[]): LogGroup[] {
   const sorted = [...entries].sort((a, b) => a.loggedAt.localeCompare(b.loggedAt));
   const groups: LogGroup[] = [];
 
   for (const entry of sorted) {
+    const hour = hourOfLoggedAt(entry.loggedAt);
     const current = groups[groups.length - 1];
-    const lastEntry = current?.entries[current.entries.length - 1];
-    if (current && lastEntry && minutesBetweenLoggedAt(lastEntry.loggedAt, entry.loggedAt) <= GROUP_WINDOW_MINUTES) {
+    if (current && current.hour === hour) {
       current.entries.push(entry);
     } else {
-      groups.push({ id: entry.id, entries: [entry] });
+      groups.push({ id: entry.id, hour, entries: [entry] });
     }
   }
 

@@ -43,7 +43,11 @@ export default function MiniLineSpark({
   band?: (MiniSparkBandPoint | null)[];
 }) {
   if (values.length < 2) {
-    return <div className="h-full flex items-center text-[11px] text-muted">Not enough data yet</div>;
+    return (
+      <div className="h-full flex items-center text-[11px] text-muted whitespace-nowrap overflow-hidden text-ellipsis">
+        Not enough data yet
+      </div>
+    );
   }
   const data = values.map((v, i) => {
     const b = band?.[i];

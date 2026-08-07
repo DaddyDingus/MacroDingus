@@ -156,6 +156,18 @@ export default function ExpenditureDetailScreen() {
           </div>
           {CHANGE_WINDOWS.map((w) => {
             const stat = expenditureChangeOverDays(dailyAsc, w);
+            if (stat.deltaKcal === null) {
+              return (
+                <div key={w} className="flex items-center gap-3 px-4 py-2.5 border-b border-line/60 last:border-b-0">
+                  <span className="text-sm text-muted w-12 shrink-0">{w}-day</span>
+                  <div className="flex-1 h-7 min-w-0 flex items-center">
+                    <div className="w-full border-t border-dashed border-line/60" />
+                  </div>
+                  <span className="tabular text-sm w-24 text-right shrink-0 text-muted/40">--</span>
+                  <span className="w-[86px] shrink-0" />
+                </div>
+              );
+            }
             const dir = changeDirection(stat.deltaKcal, EXPENDITURE_CHANGE_EPSILON);
             const seriesInUnit = stat.series.map((kcal) => kcalToUnit(kcal, energyUnit));
             return (
@@ -165,9 +177,7 @@ export default function ExpenditureDetailScreen() {
                   <MiniLineSpark values={seriesInUnit} color="#D95926" />
                 </div>
                 <span className="tabular text-sm w-24 text-right shrink-0 whitespace-nowrap">
-                  {stat.deltaKcal !== null
-                    ? `${signed(kcalToUnit(stat.deltaKcal, energyUnit))} ${energyUnitLabel(energyUnit)}`
-                    : "—"}
+                  {signed(kcalToUnit(stat.deltaKcal, energyUnit))} {energyUnitLabel(energyUnit)}
                 </span>
                 <span className="flex items-center gap-1 text-xs text-muted w-[86px] justify-end shrink-0">
                   <ChangeDirectionIcon direction={dir} colorClassName="text-expenditure" />

@@ -49,3 +49,21 @@ export function targetsForDate(programs: Program[], date: string): DayTargets | 
   if (!day) return null;
   return { calories: day.targetCalories, proteinG: day.targetProteinG, carbsG: day.targetCarbsG, fatG: day.targetFatG };
 }
+
+// Layers a "Carry Forward Shortfall" adjustment on top of a day's base
+// targets (see api/adjustments.ts). `undefined` covers the adjustment
+// query's not-yet-loaded state the same as `null` (no adjustment) — a
+// caller mid-fetch should render the base target, not a boost that might
+// not apply.
+export function applyAdjustment(
+  targets: DayTargets,
+  adjustment: { kcal: number; proteinG: number; carbsG: number; fatG: number } | null | undefined
+): DayTargets {
+  if (!adjustment) return targets;
+  return {
+    calories: targets.calories + adjustment.kcal,
+    proteinG: targets.proteinG + adjustment.proteinG,
+    carbsG: targets.carbsG + adjustment.carbsG,
+    fatG: targets.fatG + adjustment.fatG,
+  };
+}
