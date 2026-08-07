@@ -1,12 +1,18 @@
 import { sqliteTable, text, real, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 // One household, a handful of people, each with their own log/weight/coaching
-// data. Seeded from the AUTH_USERS env var at boot (see auth.ts) rather than
-// a signup flow — this is a closed personal deployment, not a public app.
+// data. Accounts are created through signup (gated by MACRODINGUS_ALLOW_SIGNUP)
+// or on first OIDC sign-in — this is a closed personal deployment, not a public
+// app. (The old comment here described an AUTH_USERS env var that no longer
+// exists anywhere in the codebase.)
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
   name: text("name").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
+  // Stable subject claim from the OIDC provider. Null for accounts that have
+  // only ever used a local password. Matched on ahead of name, because a
+  // person can be renamed in either system and the link must survive that.
+  oidcSub: text("oidc_sub").unique(),
   createdAt: text("created_at").notNull(),
 });
 

@@ -11,6 +11,24 @@ export interface AuthStatus {
   user?: AuthUser;
 }
 
+export interface OidcConfig {
+  enabled: boolean;
+  providerName?: string;
+}
+
+/**
+ * Whether this deployment has SSO configured. Asked at runtime rather than
+ * baked in at build time, so the same image works with and without it.
+ */
+export function useOidcConfig() {
+  return useQuery({
+    queryKey: ["auth", "oidc-config"],
+    queryFn: () => apiFetch<OidcConfig>("/auth/oidc/config"),
+    staleTime: Infinity,
+    retry: false,
+  });
+}
+
 export function useAuthStatus() {
   return useQuery({
     queryKey: ["auth", "status"],

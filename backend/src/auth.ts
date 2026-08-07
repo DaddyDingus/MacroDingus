@@ -8,6 +8,14 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db } from "./db/index.js";
 import { users } from "./db/schema.js";
+import {
+  authorizationUrl,
+  createAuthRequestState,
+  exchangeCode,
+  isAuthorized,
+  loadOidcConfig,
+  type AuthRequestState,
+} from "./oidc.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -91,6 +99,58 @@ const ALLOW_SIGNUP = process.env.MACRODINGUS_ALLOW_SIGNUP === "true";
 // between a single guessable password and every food log, weigh-in and
 // progress photo in the database.
 export const AUTH_RATE_LIMIT = { max: 5, timeWindow: "15 minutes" };
+
+const OIDC_STATE_COOKIE = "mt_oidc";
+
+/**
+ * Maps a verified OIDC identity onto a local user row, creating one on first
+ * sign-in. Returns the local user id.
+ *
+ * Match order matters:
+ *  1. oidc_sub — the only stable identifier. Survives a rename on either side.
+ *  2. name, but ONLY to adopt an existing local account that has never been
+ *     linked. This is what lets an account created by local signup become the
+ *     same account after SSO is switched on, instead of silently stranding its
+ *     history behind a second, empty account.
+ *
+ * Step 2 trusts the provider to own its usernames. That is sound here — the
+ * IdP is the authority and an optional group gate has already been applied
+ * above — but it is the reason MACRODINGUS_OIDC_REQUIRED_GROUP is worth
+ * setting on a provider where anyone can self-register.
+ */
+async function resolveOidcUser(identity: { subject: string; username: string }): Promise<string> {
+  const [linked] = await db.select().from(users).where(eq(users.oidcSub, identity.subject));
+  if (linked) return linked.id;
+
+  const [byName] = await db.select().from(users).where(eq(users.name, identity.username));
+  if (byName) {
+    if (!byName.oidcSub) {
+      await db.update(users).set({ oidcSub: identity.subject }).where(eq(users.id, byName.id));
+      return byName.id;
+    }
+    // Name is taken by a DIFFERENT subject. Never merge — that would hand one
+    // person another's food diary. Fall through and create a distinct account.
+  }
+
+  const id = crypto.randomUUID();
+  // A random hash nobody holds the input to: the account exists and is fully
+  // usable via SSO, but has no local password until its owner sets one. Using
+  // a real bcrypt hash (not a sentinel) keeps the local login path uniform —
+  // it simply never matches.
+  const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 10);
+
+  let name = identity.username;
+  if (byName) name = `${identity.username}-${identity.subject.slice(0, 6)}`.slice(0, 40);
+
+  await db.insert(users).values({
+    id,
+    name,
+    passwordHash,
+    oidcSub: identity.subject,
+    createdAt: new Date().toISOString(),
+  });
+  return id;
+}
 
 export async function registerAuth(app: FastifyInstance, dataDir: string) {
   // Prefer an explicitly managed secret so rotation is a config change rather
@@ -190,6 +250,99 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
     const [user] = await db.select().from(users).where(eq(users.id, userId));
     if (!user) return { authenticated: false };
     return { authenticated: true, user: { id: user.id, name: user.name } };
+  });
+
+  // ── OIDC single sign-on (optional) ────────────────────────────────────────
+  const oidc = loadOidcConfig();
+  if (oidc) {
+    app.log.info({ issuer: oidc.issuer, group: oidc.requiredGroup }, "OIDC sign-in enabled");
+  }
+
+  // Public: lets the login screen decide whether to render the SSO button
+  // without hard-coding build-time knowledge of the deployment.
+  app.get("/api/auth/oidc/config", async () =>
+    oidc ? { enabled: true, providerName: oidc.providerName } : { enabled: false }
+  );
+
+  app.get("/api/auth/oidc/start", async (req, reply) => {
+    if (!oidc) return reply.code(404).send({ error: "not found" });
+
+    const request = createAuthRequestState();
+    // The PKCE verifier, state and nonce live in a short-lived signed cookie
+    // rather than server memory: there is nothing to clean up, and it survives
+    // a container restart mid-login. Signed, so the client cannot forge one.
+    reply.setCookie(OIDC_STATE_COOKIE, JSON.stringify(request), {
+      path: "/api/auth/oidc",
+      httpOnly: true,
+      sameSite: "lax", // must not be "strict" — the IdP redirect is cross-site
+      secure: COOKIE_SECURE,
+      signed: true,
+      maxAge: 600,
+    });
+
+    try {
+      return reply.redirect(await authorizationUrl(oidc, request));
+    } catch (err) {
+      req.log.error({ err }, "OIDC authorization URL failed");
+      return reply.redirect("/?sso=unavailable");
+    }
+  });
+
+  app.get("/api/auth/oidc/callback", async (req, reply) => {
+    if (!oidc) return reply.code(404).send({ error: "not found" });
+
+    const clearState = () => reply.clearCookie(OIDC_STATE_COOKIE, { path: "/api/auth/oidc" });
+    const { code, state, error } = req.query as { code?: string; state?: string; error?: string };
+    if (error || !code || !state) {
+      clearState();
+      return reply.redirect("/?sso=failed");
+    }
+
+    const raw = req.cookies[OIDC_STATE_COOKIE];
+    const unsigned = raw ? req.unsignCookie(raw) : null;
+    if (!unsigned?.valid || !unsigned.value) {
+      clearState();
+      return reply.redirect("/?sso=failed");
+    }
+
+    let request: AuthRequestState;
+    try {
+      request = JSON.parse(unsigned.value) as AuthRequestState;
+    } catch {
+      clearState();
+      return reply.redirect("/?sso=failed");
+    }
+
+    // CSRF defence for the callback itself: without this, an attacker can
+    // feed you their own authorization code and land you in their account.
+    if (
+      typeof request.state !== "string" ||
+      request.state.length !== state.length ||
+      !crypto.timingSafeEqual(Buffer.from(request.state), Buffer.from(state))
+    ) {
+      clearState();
+      return reply.redirect("/?sso=failed");
+    }
+
+    let identity;
+    try {
+      identity = await exchangeCode(oidc, code, request);
+    } catch (err) {
+      req.log.error({ err }, "OIDC code exchange failed");
+      clearState();
+      return reply.redirect("/?sso=failed");
+    }
+
+    if (!isAuthorized(oidc, identity)) {
+      req.log.warn({ sub: identity.subject }, "OIDC sign-in denied: missing required group");
+      clearState();
+      return reply.redirect("/?sso=denied");
+    }
+
+    const userId = await resolveOidcUser(identity);
+    clearState();
+    signSession(reply, userId);
+    return reply.redirect("/");
   });
 
   app.addHook("preHandler", async (req, reply) => {
