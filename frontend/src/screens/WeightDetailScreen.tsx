@@ -204,9 +204,9 @@ export default function WeightDetailScreen() {
                 <div key={w} className="flex items-center gap-3 px-4 py-2.5 border-b border-line/60 last:border-b-0">
                   <span className="text-sm text-muted w-12 shrink-0">{w}-day</span>
                   <div className="flex-1 h-7 min-w-0 flex items-center">
-                    <div className="w-full border-t border-dashed border-line/60" />
+                    <div className="w-full h-[2px] bg-line/30 rounded-full" />
                   </div>
-                  <span className="tabular text-sm w-20 text-right shrink-0 text-muted/40">--</span>
+                  <span className="tabular text-sm w-20 text-right shrink-0 text-muted/40">—</span>
                   <span className="w-[86px] shrink-0" />
                 </div>
               );
