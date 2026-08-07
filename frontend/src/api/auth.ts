@@ -21,10 +21,10 @@ export function useAuthStatus() {
 export function useLogin() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (password: string) =>
+    mutationFn: (input: { name: string; password: string }) =>
       apiFetch<{ ok: true; user: AuthUser }>("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ password }),
+        body: JSON.stringify(input),
       }),
     onSuccess: (data) =>
       qc.setQueryData<AuthStatus>(["auth", "status"], { authenticated: true, user: data.user }),

@@ -33,19 +33,30 @@ export default function LoginScreen() {
 }
 
 function LoginForm() {
+  const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const login = useLogin();
 
+  const canSubmit = name.trim().length > 0 && password.length > 0;
+
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!password) return;
-    login.mutate(password);
+    if (!canSubmit) return;
+    login.mutate({ name: name.trim(), password });
   }
 
   return (
-    <form onSubmit={submit}>
+    <form onSubmit={submit} className="space-y-3">
       <input
         autoFocus
+        name="username"
+        autoComplete="username"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="Your name"
+        className="w-full rounded-md bg-surface border border-line px-4 py-3 text-sm text-center focus:outline-none focus:border-accent"
+      />
+      <input
         type="password"
         name="password"
         autoComplete="current-password"
@@ -55,12 +66,21 @@ function LoginForm() {
         className="w-full rounded-md bg-surface border border-line px-4 py-3 text-sm text-center focus:outline-none focus:border-accent"
       />
 
-      {login.isError && <p className="text-sm text-protein text-center mt-3">Incorrect password.</p>}
+      {/* Deliberately generic: the server never says which field was wrong,
+          and neither should this. A "no such user" message here would undo
+          the enumeration protection on the API. */}
+      {login.isError && (
+        <p className="text-sm text-protein text-center">
+          {login.error instanceof ApiError && login.error.status === 429
+            ? "Too many attempts. Wait a few minutes and try again."
+            : "Incorrect name or password."}
+        </p>
+      )}
 
       <button
         type="submit"
-        disabled={login.isPending || !password}
-        className="w-full mt-4 py-3 rounded-md bg-accent text-base font-medium disabled:opacity-40"
+        disabled={login.isPending || !canSubmit}
+        className="w-full py-3 rounded-md bg-accent text-base font-medium disabled:opacity-40"
         style={{ color: "#0B1210" }}
       >
         {login.isPending ? "Checking…" : "Log in"}

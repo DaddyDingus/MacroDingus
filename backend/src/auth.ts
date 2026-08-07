@@ -54,6 +54,22 @@ const signupSchema = z.object({
   password: z.string().min(8).max(200),
 });
 
+const loginSchema = z.object({
+  name: z.string().trim().min(1).max(40),
+  password: z.string().min(1).max(200),
+});
+
+// One message for every failure mode. "No such name" and "wrong password"
+// must be indistinguishable, or the endpoint becomes a way to enumerate who
+// has an account here.
+const INVALID_CREDENTIALS = "Incorrect name or password";
+
+// A real bcrypt hash (of a value nobody can supply — bcrypt silently
+// truncates at 72 bytes, so this can never be matched) used purely to burn
+// comparable CPU when the named account does not exist. Cost 10 matches what
+// signup writes.
+const DUMMY_HASH = "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
+
 export async function registerAuth(app: FastifyInstance, dataDir: string) {
   const secret = process.env.COOKIE_SECRET ?? loadOrCreateSecret(dataDir);
   await app.register(fastifyCookie, { secret });
@@ -84,21 +100,40 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
     return { ok: true, user: { id, name } };
   });
 
+  // Login takes a name AND a password. It used to take a bare password and
+  // bcrypt.compare it against every user row until one matched, which meant:
+  // an attacker succeeded by guessing ANY account's password rather than a
+  // specific one; two accounts sharing a password logged you into whichever
+  // row came back first; and every attempt cost one bcrypt per user, so a
+  // handful of concurrent requests saturated libuv's threadpool and stalled
+  // the process. `users.name` was already NOT NULL UNIQUE, so this needed no
+  // migration — just the lookup it should always have been.
   app.post("/api/auth/login", async (req, reply) => {
-    const body = req.body as { password?: string };
-    if (!body?.password) {
+    const parsed = loginSchema.safeParse(req.body);
+    if (!parsed.success) {
       reply.code(401);
-      return { error: "Incorrect password" };
+      return { error: INVALID_CREDENTIALS };
     }
-    const allUsers = await db.select().from(users);
-    for (const user of allUsers) {
-      if (await bcrypt.compare(body.password, user.passwordHash)) {
-        signSession(reply, user.id);
-        return { ok: true, user: { id: user.id, name: user.name } };
-      }
+
+    const [user] = await db.select().from(users).where(eq(users.name, parsed.data.name));
+
+    // Hash against a dummy when the name is unknown so the response takes
+    // comparable time either way — otherwise the timing difference between
+    // "no such user" (instant) and "wrong password" (one bcrypt) is a name
+    // oracle, and the single generic message below would be for nothing.
+    if (!user) {
+      await bcrypt.compare(parsed.data.password, DUMMY_HASH);
+      reply.code(401);
+      return { error: INVALID_CREDENTIALS };
     }
-    reply.code(401);
-    return { error: "Incorrect password" };
+
+    if (!(await bcrypt.compare(parsed.data.password, user.passwordHash))) {
+      reply.code(401);
+      return { error: INVALID_CREDENTIALS };
+    }
+
+    signSession(reply, user.id);
+    return { ok: true, user: { id: user.id, name: user.name } };
   });
 
   app.post("/api/auth/logout", async (_req, reply) => {
