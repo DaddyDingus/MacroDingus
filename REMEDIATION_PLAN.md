@@ -12,7 +12,7 @@
 | D-1 | Host | **CT106** (`192.168.20.55`), the personal-apps host — **standard treatment, same as every other app** |
 | D-2 | Image | **GitHub Actions → `ghcr.io/zriec1/macrodingus`**, pinned tags (mandatory: `build:` does not work on a Portainer agent endpoint) |
 | D-3 | Hostname | `macros.nyxcloud.com.au` *(proposed — say if you want another)* |
-| D-4 | Auth model | Authentik forward-auth at Traefik; in-app OIDC not attempted |
+| D-4 | Auth model | Username+password (R4) → Authentik **OIDC self-auth** (R4c), the R-033 house standard, with local login as break-glass. Forward-auth stays at Traefik but becomes optional rather than load-bearing |
 | D-5 | Signup | Disabled after the first account is created |
 | — | F-01 app hardening | **Required before deploy** — see below |
 
@@ -27,18 +27,25 @@ the fleet harder to reason about, not safer.
 
 What genuinely carries over is the security substance, and one item gets *more* important:
 
-**R4 (login throttle + signup lockdown) is now load-bearing, not belt-and-braces.** The
+**Fixing the app's own login is now load-bearing, not belt-and-braces.** The
 [service-auth audit](https://github.com/zriec1/homelab/blob/main/docs/security/service-auth-audit.md)
 run alongside this work established the fleet rule: *a published port should never be the only
 thing between an attacker and data worth taking.* On CT106 the app **will** publish a port, so
-its own login has to be real. Without R4, MacroDingus would land as the fleet's weakest Tier-B
-service while holding some of its most sensitive data.
+its own login has to be real. Without R4/R4c, MacroDingus would land as the fleet's weakest
+Tier-B service while holding some of its most sensitive data.
 
-**Honest caveat:** even with R4, MacroDingus is **Tier B-plus, not Tier A.** Its login has no
-username — the credential is a bare password compared against every user row. A throttle and a
-strong password make that defensible for one user; they do not make it equivalent to
-`nyx-pockets-v2`'s OIDC self-auth. That gap is recorded, accepted, and is the trigger condition
-for revisiting F-01 properly if a second account ever exists.
+**Correction (same day).** An earlier draft mitigated the password-only login with a throttle
+and left the design alone, reasoning that changing `auth.ts` was expensive. That was wrong on
+both counts. `users.name` is **already** `notNull().unique()`, so adding a username needs **no
+migration** — about 8 backend lines and 10 frontend — and the plan was already modifying
+`auth.ts` twice anyway, so the "don't touch it" argument was self-contradictory. Worse, it
+invented a special case where the lab already has a standard: nyx-patch, nyx-pockets-v2 and
+nyx-dash all self-authenticate against Authentik.
+
+R4 is now the real fix (username), R4b the throttle as defence-in-depth, and **R4c takes the app
+to the house standard — Authentik OIDC with local login as break-glass**, exactly as nyx-dash
+runs. That also dissolves the biggest deployment risk in this plan: if forward-auth breaks the
+PWA, an app that self-authenticates simply doesn't care.
 
 ## Two repositories, two PRs
 
@@ -144,38 +151,111 @@ migration, and migrations are forward-only in this app — see §3.
 
 ---
 
-### R4 · Login throttle + signup lockdown — **F-01, F-03**
+### R4 · Add a username to login — **F-01** *(the actual fix)*
 
-**Problem.** Unlimited password guesses against a bare-password login that `bcrypt.compare`s
-every user row. Also a CPU-exhaustion vector: ~40 req/s saturates libuv's 4-thread pool.
+**Problem.** `POST /api/auth/login` takes a bare password and `bcrypt.compare`s it against every
+user row. There is no identity claim at all.
 
-**Files.** `backend/package.json` (add `@fastify/rate-limit`), `backend/src/index.ts` (register),
-`backend/src/auth.ts` (per-route limits + signup gate).
+**Files.** `backend/src/auth.ts` (~8 lines), `frontend/src/screens/LoginScreen.tsx` (~10 lines).
+
+**No migration.** `users.name` is already `text("name").notNull().unique()` — the column exists,
+is unique-constrained, and is already collision-checked on signup and on account rename. The
+signup form already renders a working name input with its own state; the login form reuses the
+same pattern.
 
 **Approach.**
-- `@fastify/rate-limit` — global 300/min (matching Traefik's existing `ratelimit` middleware),
-  with a tight bucket on `/api/auth/login` and `/api/auth/signup`: **5 attempts per 15 min per
-  IP**, `ban` after repeated violation.
-- `MACRODINGUS_ALLOW_SIGNUP` (default `false`). When false, `POST /api/auth/signup` returns
-  `404` — not `403`, so the endpoint's existence isn't confirmed. Set `true` once, create the
-  account, set it back.
-- Keep the constant `"Incorrect password"` response already used — it correctly avoids
-  distinguishing failure modes.
+```ts
+const loginSchema = z.object({
+  name: z.string().trim().min(1).max(40),
+  password: z.string().min(1).max(200),
+});
+// ...
+const [user] = await db.select().from(users).where(eq(users.name, parsed.data.name));
+if (!user || !(await bcrypt.compare(parsed.data.password, user.passwordHash))) {
+  reply.code(401);
+  return { error: "Incorrect name or password" };   // one message for both failure modes
+}
+signSession(reply, user.id);
+```
+Keep a single generic error so the response never distinguishes "no such user" from "wrong
+password" — that is what stops the endpoint becoming a username oracle.
 
-**Behavioural impact.** Sixth wrong password in 15 minutes is rejected without a bcrypt call
-(also fixing the DoS). Signup unreachable in normal operation. `@fastify/rate-limit` is
-in-memory — restarts reset counters, which is fine for one user and avoids adding Redis.
+**What this fixes that a throttle cannot.** Four things, outright rather than by slowing them:
+an attacker no longer succeeds by guessing *any* account's password; two accounts sharing a
+password can no longer log you into the wrong one; the O(n)-bcrypt-per-attempt CPU DoS becomes a
+single indexed lookup; and there is finally an identity to bind a lockout or an audit line to.
 
-**Important:** behind Traefik every request carries CT100's Docker gateway IP unless
-`trustProxy` is set. Fastify must be configured with `trustProxy: true` so the limiter keys on
-the real client IP from `X-Forwarded-For`, or **one hostile client would lock out everyone**.
-This is the single most likely thing to get subtly wrong in this plan.
+**Behavioural impact.** The login screen gains a name field. Existing sessions are unaffected
+(the cookie already stores `userId`). Nothing else in the app changes.
 
-**Test.** 6× wrong-password `curl` in a loop → 6th returns `429`. `POST /api/auth/signup` → `404`.
-Then set `MACRODINGUS_ALLOW_SIGNUP=true`, confirm `201`, set it back. Verify the limiter keys on
-the client IP by checking `X-Forwarded-For` handling in the reply headers.
+**Test.** Correct name + password → `200`. Correct password, wrong name → `401`. Non-existent
+name → `401` with a byte-identical body and comparable timing. Confirm the session cookie still
+resolves to the right account via `GET /api/auth/status`.
 
-**Rollback.** `git revert`, or set `MACRODINGUS_ALLOW_SIGNUP=true` and redeploy — no data change.
+**Rollback.** `git revert` — no schema change, so reverting is clean and instant.
+
+---
+
+### R4b · Login throttle + signup lockdown — **F-01, F-03** *(defence-in-depth)*
+
+**Problem.** Even with a username, unlimited guesses against one known account is a real attack,
+and unauthenticated signup is surface nobody needs.
+
+**Files.** `backend/package.json` (add `@fastify/rate-limit`), `backend/src/index.ts`,
+`backend/src/auth.ts`.
+
+**Approach.** `@fastify/rate-limit`: global 300/min, with **5 attempts per 15 min** on
+`/api/auth/login` and `/api/auth/signup`. `MACRODINGUS_ALLOW_SIGNUP` (default `false`) makes
+signup return `404` — not `403`, so the endpoint's existence isn't confirmed. Set `true` once to
+create the account, then back to `false`.
+
+**Important:** behind Traefik every request carries CT100's address unless Fastify is started
+with `trustProxy: true`, so the limiter must key on `X-Forwarded-For`. Get this wrong and one
+hostile client locks out everyone. This is the subtlest failure mode in the plan.
+
+**Test.** 6× wrong password → 6th returns `429`. `POST /api/auth/signup` → `404`. Verify the
+limiter keys per-client, not per-proxy.
+
+**Rollback.** `git revert`, or set `MACRODINGUS_ALLOW_SIGNUP=true`. No data change.
+
+---
+
+### R4c · Authentik OIDC self-authentication — **F-01** *(reaches the house standard)*
+
+**Problem.** Even with R4 + R4b the app is Tier B-plus: a local password, no MFA, and out of step
+with every other custom app in the lab. It also leaves forward-auth as a single point of failure
+for access — and forward-auth is the component most likely to break the PWA.
+
+**Files.** `backend/src/auth.ts` + a new `backend/src/oidc.ts`, `frontend/src/screens/LoginScreen.tsx`,
+`.env.example`. Estimated 150–250 lines.
+
+**Approach.** The R-033 pattern already proven three times here — nyx-patch, nyx-pockets-v2 and
+nyx-dash. Authorization Code + PKCE against a new Authentik OAuth2/OpenID provider, ID token
+validated via JWKS, gated on the `homelab-admins` group, mapped onto a local user row by OIDC
+`sub`. **Local username+password from R4 stays as break-glass** for when Authentik is down —
+same posture nyx-dash runs (local hashes present, live mode OIDC).
+
+**Why this is worth doing rather than deferring.**
+- It is the house standard. Three reference implementations exist to copy from.
+- It makes the app genuinely **Tier A** under the fleet auth rule, rather than firewall-dependent.
+- It brings MFA, which no amount of local-password hardening will.
+- **It makes forward-auth optional.** If the Authentik gate turns out to break the PWA — as it
+  broke the HA companion app and Jellyfin iOS — you drop the middleware and lose nothing, instead
+  of being forced to choose between a working app and an access boundary.
+
+**Behavioural impact.** Login becomes "Sign in with Authentik" plus a local fallback. Single
+sign-on with the rest of the lab.
+
+**Test.** Full flow in a browser; group gate rejects a non-`homelab-admins` account; local
+break-glass still works with Authentik's provider disabled; **PWA install + service-worker
+update both survive the redirect** — this is the specific thing to check on a real phone.
+
+**Rollback.** Unset the OIDC env vars — the app falls back to local login with no code change.
+Delete the Authentik provider. Genuinely low-risk to reverse.
+
+**Sequencing.** R4 stands alone and is independently deployable. If R4c hits trouble (PWA
+redirect handling is the plausible snag), deploy on R4 + R4b + forward-auth and land OIDC after —
+nothing is wasted either way.
 
 ---
 
@@ -432,7 +512,7 @@ runtime image entirely).
 |---|---|---|---|
 | `createdByUserId` on `foods` + write authz | **F-04** | Any account can currently rewrite any food, retroactively changing every historical log that references it. Harmless at one user | **A second account.** This is the hard gate |
 | Per-user scoping of AI candidate foods | **F-18** | Two-line fix, zero impact at one user | Same |
-| `tokenVersion` for true session revocation | **F-06** | Needs a migration, and migrations here are **forward-only** — every schema change permanently raises the cost of the rollback path in §10.5. Not worth it for one user with a break-glass secret rotation available | Multi-user, or a suspected compromise |
+| `tokenVersion` for true session revocation | **F-06** | Needs a migration, and migrations here are **forward-only**. R4c largely supersedes it — an OIDC session is revocable from Authentik, which is the same control by a better route | Multi-user, or a suspected compromise |
 | Full CSP | **F-05** | Must be validated against the service worker and MediaPipe WASM (`wasm-unsafe-eval`). Headers deliver most of the value now | After a `Content-Security-Policy-Report-Only` run |
 | `@fastify/csrf-protection` | **F-07** | R14's `Origin` check plus `SameSite=Lax` plus Authentik cover this. Token plumbing through every SPA mutation is real, permanent complexity | Public exposure |
 | Test suite | **F-19** | Upstream has none. Tests in a fork you intend to rebase create permanent merge friction in every file they cover | Before substantial feature work of your own |
@@ -453,7 +533,7 @@ runtime image entirely).
 | Second replica, load balancer, autoscaling | One user. A second replica would actively break SQLite's single-writer model |
 | CDN | Cloudflare already fronts it. Static assets are a few hundred KB and the service worker caches them |
 | Additional WAF beyond CrowdSec AppSec | Already deployed and already inspects this traffic |
-| Rewriting auth to username+password or in-app OIDC | The genuinely "correct" fix, and still rejected: it is a real feature in the most rebase-sensitive file in the repo. Authentik + R4 achieves the security outcome at a fraction of the permanent maintenance cost |
+| ~~Rewriting auth to username+password or in-app OIDC~~ | **Withdrawn — this was wrong.** Both are now R4 and R4c. The username needs no migration and ~18 lines; OIDC is the lab's own thrice-proven pattern. Rejecting them as "too invasive" while the plan already edited `auth.ts` twice was not a defensible position |
 | Encrypting Anthropic keys at rest | The decryption key would live on the same disk with the same permissions. Buys the appearance of security, not security |
 | Per-request application audit log | Traefik access logs → Loki already cover the request layer for one user |
 | Moving other homelab apps off CT106 | **Explicitly rejected.** CT106's published ports are a sound design given one Traefik and no overlay network; Phase 8g firewalls them. Concentrating services on CT100 would worsen blast radius and memory pressure. MacroDingus is a special case because *its own auth is weak*, not because CT106 is deficient |
@@ -489,7 +569,9 @@ configuration.
 | 1 | `chore: remove tailscale sidecar and config` (R1) | fork |
 | 2 | `fix(security): block SSRF in recipe URL import` (R2) | fork |
 | 3 | `fix(security): harden session cookie flags and lifetime` (R3) | fork |
-| 4 | `feat(security): rate-limit auth routes and gate signup` (R4) | fork |
+| 4 | `feat(auth): require a username to log in` (R4) | fork |
+| 4b | `feat(security): rate-limit auth routes and gate signup` (R4b) | fork |
+| 4c | `feat(auth): authentik OIDC with local break-glass` (R4c) | fork |
 | 5 | `chore(docker): run as non-root with limits and a health check` (R5) | fork |
 | 6 | `ci: build and publish to GHCR` (R8) | fork |
 | 7 | `docs: rewrite README for homelab deployment` (R9, R10) | fork |
