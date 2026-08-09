@@ -41,6 +41,16 @@ export interface CheckInResult {
   targetChanges: CheckinTargetChanges | null;
 }
 
+// What a check-in *would* do, from POST /api/checkins/preview — nothing is
+// written until you accept. Carries the same numbers as CheckInResult minus
+// the fields that only exist once a checkins row does (id/createdAt/narrative),
+// so one renderer can draw either.
+export interface CheckInPreview {
+  preview: { date: string; tdee: number; trendWeightKg: number; tdeeFluxKcal: number | null };
+  usedAdaptiveTdee: boolean;
+  targetChanges: CheckinTargetChanges | null;
+}
+
 // A check-in is purely a TDEE-estimate snapshot now — targets moved to
 // program_days (see lib/programTargets.ts's targetsForDate(), which
 // replaces every place that used to read .targetCalories/etc. off a Checkin).
@@ -122,6 +132,16 @@ export function useSaveProfile() {
     mutationFn: (input: ProfileInput) =>
       apiFetch<{ profile: Profile }>("/profile", { method: "POST", body: JSON.stringify(input) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["coach"] }),
+  });
+}
+
+// Costs nothing to abandon: no checkins row, no target regeneration, no
+// narrative call. Declining is POST /api/checkins/ignore (useIgnoreCheckin),
+// exactly the same silence-this-cycle mechanism the Dashboard/Strategy Ignore
+// buttons use — there's no third "declined" state to store.
+export function usePreviewCheckIn() {
+  return useMutation({
+    mutationFn: () => apiFetch<CheckInPreview>("/checkins/preview", { method: "POST" }),
   });
 }
 

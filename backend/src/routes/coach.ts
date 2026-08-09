@@ -68,6 +68,18 @@ export interface CheckinTargetChanges {
   fatG: { from: number; to: number };
 }
 
+// Named rather than returned as bare object literals: TypeScript normalizes a
+// union of literal returns so every member carries every key (as `?: undefined`),
+// which quietly defeats `"error" in result` narrowing at the call sites.
+type CheckinRefusal =
+  | { error: "profile_required" }
+  | { error: "weight_required" }
+  | { error: "checkin_not_due"; dueDate: string };
+
+function refuse(refusal: CheckinRefusal): CheckinRefusal {
+  return refusal;
+}
+
 function averageDayTargets(days: { targetCalories: number; targetProteinG: number; targetCarbsG: number; targetFatG: number }[]) {
   const n = days.length;
   const sum = (pick: (d: (typeof days)[number]) => number) => days.reduce((s, d) => s + pick(d), 0);
@@ -79,14 +91,24 @@ function averageDayTargets(days: { targetCalories: number; targetProteinG: numbe
   };
 }
 
-// A check-in's real job now is just refreshing the TDEE estimate. If the
-// active program is Coached and hasn't been hand-customized ('custom'),
-// its program_days are also refreshed to reflect the fresh TDEE — matches
-// the Goal Rate copy's "we will adjust your calorie targets as needed".
-// Manual programs and hand-edited ones are never touched by a check-in.
-export async function performCheckin(userId: string) {
+// Everything a check-in would do, computed and returned without writing a
+// single row. Split out from performCheckin() so the check-in screen can show
+// you the new targets *before* they're yours (see POST /api/checkins/preview)
+// — the whole accept/decline flow rests on this staying side-effect-free, so
+// don't reach for db.insert/db.update in here.
+//
+// Deliberately excluded: the narrative. It's a paid Claude call, and nothing
+// in the preview displays it, so generating one per preview would bill for
+// text nobody reads and produce a second one on accept anyway.
+//
+// A check-in's real job is refreshing the TDEE estimate. If the active program
+// is Coached and hasn't been hand-customized ('custom'), its program_days are
+// also refreshed to reflect the fresh TDEE — matches the Goal Rate copy's "we
+// will adjust your calorie targets as needed". Manual programs and hand-edited
+// ones are never touched by a check-in.
+export async function planCheckin(userId: string) {
   const [profile] = await db.select().from(profiles).where(eq(profiles.userId, userId));
-  if (!profile) return { error: "profile_required" as const };
+  if (!profile) return refuse({ error: "profile_required" });
 
   // Weekly cadence, enforced server-side (not just a UI hint) — checking in
   // more often doesn't add real signal (the 21-day adaptive-TDEE window and
@@ -96,11 +118,11 @@ export async function performCheckin(userId: string) {
   const today = householdDateString();
   if (latestCheckin) {
     const dueDate = nextCheckinDueDate(latestCheckin.date, profile.checkInDayOfWeek);
-    if (today < dueDate) return { error: "checkin_not_due" as const, dueDate };
+    if (today < dueDate) return refuse({ error: "checkin_not_due", dueDate });
   }
 
   const { weighIns, dailyCalories } = await gatherAdaptiveTdeeInputs(userId);
-  if (weighIns.length === 0) return { error: "weight_required" as const };
+  if (weighIns.length === 0) return refuse({ error: "weight_required" });
 
   const trend = computeTrend(weighIns);
   const trendWeightKg = trend[trend.length - 1].trendKg;
@@ -127,11 +149,17 @@ export async function performCheckin(userId: string) {
   });
   const tdee = adaptiveTdee?.tdee ?? formulaTdee;
   let targetChanges: CheckinTargetChanges | null = null;
+  let regenerate: {
+    programId: string;
+    days: { dayOfWeek: number; targetCalories: number; targetProteinG: number; targetCarbsG: number; targetFatG: number }[];
+    proteinPerKgUsed: number;
+    proteinBasisUsed: "total" | "lean";
+  } | null = null;
   if (activeProgram && activeProgram.style === "coached" && activeProgram.distributionMode !== "custom" && activeGoal) {
     {
-      // Read before the regenerate below overwrites them — this is the only
-      // record of what the targets were, since program_days is updated in
-      // place rather than versioned.
+      // The targets as they stand. Once accepted the regenerate below
+      // overwrites them in place (program_days isn't versioned), so this read
+      // is the only record of what they were.
       const previousDays = await db.select().from(programDays).where(eq(programDays.programId, activeProgram.id));
       const result = generateCoachedProgramDays({
         weighIns,
@@ -154,24 +182,12 @@ export async function performCheckin(userId: string) {
         bodyFatPercent,
         weeklyExerciseHours: profile.weeklyExerciseHours ?? null,
       });
-      for (const day of result.days) {
-        await db
-          .update(programDays)
-          .set({
-            targetCalories: day.targetCalories,
-            targetProteinG: day.targetProteinG,
-            targetCarbsG: day.targetCarbsG,
-            targetFatG: day.targetFatG,
-          })
-          .where(and(eq(programDays.programId, activeProgram.id), eq(programDays.dayOfWeek, day.dayOfWeek)));
-      }
-      await db
-        .update(programs)
-        .set({
-          proteinPerKgUsed: result.breakdown.proteinPerKgUsed,
-          proteinBasis: result.breakdown.proteinBasisUsed,
-        })
-        .where(eq(programs.id, activeProgram.id));
+      regenerate = {
+        programId: activeProgram.id,
+        days: result.days,
+        proteinPerKgUsed: result.breakdown.proteinPerKgUsed,
+        proteinBasisUsed: result.breakdown.proteinBasisUsed,
+      };
 
       if (previousDays.length > 0) {
         const before = averageDayTargets(previousDays);
@@ -184,6 +200,45 @@ export async function performCheckin(userId: string) {
         };
       }
     }
+  }
+
+  return {
+    profile,
+    latestCheckin,
+    today,
+    dailyCalories,
+    trendWeightKg,
+    tdee,
+    adaptiveTdee,
+    regenerate,
+    targetChanges,
+  };
+}
+
+// The write half. Re-plans from scratch rather than taking a plan from the
+// caller: a plan is cheap to recompute and deterministic given the same data,
+// and accepting one over the wire would let a client dictate its own targets.
+export async function performCheckin(userId: string) {
+  const plan = await planCheckin(userId);
+  if ("error" in plan) return plan;
+  const { profile, latestCheckin, today, dailyCalories, trendWeightKg, tdee, adaptiveTdee, regenerate, targetChanges } = plan;
+
+  if (regenerate) {
+    for (const day of regenerate.days) {
+      await db
+        .update(programDays)
+        .set({
+          targetCalories: day.targetCalories,
+          targetProteinG: day.targetProteinG,
+          targetCarbsG: day.targetCarbsG,
+          targetFatG: day.targetFatG,
+        })
+        .where(and(eq(programDays.programId, regenerate.programId), eq(programDays.dayOfWeek, day.dayOfWeek)));
+    }
+    await db
+      .update(programs)
+      .set({ proteinPerKgUsed: regenerate.proteinPerKgUsed, proteinBasis: regenerate.proteinBasisUsed })
+      .where(eq(programs.id, regenerate.programId));
   }
 
   // Best-effort — a narrative failure (no API key, a transient API error)
@@ -237,6 +292,15 @@ export async function performCheckin(userId: string) {
   return { checkin, usedAdaptiveTdee: adaptiveTdee !== null, targetChanges };
 }
 
+// Shared by POST /api/checkins and its preview so a preview can never succeed
+// where the commit behind it would fail, or report the refusal differently.
+function checkinErrorBody(result: CheckinRefusal) {
+  if (result.error === "checkin_not_due") {
+    return { error: `Your next check-in isn't due until ${result.dueDate}.`, dueDate: result.dueDate };
+  }
+  return { error: result.error === "profile_required" ? "Set up your profile first" : "Log at least one weight first" };
+}
+
 export function registerCoachRoutes(app: FastifyInstance) {
   app.get("/api/profile", async (req) => {
     const [profile] = await db.select().from(profiles).where(eq(profiles.userId, req.userId!));
@@ -284,15 +348,33 @@ export function registerCoachRoutes(app: FastifyInstance) {
 
   app.post("/api/checkins", async (req, reply) => {
     const result = await performCheckin(req.userId!);
-    if ("error" in result) {
-      reply.code(400);
-      if (result.error === "checkin_not_due") {
-        return { error: `Your next check-in isn't due until ${result.dueDate}.`, dueDate: result.dueDate };
-      }
-      return { error: result.error === "profile_required" ? "Set up your profile first" : "Log at least one weight first" };
-    }
+    if ("error" in result) return reply.code(400).send(checkinErrorBody(result));
     reply.code(201);
     return result;
+  });
+
+  // What a check-in *would* do. Writes nothing, so the check-in screen can put
+  // the new targets in front of you before you accept them (declining silences
+  // this cycle's reminders via POST /api/checkins/ignore and leaves the
+  // check-in undone). Same due-date gate as the real thing, so the screen can
+  // never offer to accept a check-in the commit would then refuse.
+  //
+  // Shape deliberately mirrors the committed response minus the parts that
+  // only exist once a row does (id, createdAt, narrative) — one renderer draws
+  // both, and the numbers agree because the commit re-plans identically.
+  app.post("/api/checkins/preview", async (req, reply) => {
+    const plan = await planCheckin(req.userId!);
+    if ("error" in plan) return reply.code(400).send(checkinErrorBody(plan));
+    return {
+      preview: {
+        date: plan.today,
+        tdee: Math.round(plan.tdee),
+        trendWeightKg: plan.trendWeightKg,
+        tdeeFluxKcal: plan.adaptiveTdee ? Math.round(plan.adaptiveTdee.fluxKcal) : null,
+      },
+      usedAdaptiveTdee: plan.adaptiveTdee !== null,
+      targetChanges: plan.targetChanges,
+    };
   });
 
   app.get("/api/checkins", async (req) => {

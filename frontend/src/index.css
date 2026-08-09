@@ -261,3 +261,101 @@
     opacity: 0.45;
   }
 }
+
+/* CheckInFlow's headline reveal — the check-in's Calorie delta is dropped
+   onto the screen rather than faded in: it starts above its resting place and
+   scaled up (near the viewer), accelerates down, lands, and bounces twice with
+   rapidly decaying height before settling.
+   Three things make it read as a physical object rather than a floaty slide,
+   and all three are load-bearing:
+   - Per-keyframe animation-timing-function, alternating ease-in on every fall
+     (gravity accelerating it) with ease-out on every rise (gravity decelerating
+     it). A single easing across the whole animation destroys the effect.
+   - Scale tracks height. Anything airborne is nearer the viewer, so the bounce
+     reads as depth; a pure translate reads as a wobble.
+   - One frame of squash at each impact (wider than tall), recovered
+     immediately. Skipping it makes the reversal look instantaneous and rubbery.
+   Every translate is a percentage of the number's own height, not vh: the fall
+   then stays proportional to the type at any screen size, where a viewport-
+   relative distance would launch it clean off the top of a short phone and
+   barely move it on a tall one.
+   Opacity is deliberately NOT in here: a keyframe that sets only opacity would
+   also reset the timing function for its interval to the animation default.
+   The fade lives on the wrapper (.checkin-drop-fade) instead.
+   Keyframe percentages are read back by CheckInFlow.tsx to time the haptic
+   ticks and the impact ring against the two landings (46% and 80%) — keep
+   DROP_IMPACT_FRACTIONS in that file in sync with them. */
+@keyframes checkin-drop {
+  0% {
+    transform: translate3d(0, -300%, 0) scale(2);
+    animation-timing-function: cubic-bezier(0.45, 0, 0.9, 0.4);
+  }
+  46% {
+    transform: translate3d(0, 0, 0) scale(1);
+    animation-timing-function: cubic-bezier(0.3, 0, 0.5, 1);
+  }
+  51% {
+    transform: translate3d(0, 0, 0) scale(1.09, 0.89);
+    animation-timing-function: cubic-bezier(0.1, 0.6, 0.35, 1);
+  }
+  66% {
+    transform: translate3d(0, -58%, 0) scale(1.14);
+    animation-timing-function: cubic-bezier(0.45, 0, 0.9, 0.4);
+  }
+  80% {
+    transform: translate3d(0, 0, 0) scale(1);
+    animation-timing-function: cubic-bezier(0.3, 0, 0.5, 1);
+  }
+  83% {
+    transform: translate3d(0, 0, 0) scale(1.035, 0.96);
+    animation-timing-function: cubic-bezier(0.1, 0.6, 0.35, 1);
+  }
+  91% {
+    transform: translate3d(0, -15%, 0) scale(1.04);
+    animation-timing-function: cubic-bezier(0.45, 0, 0.9, 0.4);
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+/* Duration is overridden inline by CheckInFlow.tsx (DROP_MS), which also times
+   the haptics and the impact ring off it. */
+.checkin-drop {
+  animation: checkin-drop 1150ms both;
+  transform-origin: 50% 100%;
+  will-change: transform;
+}
+
+@keyframes checkin-drop-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.checkin-drop-fade {
+  animation: checkin-drop-fade 160ms linear both;
+}
+
+/* The dust the landing kicks up: a soft horizontal line under the number that
+   spreads outward and fades. Delayed to the first impact by the caller. */
+@keyframes checkin-impact {
+  0% { opacity: 0; transform: scaleX(0.15); }
+  12% { opacity: 0.9; }
+  100% { opacity: 0; transform: scaleX(2.2); }
+}
+
+.checkin-impact {
+  animation: checkin-impact 620ms cubic-bezier(0.1, 0.7, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* No drop at all under reduced motion — the number is simply there. The
+     component also skips the haptics and shortens the loading phase. */
+  .checkin-drop,
+  .checkin-impact {
+    animation: none;
+  }
+  .checkin-impact {
+    opacity: 0;
+  }
+}

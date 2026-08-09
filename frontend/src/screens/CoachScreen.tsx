@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, Pencil, RotateCw, Target, Calendar as CalendarIcon, ChevronDown } from "lucide-react";
-import { useCoachStatus, useSaveProfile, useCheckIn, useIgnoreCheckin, type ActivityLevel, type CheckInResult } from "../api/coach";
+import { useCoachStatus, useSaveProfile, useIgnoreCheckin, type ActivityLevel } from "../api/coach";
 import { useGoals, useDeleteGoal } from "../api/goals";
 import { useWeightUnit, kgToUnit } from "../lib/weightUnit";
 import { daysBetween, localDateString } from "../lib/date";
 import { computeGoalProgressPercent } from "../lib/goalProgress";
 import ChangeCheckInDaySheet from "../components/ChangeCheckInDaySheet";
-import CheckInResultSheet from "../components/CheckInResultSheet";
+import CheckInFlow from "../components/CheckInFlow";
 import LogWeightFirstSheet from "../components/LogWeightFirstSheet";
 import WeeklyProgramGrid from "../components/WeeklyProgramGrid";
 import BasicProfileForm from "../components/BasicProfileForm";
@@ -38,9 +38,9 @@ function Pill({ icon, label, onClick }: { icon: React.ReactNode; label: string; 
 // is goal progress, inner (ink, or orange once overdue) is how far through
 // the check-in cycle you are. checkInPercent is progress toward
 // nextCheckinDueDate (see backend/src/lib/checkinSchedule.ts), not a flat
-// /7 — the cycle can run shorter than 7 days right after changing the
-// check-in weekday, since the next due date is the next occurrence of that
-// weekday, not always a full week out.
+// /7 — the cycle can run 4–10 days right after changing the check-in weekday,
+// since the next due date is the next occurrence of that weekday (subject to
+// MIN_CHECKIN_CYCLE_DAYS), not always a full week out.
 function DualRing({
   goalPercent,
   checkInPercent,
@@ -105,13 +105,12 @@ export default function CoachScreen() {
   const navigate = useNavigate();
   const status = useCoachStatus();
   const saveProfile = useSaveProfile();
-  const checkIn = useCheckIn();
   const ignoreCheckin = useIgnoreCheckin();
   const goals = useGoals();
   const deleteGoal = useDeleteGoal();
   const { unit } = useWeightUnit();
   const [showCheckInDaySheet, setShowCheckInDaySheet] = useState(false);
-  const [checkInResult, setCheckInResult] = useState<CheckInResult | null>(null);
+  const [checkInOpen, setCheckInOpen] = useState(false);
   const [pendingDeleteGoalId, setPendingDeleteGoalId] = useState<string | null>(null);
   const [narrativeExpanded, setNarrativeExpanded] = useState(false);
   const [weightPromptOpen, setWeightPromptOpen] = useState(false);
@@ -234,24 +233,14 @@ export default function CoachScreen() {
                   </button>
                 )}
                 <button
-                  onClick={() =>
-                    checkIn.mutate(undefined, {
-                      onSuccess: (data) => setCheckInResult(data),
-                    })
-                  }
-                  disabled={checkIn.isPending}
-                  className="flex-1 px-5 py-2.5 rounded-full text-sm font-semibold disabled:opacity-50"
+                  onClick={() => setCheckInOpen(true)}
+                  className="flex-1 px-5 py-2.5 rounded-full text-sm font-semibold"
                   style={{ background: "#ECEDEE", color: "#0B1210" }}
                 >
-                  {checkIn.isPending ? "Checking in…" : "Check In"}
+                  Check In
                 </button>
               </div>
             </div>
-            {checkIn.isError && (
-              <p className="text-xs text-red-400 text-center">
-                {checkIn.error instanceof Error ? checkIn.error.message : "Couldn't check in."}
-              </p>
-            )}
           </>
         )}
 
@@ -398,14 +387,9 @@ export default function CoachScreen() {
           onClose={() => setShowCheckInDaySheet(false)}
         />
       )}
-      {checkInResult?.checkin && (
-        <CheckInResultSheet
-          checkin={checkInResult.checkin}
-          usedAdaptiveTdee={checkInResult.usedAdaptiveTdee}
-          targetChanges={checkInResult.targetChanges}
-          onClose={() => setCheckInResult(null)}
-        />
-      )}
+      {/* Owns the whole check-in — running it, landing the headline number,
+          and reporting what moved. This screen only decides when to open it. */}
+      {checkInOpen && <CheckInFlow onClose={() => setCheckInOpen(false)} />}
       {weightPromptOpen && (
         <LogWeightFirstSheet onClose={() => setWeightPromptOpen(false)} onContinue={() => navigate("/strategy/new-goal")} />
       )}

@@ -4,13 +4,13 @@ import { useNavigate } from "react-router-dom";
 import { RefreshCw, CalendarClock } from "lucide-react";
 import { useDayLog } from "../api/logs";
 import { usePrograms } from "../api/programs";
-import { useCoachStatus, useCheckIn, useIgnoreCheckin, type CheckInResult } from "../api/coach";
+import { useCoachStatus, useIgnoreCheckin } from "../api/coach";
 import { localDateString, daysBetween } from "../lib/date";
 import { targetsForDate } from "../lib/programTargets";
 import { forceRefreshApp } from "../lib/forceRefreshApp";
 import { saveDashboardScroll } from "../lib/dashboardScroll";
 import DashboardTotalsArcCard from "../components/DashboardTotalsArcCard";
-import CheckInResultSheet from "../components/CheckInResultSheet";
+import CheckInFlow from "../components/CheckInFlow";
 import WizardIllustration from "../components/WizardIllustration";
 import LogWeightFirstSheet from "../components/LogWeightFirstSheet";
 import { PULL_REFRESH_EVENT, PULL_REFRESH_PROGRESS_EVENT } from "../hooks/useRubberBandScroll";
@@ -29,14 +29,13 @@ export default function DashboardScreen() {
   const dayLog = useDayLog(today);
   const programs = usePrograms();
   const status = useCoachStatus();
-  const checkIn = useCheckIn();
   const ignoreCheckin = useIgnoreCheckin();
 
   const navigate = useNavigate();
   const [refreshing, setRefreshing] = useState(false);
   const [pullProgress, setPullProgress] = useState(0);
   const [refreshError, setRefreshError] = useState<string | null>(null);
-  const [checkInResult, setCheckInResult] = useState<CheckInResult | null>(null);
+  const [checkInOpen, setCheckInOpen] = useState(false);
   const [weightPromptOpen, setWeightPromptOpen] = useState(false);
 
   useEffect(() => {
@@ -137,7 +136,13 @@ export default function DashboardScreen() {
       {createPortal(<div
         className="fixed left-1/2 z-30 pointer-events-none flex items-center gap-2 rounded-full border border-line bg-dashboardCard px-3 py-2 shadow-lg"
         style={{
-          top: "calc(env(safe-area-inset-top) + 8px)",
+          // The pill's resting place while it spins. Deliberately well clear of
+          // the top edge: `env(safe-area-inset-top)` resolves to a literal 0 in
+          // the installed PWA on this device, so a small offset here put the
+          // pill hard against the top of the viewport. The transform below
+          // moves it -18px→+4px across the pull, so this is the floor for all
+          // three states, not just the refreshing one.
+          top: "calc(env(safe-area-inset-top) + 28px)",
           opacity: refreshing || pullProgress > 0.05 ? 1 : 0,
           transform: `translate(-50%, ${refreshing ? 0 : -18 + pullProgress * 22}px) scale(${0.9 + pullProgress * 0.1})`,
           transition: pullProgress === 0 || refreshing ? "opacity 160ms ease, transform 160ms ease" : "none",
@@ -231,12 +236,11 @@ export default function DashboardScreen() {
                 Ignore
               </button>
               <button
-                onClick={() => checkIn.mutate(undefined, { onSuccess: (data) => setCheckInResult(data) })}
-                disabled={checkIn.isPending}
-                className="px-4 py-2 rounded-full text-sm font-semibold disabled:opacity-50"
+                onClick={() => setCheckInOpen(true)}
+                className="px-4 py-2 rounded-full text-sm font-semibold"
                 style={{ background: "#ECEDEE", color: "#0B1210" }}
               >
-                {checkIn.isPending ? "…" : "Check In"}
+                Check In
               </button>
             </div>
           </div>
@@ -271,14 +275,7 @@ export default function DashboardScreen() {
         </button>
       </main>
 
-      {checkInResult?.checkin && (
-        <CheckInResultSheet
-          checkin={checkInResult.checkin}
-          usedAdaptiveTdee={checkInResult.usedAdaptiveTdee}
-          targetChanges={checkInResult.targetChanges}
-          onClose={() => setCheckInResult(null)}
-        />
-      )}
+      {checkInOpen && <CheckInFlow onClose={() => setCheckInOpen(false)} />}
       </div>
     </>
   );

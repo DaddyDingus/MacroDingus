@@ -19,13 +19,16 @@ const STATUS_LINES = [
   "Almost there…",
 ];
 
-export default function OrbitLoadingAnimation() {
+// `lines` is overridden by the weekly check-in (CheckInFlow), which runs the
+// same illustration over a different computation — the orbit motif stays, the
+// commentary has to describe what that screen is actually doing.
+export default function OrbitLoadingAnimation({ lines = STATUS_LINES }: { lines?: string[] }) {
   const [lineIndex, setLineIndex] = useState(0);
 
   useEffect(() => {
-    const id = setInterval(() => setLineIndex((i) => (i + 1) % STATUS_LINES.length), 1800);
+    const id = setInterval(() => setLineIndex((i) => (i + 1) % lines.length), 1800);
     return () => clearInterval(id);
-  }, []);
+  }, [lines.length]);
 
   return (
     <div className="flex flex-col items-center justify-center py-10">
@@ -57,7 +60,7 @@ export default function OrbitLoadingAnimation() {
           </div>
         ))}
       </div>
-      <p className="text-sm text-muted mt-6 text-center transition-opacity">{STATUS_LINES[lineIndex]}</p>
+      <p className="text-sm text-muted mt-6 text-center transition-opacity">{lines[lineIndex % lines.length]}</p>
     </div>
   );
 }
