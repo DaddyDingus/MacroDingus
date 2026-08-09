@@ -66,6 +66,7 @@ export interface DayLog {
   date: string;
   entries: LogEntry[];
   totals: Nutrition;
+  incomplete: boolean;
 }
 
 export interface CreateFoodInput {

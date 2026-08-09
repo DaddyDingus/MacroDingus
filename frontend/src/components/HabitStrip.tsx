@@ -18,7 +18,7 @@ export default function HabitStrip({ activeDates, days = 30 }: { activeDates: Se
     // width and lines up flush with the chevron below it — centering here
     // would leave the grid's right edge short of the chevron's tip.
     <div className="h-full flex items-center justify-end">
-      <div className="grid grid-cols-10 gap-1.5">
+      <div className="grid grid-cols-10 gap-x-1.5 gap-y-1">
         {dates.map((date) => (
           <div
             key={date}

@@ -45,7 +45,17 @@ export default function DashboardCard({
           line-clamp still wants more vertical room than a square tile has)
           just paints straight through its own shrunk box and overlaps the
           divider/footer below rather than being cut off cleanly. */}
-      <div className={`flex-1 min-h-0 overflow-hidden ${mediaLayout ? "" : "py-1"}`}>{children}</div>
+      {/* Tile media is a visual summary, never a control of its own. Recharts
+          3 gives charts a focus/gesture layer by default; without making this
+          subtree inert, touching a sparkline briefly focuses just the SVG
+          (drawing a box around it) before the parent button navigates. Keep
+          one interaction target per tile: this surrounding button. */}
+      <div
+        aria-hidden="true"
+        className={`pointer-events-none select-none flex-1 min-h-0 overflow-hidden ${mediaLayout ? "" : "py-1"}`}
+      >
+        {children}
+      </div>
       {!mediaLayout && <div className="h-px bg-dashboardDivider" />}
       <div className="flex items-center justify-between">
         <p className="tabular leading-none">

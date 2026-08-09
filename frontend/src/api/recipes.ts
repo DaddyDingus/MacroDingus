@@ -54,6 +54,10 @@ export function useUpdateRecipe(id: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["recipes"] });
       qc.invalidateQueries({ queryKey: ["foods"] });
+      // Recipe foods are materialized rows whose nutrition is read live by
+      // existing logs, so an edit can change historical totals and TDEE.
+      qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "logs" });
+      qc.invalidateQueries({ queryKey: ["coach"] });
     },
   });
 }
@@ -75,6 +79,9 @@ export function useDeleteRecipe() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => apiFetch<null>(`/recipes/${id}`, { method: "DELETE" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["recipes"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["recipes"] });
+      qc.invalidateQueries({ queryKey: ["foods"] });
+    },
   });
 }

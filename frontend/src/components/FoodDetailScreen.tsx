@@ -47,7 +47,7 @@ const GRAMS_PER_LB = 453.592;
 // just for the four nutrients that get their own dedicated Nutrition field
 // instead of living in the microsJson bag. Used only to size each row's bar
 // fill — never rendered as a number.
-const DAILY_VALUE_REF = { protein: 50, carbs: 275, fat: 78, fiber: 28, sugar: 50, saturatedFat: 20, sodiumMg: 2300 };
+const DAILY_VALUE_REF = { protein: 50, carbs: 275, fat: 78, fiber: 28, saturatedFat: 20, sodiumMg: 2300 };
 
 interface MicroMeta {
   label: string;
@@ -897,7 +897,10 @@ export default function FoodDetailScreen({
           <div>
             <BreakdownRow label="Carbs" amount={n.carbs} dailyValueRef={DAILY_VALUE_REF.carbs} barColorClass="bg-carbs" />
             <BreakdownRow label="Fiber" amount={n.fiber} dailyValueRef={DAILY_VALUE_REF.fiber} barColorClass="bg-carbs" />
-            <BreakdownRow label="Sugars" amount={n.sugar} dailyValueRef={DAILY_VALUE_REF.sugar} barColorClass="bg-carbs" />
+            {/* The FDA's 50 g Daily Value applies to added sugars, while the
+                stored field is total sugars. Showing that bar overstated what
+                the data can support. */}
+            <BreakdownRow label="Sugars" amount={n.sugar} />
             {carbDetails.map((m) => (
               <BreakdownRow key={m.key} label={m.label} amount={m.amount} unit={m.unit} dailyValueRef={m.dailyValue} />
             ))}
@@ -915,7 +918,13 @@ export default function FoodDetailScreen({
             {omega3 !== null && <BreakdownRow label="Omega-3" amount={omega3} />}
             {omega6 !== null && <BreakdownRow label="Omega-6" amount={omega6} />}
             {transFat !== null && <BreakdownRow label="Trans Fat" amount={transFat} />}
-            <BreakdownRow label="Other Fat" amount={Math.max(0, n.fat - n.saturatedFat)} />
+            <BreakdownRow
+              label="Other Fat"
+              amount={Math.max(
+                0,
+                n.fat - n.saturatedFat - (monounsaturated ?? 0) - (polyunsaturated ?? 0) - (transFat ?? 0)
+              )}
+            />
           </div>
         </div>
 

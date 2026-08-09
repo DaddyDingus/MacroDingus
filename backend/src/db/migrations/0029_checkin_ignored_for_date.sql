@@ -1,0 +1,1 @@
+ALTER TABLE `profiles` ADD `checkin_ignored_for_date` text;

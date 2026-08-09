@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, Pencil, RotateCw, Target, Calendar as CalendarIcon, ChevronDown } from "lucide-react";
-import { useCoachStatus, useSaveProfile, useCheckIn, type ActivityLevel } from "../api/coach";
+import { useCoachStatus, useSaveProfile, useCheckIn, useIgnoreCheckin, type ActivityLevel, type CheckInResult } from "../api/coach";
 import { useGoals, useDeleteGoal } from "../api/goals";
 import { useWeightUnit, kgToUnit } from "../lib/weightUnit";
 import { daysBetween, localDateString } from "../lib/date";
@@ -15,7 +15,10 @@ import ConfirmDeleteSheet from "../components/ConfirmDeleteSheet";
 import { staggerStyle } from "../lib/stagger";
 
 function formatDate(dateStr: string): string {
-  const d = new Date(dateStr);
+  // Bare YYYY-MM-DD strings are household calendar dates, not UTC instants.
+  // Parse as local components so this remains the same day in every locale.
+  const [year, month, day] = dateStr.split("-").map(Number);
+  const d = new Date(year, month - 1, day);
   return d.toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
 }
 
@@ -103,11 +106,12 @@ export default function CoachScreen() {
   const status = useCoachStatus();
   const saveProfile = useSaveProfile();
   const checkIn = useCheckIn();
+  const ignoreCheckin = useIgnoreCheckin();
   const goals = useGoals();
   const deleteGoal = useDeleteGoal();
   const { unit } = useWeightUnit();
   const [showCheckInDaySheet, setShowCheckInDaySheet] = useState(false);
-  const [checkInResult, setCheckInResult] = useState<{ checkin: NonNullable<ReturnType<typeof useCoachStatus>["data"]>["latestCheckin"]; usedAdaptiveTdee: boolean } | null>(null);
+  const [checkInResult, setCheckInResult] = useState<CheckInResult | null>(null);
   const [pendingDeleteGoalId, setPendingDeleteGoalId] = useState<string | null>(null);
   const [narrativeExpanded, setNarrativeExpanded] = useState(false);
   const [weightPromptOpen, setWeightPromptOpen] = useState(false);
@@ -134,6 +138,10 @@ export default function CoachScreen() {
 
   const today = status.data?.currentDate ?? localDateString();
   const isCheckinDue = nextCheckinDueDate !== null && nextCheckinDueDate <= today;
+  // Ignoring only mutes the reminders elsewhere in the app — this screen
+  // keeps offering the check-in either way (that's the "change your mind"
+  // path), it just stops using the overdue/urgent treatment for it.
+  const checkinIgnored = status.data?.checkinIgnored ?? false;
   const daysOverdue = isCheckinDue ? daysBetween(nextCheckinDueDate!, today) : 0;
   const daysUntilDue = nextCheckinDueDate !== null && !isCheckinDue ? daysBetween(today, nextCheckinDueDate) : null;
 
@@ -168,7 +176,7 @@ export default function CoachScreen() {
           <DualRing
             goalPercent={goalPercent}
             checkInPercent={checkInPercent}
-            urgent={isCheckinDue}
+            urgent={isCheckinDue && !checkinIgnored}
             centerValue={
               daysSinceCheckin === null ? "—" : isCheckinDue ? String(daysOverdue) : daysUntilDue !== null ? String(daysUntilDue) : String(daysSinceCheckin)
             }
@@ -202,26 +210,42 @@ export default function CoachScreen() {
             toward the next one. */}
         {(nextCheckinDueDate === null || isCheckinDue) && (
           <>
-            <div className="tile-enter border border-line bg-surface rounded-2xl p-4 flex items-center justify-between gap-3" style={staggerStyle(block++, 60, 5)}>
-              <p className="text-sm text-muted flex-1 min-w-0 truncate">
-                {nextCheckinDueDate === null
-                  ? "You haven't checked in yet."
-                  : daysOverdue === 0
-                    ? "Your check-in is due today."
-                    : `Your check-in is ${daysOverdue} day${daysOverdue === 1 ? "" : "s"} overdue.`}
+            <div className="tile-enter border border-line bg-surface rounded-2xl p-4 space-y-3" style={staggerStyle(block++, 60, 5)}>
+              <p className="text-sm text-muted">
+                {checkinIgnored
+                  ? "Check-in reminders are off until your next one. You can still check in here whenever you want."
+                  : nextCheckinDueDate === null
+                    ? "You haven't checked in yet."
+                    : daysOverdue === 0
+                      ? "Your check-in is due today."
+                      : `Your check-in is ${daysOverdue} day${daysOverdue === 1 ? "" : "s"} overdue.`}
               </p>
-              <button
-                onClick={() =>
-                  checkIn.mutate(undefined, {
-                    onSuccess: (data) => setCheckInResult(data),
-                  })
-                }
-                disabled={checkIn.isPending}
-                className="px-5 py-2.5 rounded-full text-sm font-semibold disabled:opacity-50 shrink-0"
-                style={{ background: "#ECEDEE", color: "#0B1210" }}
-              >
-                {checkIn.isPending ? "Checking in…" : "Check In"}
-              </button>
+              <div className="flex gap-2">
+                {/* Only offered while the reminders are actually on — once
+                    ignored there's nothing left to dismiss, and the card
+                    reduces to the "change your mind" check-in path. */}
+                {!checkinIgnored && (
+                  <button
+                    onClick={() => ignoreCheckin.mutate()}
+                    disabled={ignoreCheckin.isPending}
+                    className="px-4 py-2.5 rounded-full border border-line text-sm text-muted disabled:opacity-50 shrink-0"
+                  >
+                    {ignoreCheckin.isPending ? "Ignoring…" : "Ignore"}
+                  </button>
+                )}
+                <button
+                  onClick={() =>
+                    checkIn.mutate(undefined, {
+                      onSuccess: (data) => setCheckInResult(data),
+                    })
+                  }
+                  disabled={checkIn.isPending}
+                  className="flex-1 px-5 py-2.5 rounded-full text-sm font-semibold disabled:opacity-50"
+                  style={{ background: "#ECEDEE", color: "#0B1210" }}
+                >
+                  {checkIn.isPending ? "Checking in…" : "Check In"}
+                </button>
+              </div>
             </div>
             {checkIn.isError && (
               <p className="text-xs text-red-400 text-center">
@@ -375,7 +399,12 @@ export default function CoachScreen() {
         />
       )}
       {checkInResult?.checkin && (
-        <CheckInResultSheet checkin={checkInResult.checkin} usedAdaptiveTdee={checkInResult.usedAdaptiveTdee} onClose={() => setCheckInResult(null)} />
+        <CheckInResultSheet
+          checkin={checkInResult.checkin}
+          usedAdaptiveTdee={checkInResult.usedAdaptiveTdee}
+          targetChanges={checkInResult.targetChanges}
+          onClose={() => setCheckInResult(null)}
+        />
       )}
       {weightPromptOpen && (
         <LogWeightFirstSheet onClose={() => setWeightPromptOpen(false)} onContinue={() => navigate("/strategy/new-goal")} />

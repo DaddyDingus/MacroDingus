@@ -1,6 +1,6 @@
 import { eq, and, gte, isNotNull, desc } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { weights, logs, foods } from "../db/schema.js";
+import { weights, logs, foods, nutritionDayStatuses } from "../db/schema.js";
 import { scaleNutrition } from "../engine/nutrition.js";
 import { computeTrend, addDaysToDateString } from "../engine/trendWeight.js";
 import { householdDateString } from "../lib/householdDate.js";
@@ -48,10 +48,28 @@ export function parseShiftedHighDays(json: string | null): number[] | undefined 
 // from its raw JSON-string column into a real array (or null) — the
 // frontend works with number[] | null, not a string it'd have to parse
 // itself. Used by both programs.ts's routes and coach.ts's /coach/status.
-export function serializeProgram<T extends { shiftedHighDays: string | null }>(
+export function serializeProgram<T extends { shiftedHighDays: string | null; startedAt: string; endedAt: string | null }>(
   p: T
-): Omit<T, "shiftedHighDays"> & { shiftedHighDays: number[] | null } {
-  return { ...p, shiftedHighDays: parseShiftedHighDays(p.shiftedHighDays) ?? null };
+): Omit<T, "shiftedHighDays"> & { shiftedHighDays: number[] | null; startedDate: string; endedDate: string | null } {
+  return {
+    ...p,
+    shiftedHighDays: parseShiftedHighDays(p.shiftedHighDays) ?? null,
+    startedDate: householdDateString(new Date(p.startedAt)),
+    endedDate: p.endedAt === null ? null : householdDateString(new Date(p.endedAt)),
+  };
+}
+
+// UTC timestamps can fall on the previous date in the household timezone.
+// Goal duration and target resolution need the household calendar date, so
+// expose it once at the API boundary instead of slicing timestamps in clients.
+export function serializeGoal<T extends { startedAt: string; endedAt: string | null }>(
+  goal: T
+): T & { startedDate: string; endedDate: string | null } {
+  return {
+    ...goal,
+    startedDate: householdDateString(new Date(goal.startedAt)),
+    endedDate: goal.endedAt === null ? null : householdDateString(new Date(goal.endedAt)),
+  };
 }
 
 const CALORIE_LOOKBACK_DAYS = 28; // window for adaptive TDEE (needs 21 days of overlap; pad a bit for logging gaps)
@@ -71,8 +89,17 @@ export async function gatherAdaptiveTdeeInputs(userId: string) {
     .innerJoin(foods, eq(logs.foodId, foods.id))
     .where(and(eq(logs.userId, userId), gte(logs.date, cutoff)));
 
+  const incompleteDates = new Set(
+    (await db
+      .select({ date: nutritionDayStatuses.date })
+      .from(nutritionDayStatuses)
+      .where(and(eq(nutritionDayStatuses.userId, userId), eq(nutritionDayStatuses.incomplete, true), gte(nutritionDayStatuses.date, cutoff))))
+      .map((row) => row.date)
+  );
+
   const caloriesByDate = new Map<string, number>();
   for (const { log, food } of logRows) {
+    if (incompleteDates.has(log.date)) continue;
     const calories = scaleNutrition(food, log.quantityGrams).calories;
     caloriesByDate.set(log.date, (caloriesByDate.get(log.date) ?? 0) + calories);
   }
@@ -100,8 +127,17 @@ export async function gatherDailyTdeeSeriesInputs(userId: string, days: number) 
     .innerJoin(foods, eq(logs.foodId, foods.id))
     .where(and(eq(logs.userId, userId), gte(logs.date, cutoff)));
 
+  const incompleteDates = new Set(
+    (await db
+      .select({ date: nutritionDayStatuses.date })
+      .from(nutritionDayStatuses)
+      .where(and(eq(nutritionDayStatuses.userId, userId), eq(nutritionDayStatuses.incomplete, true), gte(nutritionDayStatuses.date, cutoff))))
+      .map((row) => row.date)
+  );
+
   const caloriesByDate = new Map<string, number>();
   for (const { log, food } of logRows) {
+    if (incompleteDates.has(log.date)) continue;
     const calories = scaleNutrition(food, log.quantityGrams).calories;
     caloriesByDate.set(log.date, (caloriesByDate.get(log.date) ?? 0) + calories);
   }

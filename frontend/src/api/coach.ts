@@ -24,6 +24,23 @@ export interface Profile {
   onboardingCompletedAt: string | null;
 }
 
+// What a check-in did to the active program's daily targets — averaged over
+// the program's 7 weekday rows (see backend routes/coach.ts). Null when the
+// check-in left targets alone: a manual program, one whose days were
+// hand-edited, or no program at all.
+export interface CheckinTargetChanges {
+  calories: { from: number; to: number };
+  proteinG: { from: number; to: number };
+  carbsG: { from: number; to: number };
+  fatG: { from: number; to: number };
+}
+
+export interface CheckInResult {
+  checkin: Checkin;
+  usedAdaptiveTdee: boolean;
+  targetChanges: CheckinTargetChanges | null;
+}
+
 // A check-in is purely a TDEE-estimate snapshot now — targets moved to
 // program_days (see lib/programTargets.ts's targetsForDate(), which
 // replaces every place that used to read .targetCalories/etc. off a Checkin).
@@ -50,10 +67,24 @@ export interface CoachStatus {
   latestCheckin: Checkin | null;
   trendWeightKg: number | null;
   bodyFatPercent: number | null;
+  expenditureCoverage: {
+    ready: boolean;
+    nutritionDays: number;
+    nutritionDaysRequired: number;
+    weighIns: number;
+    weighInsRequired: number;
+    weightSpanDays: number;
+    latestWeightDate: string | null;
+  };
   daysSinceCheckin: number | null;
   // Null until a first check-in exists — the weekly restriction only kicks
   // in after that (see backend/src/lib/checkinSchedule.ts).
   nextCheckinDueDate: string | null;
+  // The user chose to ignore the currently pending check-in. Reminder
+  // surfaces (Dashboard banner, bottom-nav dot) must honour this; the
+  // Strategy screen deliberately does not — checking in stays available
+  // there, ignored or not. Re-arms itself once a check-in starts a new cycle.
+  checkinIgnored: boolean;
   activeGoal: Goal | null;
   activeProgram: (Program & { days: Program["days"] }) | null;
 }
@@ -69,7 +100,8 @@ export interface ProfileInput {
 
 export function useCoachStatus() {
   return useQuery({
-    queryKey: ["coach", "status"],
+    // v2 adds household-calendar dates to the active goal/program.
+    queryKey: ["coach", "status", "v2"],
     queryFn: () => apiFetch<CoachStatus>("/coach/status"),
   });
 }
@@ -96,11 +128,21 @@ export function useSaveProfile() {
 export function useCheckIn() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => apiFetch<{ checkin: Checkin; usedAdaptiveTdee: boolean }>("/checkins", { method: "POST" }),
+    mutationFn: () => apiFetch<CheckInResult>("/checkins", { method: "POST" }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["coach"] });
       qc.invalidateQueries({ queryKey: ["programs"] }); // a coached, non-custom program's targets may have just refreshed
     },
+  });
+}
+
+// Dismisses the current check-in's reminders without checking in — see
+// CoachStatus.checkinIgnored.
+export function useIgnoreCheckin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiFetch<{ ignored: boolean }>("/checkins/ignore", { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["coach"] }),
   });
 }
 

@@ -19,17 +19,40 @@ export function useSmartHistory(time: string) {
   });
 }
 
-function withEntries(date: string, entries: LogEntry[]): DayLog {
-  return { date, entries, totals: sumNutrition(entries.map((e) => e.nutrition)) };
+function withEntries(date: string, entries: LogEntry[], incomplete = false): DayLog {
+  return { date, entries, totals: sumNutrition(entries.map((e) => e.nutrition)), incomplete };
 }
 
 export interface DayHistory extends Nutrition {
   date: string;
+  // Distinguishes a genuinely logged zero-calorie day from a dense-fill gap.
+  // Energy Balance must never interpret a missed food-log day as zero intake.
+  logged: boolean;
+  incomplete: boolean;
+}
+
+export function useSetDayIncomplete(date: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (incomplete: boolean) =>
+      apiFetch<{ date: string; incomplete: boolean }>("/logs/day-status", {
+        method: "PUT",
+        body: JSON.stringify({ date, incomplete }),
+      }),
+    onSuccess: (result) => {
+      qc.setQueryData<DayLog>(["logs", date], (old) => (old ? { ...old, incomplete: result.incomplete } : old));
+      qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "logs" && q.queryKey[1] !== date });
+      qc.invalidateQueries({ queryKey: ["coach"] });
+    },
+  });
 }
 
 export function useLogsHistory(days: number) {
   return useQuery({
-    queryKey: ["logs", "history", days],
+    // v3 adds DayHistory.incomplete. Keep it in the key so a persisted dense
+    // response cannot briefly make Energy Balance treat old zero-fill rows
+    // as real days while the background refetch is still in flight.
+    queryKey: ["logs", "history", "v3", days],
     queryFn: () => apiFetch<DayHistory[]>(`/logs/history?days=${days}`),
   });
 }
@@ -77,7 +100,7 @@ export function useAddLog(date: string) {
         nutrition: scaleNutrition(input.food, input.quantityGrams),
       };
       qc.setQueryData<DayLog>(["logs", date], (old) =>
-        withEntries(date, [...(old?.entries ?? []), optimistic])
+        withEntries(date, [...(old?.entries ?? []), optimistic], old?.incomplete ?? false)
       );
       return { previous, tempId };
     },
@@ -89,7 +112,8 @@ export function useAddLog(date: string) {
         if (!old) return old;
         return withEntries(
           date,
-          old.entries.map((e) => (e.id === ctx.tempId ? serverEntry : e))
+          old.entries.map((e) => (e.id === ctx.tempId ? serverEntry : e)),
+          old.incomplete
         );
       });
       // Dashboard/detail queries (history averages, energy balance, adaptive
@@ -121,7 +145,8 @@ export function useUpdateLogQuantity(date: string) {
             e.id === input.id
               ? { ...e, quantityGrams: input.quantityGrams, nutrition: scaleNutrition(e.food, input.quantityGrams) }
               : e
-          )
+          ),
+          old.incomplete
         );
       });
       return { previous };
@@ -166,7 +191,7 @@ export function useBulkAddLog(date: string) {
         nutrition: scaleNutrition(e.food, e.quantityGrams),
       }));
       qc.setQueryData<DayLog>(["logs", date], (old) =>
-        withEntries(date, [...(old?.entries ?? []), ...optimisticEntries])
+        withEntries(date, [...(old?.entries ?? []), ...optimisticEntries], old?.incomplete ?? false)
       );
       return { previous, tempIds: optimisticEntries.map((e) => e.id) };
     },
@@ -177,7 +202,7 @@ export function useBulkAddLog(date: string) {
       qc.setQueryData<DayLog>(["logs", date], (old) => {
         if (!old) return old;
         const remaining = old.entries.filter((e) => !ctx.tempIds.includes(e.id));
-        return withEntries(date, [...remaining, ...data.entries]);
+        return withEntries(date, [...remaining, ...data.entries], old.incomplete);
       });
       qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "logs" && q.queryKey[1] !== date });
       qc.invalidateQueries({ queryKey: ["coach"] });
@@ -206,7 +231,10 @@ export function useCopyDay(targetDate: string) {
         method: "POST",
         body: JSON.stringify({ sourceDate: input.sourceDate, targetDate }),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["logs", targetDate] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "logs" });
+      qc.invalidateQueries({ queryKey: ["coach"] });
+    },
   });
 }
 
@@ -224,7 +252,10 @@ export function useCopyLogEntries() {
         method: "POST",
         body: JSON.stringify({ date: input.date, loggedAt: input.loggedAt, entries: input.items }),
       }),
-    onSuccess: () => qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "logs" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "logs" });
+      qc.invalidateQueries({ queryKey: ["coach"] });
+    },
   });
 }
 
@@ -240,7 +271,10 @@ export function useMoveLogEntries() {
         method: "PATCH",
         body: JSON.stringify(input),
       }),
-    onSuccess: () => qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "logs" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "logs" });
+      qc.invalidateQueries({ queryKey: ["coach"] });
+    },
   });
 }
 
@@ -252,7 +286,7 @@ export function useDeleteLog(date: string) {
       await qc.cancelQueries({ queryKey: ["logs", date] });
       const previous = qc.getQueryData<DayLog>(["logs", date]);
       qc.setQueryData<DayLog>(["logs", date], (old) =>
-        old ? withEntries(date, old.entries.filter((e) => e.id !== id)) : old
+        old ? withEntries(date, old.entries.filter((e) => e.id !== id), old.incomplete) : old
       );
       return { previous };
     },

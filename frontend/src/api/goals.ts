@@ -8,8 +8,10 @@ export interface Goal {
   goalWeightKg: number | null;
   targetRateKgPerWeek: number;
   startedAt: string;
+  startedDate: string;
   startWeightKg: number | null;
   endedAt: string | null;
+  endedDate: string | null;
   createdAt: string;
 }
 
@@ -26,7 +28,8 @@ export interface GoalEditInput {
 
 export function useGoals() {
   return useQuery({
-    queryKey: ["goals"],
+    // v2 includes backend-resolved household startedDate/endedDate fields.
+    queryKey: ["goals", "v2"],
     queryFn: () => apiFetch<Goal[]>("/goals"),
   });
 }
@@ -38,6 +41,7 @@ export function useCreateGoal() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["goals"] });
       qc.invalidateQueries({ queryKey: ["coach"] });
+      qc.invalidateQueries({ queryKey: ["programs"] });
     },
   });
 }
@@ -73,6 +77,7 @@ export function useReopenGoal() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["goals"] });
       qc.invalidateQueries({ queryKey: ["coach"] });
+      qc.invalidateQueries({ queryKey: ["programs"] });
     },
   });
 }

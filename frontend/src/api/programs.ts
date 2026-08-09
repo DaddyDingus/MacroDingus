@@ -31,7 +31,9 @@ export interface Program {
   distributionMode: DistributionMode;
   shiftedHighDays: number[] | null; // 0=Sunday..6=Saturday — only meaningful when distributionMode is 'shifted'
   startedAt: string;
+  startedDate: string;
   endedAt: string | null;
+  endedDate: string | null;
   createdAt: string;
   days: ProgramDay[];
 }
@@ -80,7 +82,8 @@ export type CreateProgramInput = CreateCoachedProgramInput | CreateManualProgram
 
 export function usePrograms() {
   return useQuery({
-    queryKey: ["programs"],
+    // v2 includes backend-resolved household startedDate/endedDate fields.
+    queryKey: ["programs", "v2"],
     queryFn: () => apiFetch<Program[]>("/programs"),
   });
 }

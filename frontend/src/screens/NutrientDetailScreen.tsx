@@ -2,10 +2,8 @@ import { useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ChevronDown } from "lucide-react";
 import { useDayLog, useLogsHistory } from "../api/logs";
-import { useCheckinHistory } from "../api/coach";
 import { usePrograms } from "../api/programs";
 import { localDateString, formatDayLabel, dayIndex } from "../lib/date";
-import { activeCheckinForDate } from "../lib/checkins";
 import { targetsForDate, type DayTargets } from "../lib/programTargets";
 import { topContributors } from "../lib/nutrientContributors";
 import { useEnergyUnit, kcalToUnit, energyUnitLabel } from "../lib/energyUnit";
@@ -91,10 +89,8 @@ export default function NutrientDetailScreen() {
   // slices its own window off this, the daily history list uses the whole
   // thing filtered to actually-logged days, no separate round trips.
   const fullHistory = useLogsHistory(3650);
-  const checkinHistory = useCheckinHistory();
   const programs = usePrograms();
 
-  const checkinsAsc = [...(checkinHistory.data ?? [])].sort((a, b) => a.date.localeCompare(b.date));
   const programList = programs.data ?? [];
 
   const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: config.decimals, minimumFractionDigits: config.decimals });
@@ -110,18 +106,16 @@ export default function NutrientDetailScreen() {
   const targetToday = targetsToday ? targetsToday[config.targetKey] : null;
   const pctToday = targetToday ? Math.min(100, Math.round((consumedToday / targetToday) * 100)) : null;
 
-  const allPoints: NutrientChartPoint[] = (fullHistory.data ?? []).map((d) => {
+  const loggedDays = (fullHistory.data ?? []).filter((d) => d.logged && !d.incomplete);
+  const allPoints: NutrientChartPoint[] = loggedDays.map((d) => {
     const dayTargets = targetsForDate(programList, d.date);
-    const active = activeCheckinForDate(checkinsAsc, d.date);
     return {
       date: d.date,
       value: convert(d[metricId]),
       target: dayTargets ? convert(dayTargets[config.targetKey]) : null,
-      flux: metricId === "calories" && active?.tdeeFluxKcal != null ? convert(active.tdeeFluxKcal) : null,
     };
   });
 
-  const loggedDays = (fullHistory.data ?? []).filter((d) => d.calories > 0);
   const hasData = loggedDays.length > 0;
 
   const earliestTs = useMemo(

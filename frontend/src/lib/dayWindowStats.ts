@@ -19,9 +19,9 @@ function datesEnding(date: string, days: number): string[] {
 // this app is already framed, e.g. WeightDetailScreen's Average/Difference).
 // `history` should already be the full dense history (useLogsHistory), not
 // pre-sliced — this does its own windowing so day/week/month can share one
-// fetch. Target is averaged only over days that actually had an active
-// program, so a gap in program coverage doesn't silently drag the target
-// average toward zero.
+// fetch. Multi-day actuals and targets use only days the user actually
+// logged, so a skipped day means "unknown" rather than a fabricated zero-
+// intake day. The single-day view still shows its target before logging.
 function windowStat(
   history: Map<string, DayHistory>,
   programs: Program[],
@@ -32,18 +32,22 @@ function windowStat(
 ): WindowStat {
   const dates = datesEnding(date, days);
   let actualSum = 0;
+  let actualCount = 0;
   let targetSum = 0;
   let targetCount = 0;
   for (const d of dates) {
     const row = history.get(d);
-    actualSum += row ? row[metricKey] : 0;
+    if (row?.logged && !row.incomplete) {
+      actualSum += row[metricKey];
+      actualCount++;
+    }
     const t = targetsForDate(programs, d);
-    if (t) {
+    if (t && (days === 1 || (row?.logged && !row.incomplete))) {
       targetSum += t[targetKey];
       targetCount++;
     }
   }
-  const actual = actualSum / dates.length;
+  const actual = actualCount > 0 ? actualSum / actualCount : 0;
   const target = targetCount > 0 ? targetSum / targetCount : null;
   const pct = target ? Math.round((actual / target) * 100) : null;
   return { actual, target, pct };

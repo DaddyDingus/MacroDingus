@@ -203,7 +203,7 @@ export default function TdeeChart({
     return aggregateChartData(rows, bucketUnit, windowStart);
   }, [dailyAsc, windowStart, windowEnd, energyUnit, bucketUnit]);
 
-  if (dailyAsc.length < 2) {
+  if (dailyAsc.length === 0) {
     return (
       <div className="relative flex flex-col items-center justify-center gap-2" style={{ height }}>
         {/* Ghost of the real chart: faint gridlines + a dashed placeholder

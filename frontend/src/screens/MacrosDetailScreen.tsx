@@ -38,7 +38,7 @@ export default function MacrosDetailScreen() {
   // filters to actually-logged days from the whole thing.
   const fullHistory = useLogsHistory(3650);
   const allHistory = fullHistory.data ?? [];
-  const loggedDays = allHistory.filter((d) => d.calories > 0);
+  const loggedDays = allHistory.filter((d) => d.logged && !d.incomplete);
   const hasData = loggedDays.length > 0;
 
   const earliestTs = useMemo(
@@ -48,8 +48,8 @@ export default function MacrosDetailScreen() {
   const gesture = useChartGesture({ earliestTs, initialDays: 30 });
 
   const chartSlice = useMemo(
-    () => allHistory.filter((d) => dayIndex(d.date) >= gesture.view.start && dayIndex(d.date) <= gesture.view.end),
-    [allHistory, gesture.view]
+    () => loggedDays.filter((d) => dayIndex(d.date) >= gesture.view.start && dayIndex(d.date) <= gesture.view.end),
+    [loggedDays, gesture.view]
   );
 
   const rangeAvg = chartSlice.length

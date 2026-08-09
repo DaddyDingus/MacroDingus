@@ -5,6 +5,7 @@ import { useEffect } from "react";
 const RESISTANCE = 0.4;
 // Caps the stretch so a long, fast drag doesn't pull the page absurdly far.
 const MAX_PULL_PX = 96;
+const REFRESH_TRIGGER_PX = 64;
 const SPRING_BACK_MS = 320;
 // Chromium keeps its inertial scroll after touchend but does not expose the
 // unused momentum once it clamps at an edge. A recent, sufficiently fast
@@ -31,6 +32,9 @@ const INSTANT_ARM_MAX_AGE_MS = 60;
 // viewport heights (browser chrome, zoom) mean scrollY often stops a
 // fraction short of the computed maximum.
 const BOTTOM_EPSILON_PX = 4;
+
+export const PULL_REFRESH_PROGRESS_EVENT = "macrotrack:pull-refresh-progress";
+export const PULL_REFRESH_EVENT = "macrotrack:pull-refresh";
 
 // Custom "rubber band" overscroll: dragging past the top or bottom of the
 // page stretches it with resistance, then springs back on release —
@@ -111,6 +115,9 @@ interface DragState {
   // comment for why that's the only case worth paying the blocking-listener
   // cost for.
   blocking: boolean;
+  // Current resisted visual distance. Dashboard uses this to turn its normal
+  // top-edge rubber band into an explicit pull-to-refresh threshold.
+  pullPx: number;
 }
 
 interface FlingState {
@@ -148,6 +155,7 @@ export function useRubberBandScroll() {
     let pullFrame = 0;
     let pendingPullOffset = 0;
     let movementSurface: HTMLElement = document.body;
+    let reportedRefreshProgress = 0;
     // Whether the currently-registered touchmove listener is non-passive.
     // Re-registered per gesture (see attachTouchMove) rather than fixed once
     // at mount, since a non-passive listener forces Chromium to run this
@@ -219,6 +227,14 @@ export function useRubberBandScroll() {
       }
     }
 
+    function reportRefreshProgress(progress: number) {
+      if (!movementSurface.hasAttribute("data-pull-to-refresh")) return;
+      const next = Math.max(0, Math.min(1, progress));
+      if (next !== 0 && next !== 1 && Math.abs(next - reportedRefreshProgress) < 0.02) return;
+      reportedRefreshProgress = next;
+      window.dispatchEvent(new CustomEvent(PULL_REFRESH_PROGRESS_EVENT, { detail: next }));
+    }
+
     // Touch hardware can deliver more move events than the display can paint.
     // Keep preventDefault() in the event itself, but collapse visual writes to
     // at most one per animation frame so repeated body positioning cannot do
@@ -243,6 +259,7 @@ export function useRubberBandScroll() {
       window.clearTimeout(flingOutTimer);
       window.cancelAnimationFrame(flingFrame);
       cancelPullFrame();
+      reportRefreshProgress(0);
       if (movementSurface === document.body) {
         document.body.style.transition = "";
         document.body.style.top = "";
@@ -351,6 +368,7 @@ export function useRubberBandScroll() {
         armedAt: null,
         scrollEl,
         blocking,
+        pullPx: 0,
       };
     }
 
@@ -409,6 +427,8 @@ export function useRubberBandScroll() {
       }
 
       const pull = Math.min(MAX_PULL_PX, raw * RESISTANCE);
+      drag.pullPx = pull;
+      reportRefreshProgress(drag.edge === "top" ? pull / REFRESH_TRIGGER_PX : 0);
       schedulePullOffset(drag.edge === "top" ? pull : -pull);
       // Only once we're actually mid-pull, and only if this gesture's
       // listener was registered non-passive in the first place — calling
@@ -423,6 +443,11 @@ export function useRubberBandScroll() {
 
     function onTouchEnd() {
       if (drag?.active) {
+        const shouldRefresh =
+          drag.edge === "top"
+          && drag.pullPx >= REFRESH_TRIGGER_PX
+          && movementSurface.hasAttribute("data-pull-to-refresh")
+          && movementSurface.dataset.refreshing !== "true";
         const armedForMs = drag.armedAt === null ? null : performance.now() - drag.armedAt;
         if (
           armedForMs !== null
@@ -433,6 +458,7 @@ export function useRubberBandScroll() {
         } else {
           springBack();
         }
+        if (shouldRefresh) window.dispatchEvent(new Event(PULL_REFRESH_EVENT));
       } else if (
         drag
         && performance.now() - drag.lastMoveAt <= FLING_LIFT_GRACE_MS
@@ -456,6 +482,7 @@ export function useRubberBandScroll() {
 
     function onTouchCancel() {
       if (drag?.active) springBack();
+      reportRefreshProgress(0);
       drag = null;
       clearFling();
       detachTouchMove();

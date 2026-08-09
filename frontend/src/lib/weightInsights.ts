@@ -52,6 +52,12 @@ export function weeklyTrendRateKgPerWeek(points: TrendPoint[], windowDays = 21):
   if (points.length < 2) return null;
   const latest = points[points.length - 1];
   const cutoffDate = addDays(latest.date, -windowDays);
+  // This tile describes a rate measured over the past three weeks. Do not
+  // annualize a partial first week into a confident-looking weekly number:
+  // e.g. 0.54 kg over six days becomes 0.63 kg/week even though the observed
+  // change beside the chart correctly displays 0.5 kg. Wait until the full
+  // measurement window exists, matching trendChangeOverDays's coverage rule.
+  if (points[0].date > cutoffDate) return null;
   const windowPoints = points.filter((p) => p.date >= cutoffDate);
   if (windowPoints.length < 2) return null;
   const start = windowPoints[0];

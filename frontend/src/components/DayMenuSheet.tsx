@@ -1,4 +1,4 @@
-import { ListChecks, Copy, Trash2, TrendingUp, type LucideIcon } from "lucide-react";
+import { ListChecks, Copy, Trash2, TrendingUp, CircleAlert, type LucideIcon } from "lucide-react";
 import BottomSheet from "./BottomSheet";
 
 function Row({
@@ -41,11 +41,13 @@ function Row({
 export default function DayMenuSheet({
   hasEntries,
   hasAdjustment,
+  incomplete,
   onSelectAll,
   onCopyDay,
   onClearDay,
   onCarryForward,
   onRemoveAdjustment,
+  onToggleIncomplete,
   onClose,
 }: {
   hasEntries: boolean;
@@ -54,11 +56,13 @@ export default function DayMenuSheet({
   // rather than showing both at once (one adjustment per date; see
   // api/adjustments.ts).
   hasAdjustment: boolean;
+  incomplete: boolean;
   onSelectAll: () => void;
   onCopyDay: () => void;
   onClearDay: () => void;
   onCarryForward: () => void;
   onRemoveAdjustment: () => void;
+  onToggleIncomplete: () => void;
   onClose: () => void;
 }) {
   return (
@@ -106,6 +110,15 @@ export default function DayMenuSheet({
                 onClick={() => {
                   if (hasAdjustment) onRemoveAdjustment();
                   else onCarryForward();
+                  close();
+                }}
+              />
+              <Row
+                icon={CircleAlert}
+                label={incomplete ? "Include Day in Coaching" : "Mark Food Log Incomplete"}
+                disabled={!hasEntries && !incomplete}
+                onClick={() => {
+                  onToggleIncomplete();
                   close();
                 }}
               />

@@ -125,6 +125,7 @@ export default function DashboardTileSections() {
   const history = history7.data ?? [];
 
   const balanceDays = history
+    .filter((d) => d.logged && !d.incomplete)
     .map((d) => ({ calories: d.calories, tdee: activeCheckinForDate(checkinsAsc, d.date)?.tdee ?? null }))
     .filter((d): d is { calories: number; tdee: number } => d.tdee !== null);
   const balanceSparkValues = balanceDays.map((d) => d.calories - d.tdee);
@@ -138,8 +139,9 @@ export default function DashboardTileSections() {
   const avgBalance7 =
     balanceSparkValues.length > 0 ? balanceSparkValues.reduce((s, v) => s + v, 0) / balanceSparkValues.length : null;
 
-  const avgCalories = history.length > 0 ? history.reduce((s, d) => s + d.calories, 0) / history.length : 0;
-  const macroSparkPoints = history.map((d) => ({
+  const loggedHistory = history.filter((d) => d.logged && !d.incomplete);
+  const avgCalories = loggedHistory.length > 0 ? loggedHistory.reduce((s, d) => s + d.calories, 0) / loggedHistory.length : 0;
+  const macroSparkPoints = loggedHistory.map((d) => ({
     proteinKcal: Math.round(d.protein * 4),
     carbsKcal: Math.round(d.carbs * 4),
     fatKcal: Math.round(d.fat * 9),
@@ -170,7 +172,7 @@ export default function DashboardTileSections() {
             key={id}
             staggerIndex={staggerIndex}
             title="Expenditure"
-            subtitle="Last 7 days"
+            subtitle={checkin ? formatDayLabel(checkin.date) : "No check-in yet"}
             value={checkin ? fmt(kcalToUnit(checkin.tdee, energyUnit)) : "—"}
             unit={checkin ? energyUnitLabel(energyUnit) : undefined}
             onClick={() => navigate("/expenditure")}
@@ -205,8 +207,8 @@ export default function DashboardTileSections() {
           goalWeightKg != null && goalStartWeightKg != null && trendWeightKg != null
             ? computeGoalProgressPercent(goalStartWeightKg, goalWeightKg, trendWeightKg)
             : null;
-        const daysSinceStart = activeGoal?.startedAt
-          ? daysBetween(activeGoal.startedAt.slice(0, 10), localDateString())
+        const daysSinceStart = activeGoal?.startedDate
+          ? daysBetween(activeGoal.startedDate, localDateString())
           : null;
         return (
           <DashboardCard
@@ -308,9 +310,9 @@ export default function DashboardTileSections() {
             key={id}
             staggerIndex={staggerIndex}
             title="Macros"
-            subtitle={history.length > 0 ? `avg ${energyUnitLabel(energyUnit)}/day, 7d` : "No logs yet"}
-            value={history.length > 0 ? fmt(kcalToUnit(avgCalories, energyUnit)) : "—"}
-            unit={history.length > 0 ? energyUnitLabel(energyUnit) : undefined}
+            subtitle={loggedHistory.length > 0 ? `avg ${energyUnitLabel(energyUnit)}/logged day, 7d` : "No logs yet"}
+            value={loggedHistory.length > 0 ? fmt(kcalToUnit(avgCalories, energyUnit)) : "—"}
+            unit={loggedHistory.length > 0 ? energyUnitLabel(energyUnit) : undefined}
             onClick={() => navigate("/macros")}
           >
             <MiniBarSpark points={macroSparkPoints} />

@@ -241,10 +241,14 @@ export default function WeightDetailScreen() {
             unit={unit}
             label="Weekly Change"
             description={
-              <>
-                Your typical weekly rate of weight {weeklyRateKg !== null && weeklyRateKg < 0 ? "loss" : "gain"} over
-                the past three weeks.
-              </>
+              weeklyRateKg !== null ? (
+                <>
+                  Your typical weekly rate of weight {weeklyRateKg < 0 ? "loss" : "gain"} measured over the past
+                  three weeks.
+                </>
+              ) : (
+                <>Available after three weeks of trend data, so a partial first week is not projected as a full one.</>
+              )
             }
           />
           <StatTile

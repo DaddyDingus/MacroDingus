@@ -52,6 +52,10 @@ const daysUpdateInput = z.object({
   days: z.array(dayValuesInput).min(1).max(7),
 });
 
+function hasUniqueDays(days: { dayOfWeek: number }[]): boolean {
+  return new Set(days.map((day) => day.dayOfWeek)).size === days.length;
+}
+
 async function fetchProgramWithDays(programId: string) {
   const [program] = await db.select().from(programs).where(eq(programs.id, programId));
   if (!program) return null;
@@ -88,6 +92,16 @@ export function registerProgramRoutes(app: FastifyInstance) {
     if (parsed.data.style === "coached" && parsed.data.distributionMode === "shifted" && !parsed.data.shiftedHighDays) {
       return reply.code(400).send({ error: "Select which days should have higher Calorie targets" });
     }
+    if (
+      parsed.data.style === "coached" &&
+      parsed.data.shiftedHighDays &&
+      new Set(parsed.data.shiftedHighDays).size !== parsed.data.shiftedHighDays.length
+    ) {
+      return reply.code(400).send({ error: "Higher-Calorie days must be unique" });
+    }
+    if (parsed.data.style === "manual" && !hasUniqueDays(parsed.data.days)) {
+      return reply.code(400).send({ error: "Manual programs must contain each weekday exactly once" });
+    }
     if (parsed.data.style === "coached" && parsed.data.proteinLevel === "custom" && parsed.data.customProteinPerKg === undefined) {
       return reply.code(400).send({ error: "Set a custom protein target" });
     }
@@ -96,6 +110,7 @@ export function registerProgramRoutes(app: FastifyInstance) {
 
     const [goal] = await db.select().from(goals).where(and(eq(goals.id, parsed.data.goalId), eq(goals.userId, userId)));
     if (!goal) return reply.code(404).send({ error: "Goal not found" });
+    if (goal.endedAt !== null) return reply.code(400).send({ error: "Programs can only be created for the active goal" });
 
     let dayRows: z.infer<typeof dayValuesInput>[];
     let programFields: {
@@ -194,6 +209,7 @@ export function registerProgramRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const parsed = daysUpdateInput.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    if (!hasUniqueDays(parsed.data.days)) return reply.code(400).send({ error: "Each weekday can only be updated once" });
     const userId = req.userId!;
 
     const [program] = await db.select().from(programs).where(and(eq(programs.id, id), eq(programs.userId, userId)));

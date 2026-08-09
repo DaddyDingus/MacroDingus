@@ -20,7 +20,12 @@ export default function MiniBarSpark({ points }: { points: MiniBarPoint[] }) {
   const data = points.map((p, i) => ({ i, ...p }));
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={data} margin={{ top: 2, right: 2, left: 2, bottom: 2 }} barCategoryGap={2}>
+      <BarChart
+        data={data}
+        margin={{ top: 2, right: 2, left: 2, bottom: 2 }}
+        barCategoryGap={2}
+        accessibilityLayer={false}
+      >
         {/* Not inside ChartCard's pan/pinch gesture system (unlike
             MacroHistoryChart/NutrientHistoryChart, which keep this off) —
             data only changes on mount/refetch here, not every gesture frame,

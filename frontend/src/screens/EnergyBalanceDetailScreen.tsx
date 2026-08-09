@@ -50,10 +50,9 @@ export default function EnergyBalanceDetailScreen() {
   const { unit: energyUnit } = useEnergyUnit();
   const config = TAB_CONFIG[tab];
 
-  // One dense, zero-filled fetch covers everything on this screen — the
-  // chart slices its own window off this, and averageBalanceOverDays()
-  // filters by date internally, so neither the gesture window nor the fixed
-  // Insights windows need a separate round trip.
+  // One dense fetch covers everything on this screen. buildDailyBalance()
+  // discards its explicitly marked unlogged gaps so they never become
+  // fabricated zero-intake days.
   const fullHistory = useLogsHistory(3650);
   const checkinHistory = useCheckinHistory();
   const checkinsAsc = [...(checkinHistory.data ?? [])].sort((a, b) => a.date.localeCompare(b.date));
@@ -140,7 +139,11 @@ export default function EnergyBalanceDetailScreen() {
           {rangeLabel ? (
             <p className="text-xs text-muted mt-2 text-center">{rangeLabel}</p>
           ) : (
-            <p className="text-xs text-muted mt-2 text-center">Check in from Strategy to get your first estimate.</p>
+            <p className="text-xs text-muted mt-2 text-center">
+              {tab === "expenditure"
+                ? "Log food and check in from Strategy to see your energy balance."
+                : "Log food and set a program to compare against your calorie targets."}
+            </p>
           )}
         </div>
 
@@ -155,6 +158,11 @@ export default function EnergyBalanceDetailScreen() {
                 data={chartData}
                 compareLabel={config.chartLabel}
                 compareColor={config.color}
+                emptyMessage={
+                  tab === "expenditure"
+                    ? "Log food and check in at least once to see this chart."
+                    : "Log food and set a program to see this chart."
+                }
                 windowStart={windowStart}
                 windowEnd={windowEnd}
                 height={height}
@@ -181,7 +189,7 @@ export default function EnergyBalanceDetailScreen() {
                 </div>
               );
             }
-            const windowStart = addDays(today, -w);
+            const windowStart = addDays(today, -(w - 1));
             const windowPoints = allBalance.filter((p) => p.date >= windowStart);
             const dir = changeDirection(avg, BALANCE_EPSILON);
             const seriesInUnit = windowPoints.map((p) => kcalToUnit(p.balance, energyUnit));

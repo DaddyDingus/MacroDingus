@@ -4,6 +4,7 @@ backend/public/
 *.tsbuildinfo
 data/*.sqlite
 data/*.sqlite-*
+data/backups/
 data/.cookie-secret
 data/photos/*
 !data/photos/.gitkeep

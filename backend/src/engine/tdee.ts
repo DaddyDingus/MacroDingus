@@ -18,7 +18,7 @@ export const ACTIVITY_MULTIPLIERS: Record<string, number> = {
 // MacroFactor's three published BMR formulas (macrofactor.com/macrofactors-bmr/,
 // shipped in app v2.9.8, August 2024). Formula selected by available data:
 //   3 — athlete (≥7h/week high-intensity, needs BF%): BMR = 40.4 × FFM^0.932
-//   2 — body comp (BF% on file):  BMR = 50.2×FFM^0.7 + 40.5×(FFM^0.7×FM^0.066) − age_term×age
+//   2 — body comp (BF% on file):  BMR = 50.2×FFM^0.7 + 40.5×(FFM^0.7×FM^0.066) − piecewise age term
 //   1 — height/weight fallback:   BMR = 129.6×weight^0.55 + 0.011×height² − age_term×age − 213.8×sex
 // Metabolic adaptation multipliers applied on top: deficit ×0.95,
 // >10% below personal peak ×0.97, both ×0.92.
@@ -68,7 +68,7 @@ export function macroFactorTdee(params: {
     const ffm = params.weightKg * (1 - bf! / 100);
     const fm = params.weightKg * (bf! / 100);
     const ageTerm = 1.1 * Math.min(params.age, 60) + 2.75 * Math.max(0, params.age - 60);
-    bmr = 50.2 * Math.pow(ffm, 0.7) + 40.5 * (Math.pow(ffm, 0.7) * Math.pow(fm, 0.066)) - ageTerm * params.age;
+    bmr = 50.2 * Math.pow(ffm, 0.7) + 40.5 * (Math.pow(ffm, 0.7) * Math.pow(fm, 0.066)) - ageTerm;
   } else {
     const sexFactor = params.sex === "female" ? 1 : 0;
     const ageTerm = 1.96 * Math.min(params.age, 60) + 4.9 * Math.max(0, params.age - 60);
@@ -154,6 +154,48 @@ export interface AdaptiveTdeeEstimate {
   fluxKcal: number;
 }
 
+export interface AdaptiveTdeeCoverage {
+  ready: boolean;
+  nutritionDays: number;
+  nutritionDaysRequired: number;
+  weighIns: number;
+  weighInsRequired: number;
+  weightSpanDays: number;
+  latestWeightDate: string | null;
+}
+
+// Explains the exact eligibility gates estimateAdaptiveTdee applies. Kept
+// beside the estimator so UI copy cannot drift from the calculation.
+export function adaptiveTdeeCoverage(
+  weighIns: { date: string; weightKg: number }[],
+  dailyCalories: { date: string; calories: number }[],
+  windowDays = 21
+): AdaptiveTdeeCoverage {
+  const nutritionDaysRequired = Math.ceil(windowDays * MIN_CALORIE_COVERAGE);
+  const weighInsRequired = 2;
+  if (weighIns.length === 0) {
+    return { ready: false, nutritionDays: 0, nutritionDaysRequired, weighIns: 0, weighInsRequired, weightSpanDays: 0, latestWeightDate: null };
+  }
+  const trend = computeTrend(weighIns);
+  const latest = trend[trend.length - 1];
+  const windowStart = addDaysToDateString(latest.date, -windowDays);
+  const trendInWindow = trend.filter((point) => point.date >= windowStart);
+  const first = trendInWindow[0];
+  const nutritionDays = first
+    ? dailyCalories.filter((day) => day.date >= first.date && day.date <= latest.date).length
+    : 0;
+  const weightSpanDays = first ? Math.max(0, daysBetween(first.date, latest.date)) : 0;
+  return {
+    ready: trendInWindow.length >= weighInsRequired && nutritionDays >= nutritionDaysRequired,
+    nutritionDays,
+    nutritionDaysRequired,
+    weighIns: trendInWindow.length,
+    weighInsRequired,
+    weightSpanDays,
+    latestWeightDate: latest.date,
+  };
+}
+
 // Backs out actual expenditure from the trend-weight change and average
 // calories logged over a lookback window, instead of trusting a formula
 // forever: TDEE = avg calories eaten + (implied deficit from weight lost),
@@ -183,13 +225,11 @@ export function estimateAdaptiveTdee(
   const firstPoint = trendInWindow[0];
   const lastPoint = trendInWindow[trendInWindow.length - 1];
 
-  // Clipped to lastPoint.date, not just windowStart — dailyCalories is
-  // fetched over its own wider trailing window upstream (see
-  // gatherAdaptiveTdeeInputs), so without this upper bound, days logged
-  // *after* the most recent weigh-in would get folded into the average
-  // even though the weight side hasn't caught up to reflect them yet. Both
-  // halves of the comparison now measure the identical span.
-  const caloriesInWindow = dailyCalories.filter((d) => d.date >= windowStart && d.date <= lastPoint.date);
+  // Clip to the actual first/last trend points, not just the nominal 21-day
+  // boundary. When weight history starts partway through that window,
+  // including older calorie days compares intake from one span with weight
+  // change from a shorter one. Both halves must measure the identical span.
+  const caloriesInWindow = dailyCalories.filter((d) => d.date >= firstPoint.date && d.date <= lastPoint.date);
   if (caloriesInWindow.length < minCalorieDays) return null;
 
   const actualDays = Math.max(1, daysBetween(firstPoint.date, lastPoint.date));
@@ -216,23 +256,26 @@ export interface MacroTargets {
 // calories, carbs always absorb whatever's left. proteinPerKg/fatPercent are
 // user-adjustable (profiles.proteinPerKg/fatPercent); 2.0 g/kg and 25% fat
 // are just the defaults a new profile starts with, not hardcoded truths.
-// carbsKcal is clamped at 0 rather than going negative — an aggressive
-// protein+fat combination on a low-calorie cut can otherwise leave nothing
-// for carbs, which is a valid (if extreme) outcome, not a bug to hide.
+// Protein is preserved first, fat gets up to its requested share, and carbs
+// absorb the remainder. In pathological low-calorie/custom-protein cases,
+// protein is capped at the full calorie budget; this keeps the macro-derived
+// calories internally consistent instead of returning grams whose calories
+// exceed the headline target.
 export function computeMacroTargets(
   targetCalories: number,
   trendWeightKg: number,
   proteinPerKg: number,
   fatPercent: number
 ): MacroTargets {
-  const proteinG = proteinPerKg * trendWeightKg;
+  const safeCalories = Math.max(0, targetCalories);
+  const proteinG = Math.min(proteinPerKg * trendWeightKg, safeCalories / 4);
   const proteinKcal = proteinG * 4;
-  const fatKcal = fatPercent * targetCalories;
+  const fatKcal = Math.min(fatPercent * safeCalories, Math.max(0, safeCalories - proteinKcal));
   const fatG = fatKcal / 9;
-  const carbsKcal = Math.max(0, targetCalories - proteinKcal - fatKcal);
+  const carbsKcal = Math.max(0, safeCalories - proteinKcal - fatKcal);
   const carbsG = carbsKcal / 4;
   return {
-    calories: Math.round(targetCalories),
+    calories: Math.round(safeCalories),
     proteinG: Math.round(proteinG * 10) / 10,
     carbsG: Math.round(carbsG * 10) / 10,
     fatG: Math.round(fatG * 10) / 10,

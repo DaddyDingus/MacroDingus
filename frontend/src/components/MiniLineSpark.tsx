@@ -65,7 +65,14 @@ export default function MiniLineSpark({
   const domain = sparkDomain([Math.min(...values), Math.max(...values)]);
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <ComposedChart data={data} margin={{ top: 4, right: 4, left: 4, bottom: 4 }}>
+      <ComposedChart
+        data={data}
+        margin={{ top: 4, right: 4, left: 4, bottom: 4 }}
+        // A sparkline is visual-only. Recharts 3 otherwise adds a focusable
+        // accessibility/keyboard-navigation layer, which is useful on a full
+        // chart but creates a misleading second control inside DashboardCard.
+        accessibilityLayer={false}
+      >
         {/* Hidden but required: without a declared XAxis, Recharts has no
             explicit x-reference to correlate the two stacked Area series
             against (see TdeeChart.tsx's Flux Range comment for the same

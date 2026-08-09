@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Check, Palette, Ruler, CalendarDays, UtensilsCrossed, CookingPot, Camera, ChevronDown, ChevronRight, AlertTriangle, LogOut, User, KeyRound, Activity, Sparkles } from "lucide-react";
+import { Check, Palette, Ruler, CalendarDays, UtensilsCrossed, CookingPot, Camera, ChevronDown, ChevronRight, AlertTriangle, LogOut, User, KeyRound, Activity, Sparkles, Download, Upload, Database, RefreshCw } from "lucide-react";
 import { useRecipes } from "../api/recipes";
 import { useAuthStatus, useLogout } from "../api/auth";
 import { useCoachStatus, useSaveProfile } from "../api/coach";
@@ -16,6 +16,9 @@ import ChangePasswordSheet from "../components/ChangePasswordSheet";
 import EditBodyProfileSheet from "../components/EditBodyProfileSheet";
 import AiSettingsSheet from "../components/AiSettingsSheet";
 import CookwareSheet from "../components/CookwareSheet";
+import RestoreAccountDataSheet from "../components/RestoreAccountDataSheet";
+import { useExportAccountData, useRunServerBackup, useServerBackupStatus } from "../api/account";
+import { localDateString } from "../lib/date";
 
 const ENERGY_UNITS: EnergyUnit[] = ["kcal", "kj"];
 const WEIGHT_UNITS: WeightUnit[] = ["kg", "lb"];
@@ -37,6 +40,9 @@ export default function MoreScreen() {
   const logout = useLogout();
   const coachStatus = useCoachStatus();
   const saveProfile = useSaveProfile();
+  const exportAccount = useExportAccountData();
+  const backupStatus = useServerBackupStatus();
+  const runBackup = useRunServerBackup();
   const { theme, setTheme } = useTheme();
   const { unit: energyUnit, setUnit: setEnergyUnit } = useEnergyUnit();
   const { unit: weightUnit, setUnit: setWeightUnit } = useWeightUnit();
@@ -49,12 +55,33 @@ export default function MoreScreen() {
   const [showAiSettingsSheet, setShowAiSettingsSheet] = useState(false);
   const [showCookwareSheet, setShowCookwareSheet] = useState(false);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const restoreInputRef = useRef<HTMLInputElement>(null);
 
   let block = 0;
   const name = authStatus.data?.user?.name ?? "";
   const initial = name.trim().charAt(0).toUpperCase() || "?";
   const profile = coachStatus.data?.profile ?? null;
   const selectedTheme = THEME_CATALOG.find((t) => t.id === theme)!;
+  const lastBackupLabel = backupStatus.data?.lastBackupAt
+    ? new Date(backupStatus.data.lastBackupAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })
+    : backupStatus.isLoading ? "Checking…" : "Not created yet";
+
+  function downloadAccountExport() {
+    exportAccount.mutate(undefined, {
+      onSuccess: (data) => {
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = `macrotrack-export-${localDateString()}.json`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+      },
+    });
+  }
 
   return (
     <div data-rubber-band-surface className="min-h-dvh pb-24">
@@ -277,6 +304,67 @@ export default function MoreScreen() {
         </section>
 
         <section className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
+          <SectionHeader icon={<Database size={15} strokeWidth={2} className="text-muted" />} label="Data & backups" />
+          <div className="px-4 py-3 border-b border-line/60">
+            <p className="text-sm">Stored on this server</p>
+            <p className="text-xs text-muted mt-1 leading-relaxed">
+              Your browser keeps a temporary cache for quick reopening. The server database and progress photos are
+              backed up automatically every 24 hours.
+            </p>
+          </div>
+          <div className="px-4 py-2.5 border-b border-line/60 flex items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm">Server backup</p>
+              <p className="text-xs text-muted truncate">Last: {lastBackupLabel}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => runBackup.mutate()}
+              disabled={runBackup.isPending}
+              className="shrink-0 flex items-center gap-1.5 text-xs text-muted px-3 py-1.5 rounded-full border border-line active:bg-surface-raised disabled:opacity-50"
+            >
+              <RefreshCw size={13} className={runBackup.isPending ? "animate-spin" : ""} />
+              {runBackup.isPending ? "Backing up…" : "Back up now"}
+            </button>
+          </div>
+          <button
+            onClick={downloadAccountExport}
+            disabled={exportAccount.isPending}
+            className="w-full flex items-center justify-between px-4 py-2.5 border-b border-line/60 text-left active:bg-surface-raised disabled:opacity-50"
+          >
+            <span className="flex items-center gap-2 text-sm">
+              <Download size={14} strokeWidth={2} className="text-muted" />
+              {exportAccount.isPending ? "Preparing export…" : "Download data export"}
+            </span>
+            <ChevronRight size={16} strokeWidth={2.5} className="text-muted shrink-0" />
+          </button>
+          <button
+            onClick={() => restoreInputRef.current?.click()}
+            className="w-full flex items-center justify-between px-4 py-2.5 text-left active:bg-surface-raised"
+          >
+            <span className="flex items-center gap-2 text-sm">
+              <Upload size={14} strokeWidth={2} className="text-muted" />
+              Restore data export
+            </span>
+            <ChevronRight size={16} strokeWidth={2.5} className="text-muted shrink-0" />
+          </button>
+          <input
+            ref={restoreInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) setRestoreFile(file);
+              event.target.value = "";
+            }}
+          />
+          {(exportAccount.isError || runBackup.isError || backupStatus.isError) && (
+            <p className="px-4 pb-2.5 text-xs text-protein">That backup action did not finish. Try again.</p>
+          )}
+        </section>
+
+        <section className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
           <button
             onClick={() => setShowClearData(true)}
             className="w-full flex items-center gap-3 px-4 py-2.5 text-left active:bg-surface-raised"
@@ -311,6 +399,7 @@ export default function MoreScreen() {
       )}
       {showAiSettingsSheet && <AiSettingsSheet onClose={() => setShowAiSettingsSheet(false)} />}
       {showCookwareSheet && <CookwareSheet onClose={() => setShowCookwareSheet(false)} />}
+      {restoreFile && <RestoreAccountDataSheet file={restoreFile} onClose={() => setRestoreFile(null)} />}
     </div>
   );
 }

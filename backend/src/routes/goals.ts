@@ -4,7 +4,7 @@ import { eq, and, isNull, desc, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "../db/index.js";
 import { goals, checkins, programs, programDays, profiles } from "../db/schema.js";
-import { currentTrendKg } from "./shared.js";
+import { currentTrendKg, serializeGoal } from "./shared.js";
 import { performCheckin } from "./coach.js";
 
 const goalInput = z.object({
@@ -18,9 +18,18 @@ const goalEditInput = z.object({
   targetRateKgPerWeek: z.number().min(-2).max(2),
 });
 
+function goalShapeError(goalType: "cut" | "bulk" | "maintain", goalWeightKg: number | null, rate: number): string | null {
+  if (goalType === "maintain") return goalWeightKg === null && rate === 0 ? null : "Maintain goals require no goal weight and a zero rate";
+  if (goalWeightKg === null) return "Cut and bulk goals require a goal weight";
+  if (goalType === "cut" && rate >= 0) return "Cut goals require a negative weekly rate";
+  if (goalType === "bulk" && rate <= 0) return "Bulk goals require a positive weekly rate";
+  return null;
+}
+
 export function registerGoalRoutes(app: FastifyInstance) {
   app.get("/api/goals", async (req) => {
-    return db.select().from(goals).where(eq(goals.userId, req.userId!)).orderBy(desc(goals.startedAt));
+    const rows = await db.select().from(goals).where(eq(goals.userId, req.userId!)).orderBy(desc(goals.startedAt));
+    return rows.map(serializeGoal);
   });
 
   // Closes out whichever goal is currently active (at most one active goal
@@ -30,6 +39,8 @@ export function registerGoalRoutes(app: FastifyInstance) {
   app.post("/api/goals", async (req, reply) => {
     const parsed = goalInput.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const shapeError = goalShapeError(parsed.data.goalType, parsed.data.goalWeightKg, parsed.data.targetRateKgPerWeek);
+    if (shapeError) return reply.code(400).send({ error: shapeError });
     const userId = req.userId!;
     const now = new Date().toISOString();
 
@@ -46,6 +57,7 @@ export function registerGoalRoutes(app: FastifyInstance) {
       .where(eq(checkins.userId, userId));
 
     await db.update(goals).set({ endedAt: now }).where(and(eq(goals.userId, userId), isNull(goals.endedAt)));
+    await db.update(programs).set({ endedAt: now }).where(and(eq(programs.userId, userId), isNull(programs.endedAt)));
 
     const id = randomUUID();
     await db.insert(goals).values({
@@ -73,7 +85,7 @@ export function registerGoalRoutes(app: FastifyInstance) {
 
     const [goal] = await db.select().from(goals).where(eq(goals.id, id));
     reply.code(201);
-    return goal;
+    return serializeGoal(goal);
   });
 
   // True in-place edit, not a new history row — matches "Edits to your
@@ -88,6 +100,12 @@ export function registerGoalRoutes(app: FastifyInstance) {
     const [existing] = await db.select().from(goals).where(and(eq(goals.id, id), eq(goals.userId, userId)));
     if (!existing) return reply.code(404).send({ error: "Goal not found" });
     if (existing.endedAt !== null) return reply.code(400).send({ error: "Only the active goal can be edited" });
+    const shapeError = goalShapeError(
+      existing.goalType as "cut" | "bulk" | "maintain",
+      parsed.data.goalWeightKg,
+      parsed.data.targetRateKgPerWeek
+    );
+    if (shapeError) return reply.code(400).send({ error: shapeError });
 
     await db
       .update(goals)
@@ -95,7 +113,7 @@ export function registerGoalRoutes(app: FastifyInstance) {
       .where(eq(goals.id, id));
 
     const [updated] = await db.select().from(goals).where(eq(goals.id, id));
-    return updated;
+    return serializeGoal(updated);
   });
 
   // History cleanup only — the active goal can't be deleted this way (it
@@ -135,9 +153,12 @@ export function registerGoalRoutes(app: FastifyInstance) {
     if (!target) return reply.code(404).send({ error: "Goal not found" });
 
     await db.update(goals).set({ endedAt: now }).where(and(eq(goals.userId, userId), isNull(goals.endedAt)));
+    // A program belongs to the goal interval it was created for. Reopening a
+    // historical goal must not silently keep a different goal's targets.
+    await db.update(programs).set({ endedAt: now }).where(and(eq(programs.userId, userId), isNull(programs.endedAt)));
     await db.update(goals).set({ endedAt: null }).where(eq(goals.id, id));
 
     const [reopened] = await db.select().from(goals).where(eq(goals.id, id));
-    return reopened;
+    return serializeGoal(reopened);
   });
 }

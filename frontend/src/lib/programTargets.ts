@@ -11,18 +11,22 @@ export function dayOfWeekFromDateString(date: string): number {
 // Same "latest startedAt <= date, createdAt tiebreak" shape as
 // lib/checkins.ts's activeCheckinForDate — programs are sparse historical
 // events just like check-ins, so the same resolution logic applies.
-// startedAt is a full ISO timestamp (not a bare date), so comparisons use
-// its date-only prefix.
+// startedDate/endedDate are resolved in APP_TIME_ZONE by the backend; slicing
+// their UTC timestamps can otherwise select the previous calendar day.
 export function activeProgramForDate(programs: Program[], date: string): Program | null {
   let active: Program | null = null;
   for (const p of programs) {
-    const startDate = p.startedAt.slice(0, 10);
+    const startDate = p.startedDate;
     if (startDate > date) continue;
+    // Keep the ending calendar day attributable to the program (a same-day
+    // replacement wins via the tiebreak below), but never carry an ended
+    // program's targets indefinitely into later dates.
+    if (p.endedDate !== null && p.endedDate < date) continue;
     if (!active) {
       active = p;
       continue;
     }
-    const activeStartDate = active.startedAt.slice(0, 10);
+    const activeStartDate = active.startedDate;
     if (startDate > activeStartDate || (startDate === activeStartDate && p.createdAt > active.createdAt)) active = p;
   }
   return active;

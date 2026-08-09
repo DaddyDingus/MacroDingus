@@ -3,7 +3,7 @@ import { z } from "zod";
 import { eq, and, gte, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "../db/index.js";
-import { logs, foods, recipes, recipeIngredients } from "../db/schema.js";
+import { logs, foods, recipes, recipeIngredients, nutritionDayStatuses } from "../db/schema.js";
 import { scaleNutrition, sumNutrition, EMPTY_NUTRITION } from "../engine/nutrition.js";
 import { addDaysToDateString } from "../engine/trendWeight.js";
 import { householdDateString } from "../lib/householdDate.js";
@@ -89,7 +89,34 @@ export function registerLogRoutes(app: FastifyInstance) {
     await attachIngredientPreviews(entries);
 
     const totals = sumNutrition(entries.map((e) => e.nutrition));
-    return { date, entries, totals };
+    const [dayStatus] = await db
+      .select({ incomplete: nutritionDayStatuses.incomplete })
+      .from(nutritionDayStatuses)
+      .where(and(eq(nutritionDayStatuses.userId, req.userId!), eq(nutritionDayStatuses.date, date)));
+    return { date, entries, totals, incomplete: dayStatus?.incomplete ?? false };
+  });
+
+  app.put("/api/logs/day-status", async (req, reply) => {
+    const parsed = z
+      .object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), incomplete: z.boolean() })
+      .safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const userId = req.userId!;
+    if (!parsed.data.incomplete) {
+      await db
+        .delete(nutritionDayStatuses)
+        .where(and(eq(nutritionDayStatuses.userId, userId), eq(nutritionDayStatuses.date, parsed.data.date)));
+    } else {
+      const now = new Date().toISOString();
+      await db
+        .insert(nutritionDayStatuses)
+        .values({ id: randomUUID(), userId, date: parsed.data.date, incomplete: true, updatedAt: now })
+        .onConflictDoUpdate({
+          target: [nutritionDayStatuses.userId, nutritionDayStatuses.date],
+          set: { incomplete: true, updatedAt: now },
+        });
+    }
+    return { date: parsed.data.date, incomplete: parsed.data.incomplete };
   });
 
   app.post("/api/logs", async (req, reply) => {
@@ -228,6 +255,14 @@ export function registerLogRoutes(app: FastifyInstance) {
       .innerJoin(foods, eq(logs.foodId, foods.id))
       .where(and(eq(logs.userId, userId), gte(logs.date, since)));
 
+    const incompleteDates = new Set(
+      (await db
+        .select({ date: nutritionDayStatuses.date })
+        .from(nutritionDayStatuses)
+        .where(and(eq(nutritionDayStatuses.userId, userId), eq(nutritionDayStatuses.incomplete, true), gte(nutritionDayStatuses.date, since))))
+        .map((row) => row.date)
+    );
+
     const byDate = new Map<string, ReturnType<typeof sumNutrition>>();
     for (const { log, food } of rows) {
       const entryNutrition = scaleNutrition(food, log.quantityGrams);
@@ -238,7 +273,7 @@ export function registerLogRoutes(app: FastifyInstance) {
     const result = [];
     for (let i = 0; i < take; i++) {
       const date = addDaysToDateString(since, i);
-      result.push({ date, ...(byDate.get(date) ?? EMPTY_NUTRITION) });
+      result.push({ date, logged: byDate.has(date), incomplete: incompleteDates.has(date), ...(byDate.get(date) ?? EMPTY_NUTRITION) });
     }
     return result;
   });

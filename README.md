@@ -84,6 +84,17 @@ shared food-library relationship.
 
 ## Optional integrations
 
+### Health Connect
+
+Android Health Connect is exposed through the native Jetpack SDK, not a web
+or PWA API. A direct PWA integration is therefore not possible. The backend
+provides authenticated `POST /api/weights/import` batch upserts as the bridge
+target for a future minimal Android companion or Trusted Web Activity shell:
+the native layer reads permitted `WeightRecord` values, normalizes them to
+one kg value per household date, and passes them to the signed-in web layer.
+No Health Connect permission or health data leaves the phone until the user
+explicitly grants it and initiates sync.
+
 Weight relay syncing is disabled unless both of these values are configured:
 
 ```env

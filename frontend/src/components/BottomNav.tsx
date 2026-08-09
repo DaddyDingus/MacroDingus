@@ -49,7 +49,12 @@ export default function BottomNav() {
   const { hidden, shortcutsHidden, dockedBarScrollVisible } = useNavVisibility();
   const coachStatus = useCoachStatus();
   const nextCheckinDueDate = coachStatus.data?.nextCheckinDueDate ?? null;
-  const checkinDue = nextCheckinDueDate !== null && nextCheckinDueDate <= (coachStatus.data?.currentDate ?? "");
+  // The attention dot is a reminder, so an ignored check-in clears it —
+  // same rule as the Dashboard's banner (see CoachStatus.checkinIgnored).
+  const checkinDue =
+    nextCheckinDueDate !== null &&
+    nextCheckinDueDate <= (coachStatus.data?.currentDate ?? "") &&
+    !(coachStatus.data?.checkinIgnored ?? false);
   // Whether a docked bar is actually visible right now, not just whether
   // this route can have one — ShortcutsBar hides itself on scroll-down
   // independently of the route, and this border needs to track that (see

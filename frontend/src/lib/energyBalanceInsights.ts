@@ -19,11 +19,14 @@ export interface DailyBalancePoint {
 // dropped rather than shown with a fabricated compare value — same "missing
 // means unreported" rule the rest of this app follows.
 export function buildDailyBalance(
-  history: { date: string; calories: number }[],
+  history: { date: string; calories: number; logged: boolean; incomplete: boolean }[],
   compareValueForDate: (date: string) => number | null
 ): DailyBalancePoint[] {
   const points: DailyBalancePoint[] = [];
   for (const d of history) {
+    // A dense history gap means "not logged", not "ate nothing". Including
+    // it would fabricate a full-day deficit equal to expenditure/target.
+    if (!d.logged || d.incomplete) continue;
     const compare = compareValueForDate(d.date);
     if (compare === null) continue;
     points.push({ date: d.date, calories: d.calories, compare, balance: d.calories - compare });
@@ -39,7 +42,7 @@ export function buildDailyBalance(
 export function averageBalanceOverDays(points: DailyBalancePoint[], windowDays: number): number | null {
   if (points.length === 0) return null;
   const latestDate = points[points.length - 1].date;
-  const cutoff = addDays(latestDate, -windowDays);
+  const cutoff = addDays(latestDate, -(windowDays - 1));
   // Real history has to actually reach back to the window's start date, not
   // just contain some points — otherwise every window longer than the
   // available history clamps to the same full array and reports an

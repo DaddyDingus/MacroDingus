@@ -38,6 +38,47 @@ const weightInput = z.object({
 });
 
 export function registerWeightRoutes(app: FastifyInstance) {
+  // Batch upsert contract for a future Android Health Connect companion.
+  // The native shell can read on-device WeightRecords, hand the normalized
+  // daily values to the authenticated PWA, and make one same-origin request
+  // rather than hundreds of individual mutations. Also useful for other
+  // explicitly authorized importers; it does not grant any new auth path.
+  app.post("/api/weights/import", async (req, reply) => {
+    const parsed = z.object({ weights: z.array(weightInput).min(1).max(3650) }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const userId = req.userId!;
+    let created = 0;
+    let updated = 0;
+    for (const item of parsed.data.weights) {
+      const [existing] = await db
+        .select()
+        .from(weights)
+        .where(and(eq(weights.userId, userId), eq(weights.date, item.date)));
+      if (existing) {
+        await db
+          .update(weights)
+          .set({
+            weightKg: item.weightKg,
+            ...(item.bodyFatPercent !== undefined ? { bodyFatPercent: item.bodyFatPercent } : {}),
+          })
+          .where(eq(weights.id, existing.id));
+        updated++;
+      } else {
+        await db.insert(weights).values({
+          id: randomUUID(),
+          userId,
+          date: item.date,
+          weightKg: item.weightKg,
+          bodyFatPercent: item.bodyFatPercent ?? null,
+          createdAt: new Date().toISOString(),
+        });
+        created++;
+      }
+    }
+    void pushWeightSync(userId);
+    return { imported: parsed.data.weights.length, created, updated };
+  });
+
   // Upsert: re-weighing on a day you've already logged corrects that day's
   // reading rather than creating a second entry — there's only ever one
   // scale weight per person per day.

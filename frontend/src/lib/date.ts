@@ -18,8 +18,7 @@ export function localIsoNoTz(d = new Date()): string {
 
 export function addDays(dateStr: string, delta: number): string {
   const [y, m, d] = dateStr.split("-").map(Number);
-  const dt = new Date(y, m - 1, d + delta);
-  return localDateString(dt);
+  return new Date(Date.UTC(y, m - 1, d + delta)).toISOString().slice(0, 10);
 }
 
 // UTC-based so a server-timezone-dependent off-by-one never creeps in here

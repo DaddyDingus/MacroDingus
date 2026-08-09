@@ -1,4 +1,4 @@
-import { ComposedChart, Bar, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { dayIndex } from "../lib/date";
 import { CHART_MARGIN, GRID, MUTED, formatShortTs } from "../lib/chartLayout";
 
@@ -35,20 +35,14 @@ export interface NutrientChartPoint {
   date: string;
   value: number;
   target: number | null;
-  // Only ever populated for the calories metric (see NutrientDetailScreen) —
-  // reuses the real per-check-in tdeeFluxKcal rather than fabricating a
-  // variance for grams-based macro targets, which have no equivalent
-  // measured source. Null means "no range to show", not zero.
-  flux: number | null;
 }
 
 // Split out from the chart itself so the screen can place it in ChartCard's
 // legend slot below the RangeToggle, matching every other history chart's
-// layout (see chartLayout.ts). hasTarget/hasRange mirror the same
+// layout (see chartLayout.ts). hasTarget mirrors the same
 // data-derived conditionals the chart component computes internally.
 export function NutrientHistoryChartLegend({ data, color }: { data: NutrientChartPoint[]; color: string }) {
   const hasTarget = data.some((d) => d.target !== null);
-  const hasRange = data.some((d) => d.target !== null && d.flux !== null);
   return (
     <>
       <span className="flex items-center gap-1.5 text-xs text-muted">
@@ -61,21 +55,14 @@ export function NutrientHistoryChartLegend({ data, color }: { data: NutrientChar
           Target
         </span>
       )}
-      {hasRange && (
-        <span className="flex items-center gap-1.5 text-xs text-muted">
-          <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: color, opacity: 0.3 }} />
-          Range
-        </span>
-      )}
     </>
   );
 }
 
 // Bars for the actual daily value (a day's total is a discrete, complete
 // number, same reasoning as EnergyBalanceChart), a dashed step line for the
-// day's active target, and — calories only — a shaded low/high band built
-// from tdeeFluxKcal via the same stacked-Area technique TdeeChart's Flux
-// Range band uses.
+// day's active target. Expenditure flux is estimator uncertainty, not a
+// tolerance around the user's intake target, so it does not belong here.
 export default function NutrientHistoryChart({
   data,
   hasData,
@@ -105,17 +92,13 @@ export default function NutrientHistoryChart({
     ts: dayIndex(d.date),
     value: Math.round(d.value * 10) / 10,
     target: d.target,
-    low: d.target !== null && d.flux !== null ? d.target - d.flux : undefined,
-    band: d.target !== null && d.flux !== null ? d.flux * 2 : undefined,
   }));
 
   const hasTarget = chartData.some((d) => d.target !== null);
-  const hasRange = chartData.some((d) => d.band !== undefined);
 
   const visibleValues = chartData.flatMap((d) => {
     const vals = [d.value];
     if (d.target !== null) vals.push(d.target);
-    if (d.low !== undefined && d.band !== undefined) vals.push(d.low, d.low + d.band);
     return vals;
   });
   const domain: [number, number] = [0, Math.max(...visibleValues, 0) * 1.15];
@@ -145,20 +128,6 @@ export default function NutrientHistoryChart({
           tickFormatter={(v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(Math.round(v)))}
         />
         <Tooltip content={<CustomTooltip color={color} unit={unit} />} cursor={{ fill: GRID, opacity: 0.3 }} />
-        {hasRange && (
-          <>
-            <Area type="stepAfter" dataKey="low" stackId="range" stroke="none" fill="transparent" isAnimationActive={false} />
-            <Area
-              type="stepAfter"
-              dataKey="band"
-              stackId="range"
-              stroke="none"
-              fill={color}
-              fillOpacity={0.15}
-              isAnimationActive={false}
-            />
-          </>
-        )}
         <Bar dataKey="value" fill={color} radius={[2, 2, 0, 0]} isAnimationActive={false} />
         {hasTarget && (
           <Line

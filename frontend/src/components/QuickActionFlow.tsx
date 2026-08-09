@@ -2,7 +2,8 @@ import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useDayLog } from "../api/logs";
 import { usePrograms } from "../api/programs";
-import { targetsForDate } from "../lib/programTargets";
+import { useAdjustment } from "../api/adjustments";
+import { targetsForDate, applyAdjustment } from "../lib/programTargets";
 import { useEffectiveLogDate } from "../lib/viewedDate";
 import type { ShortcutId } from "../lib/shortcuts";
 import AddFoodSheet from "./AddFoodSheet";
@@ -29,6 +30,7 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
   const date = useEffectiveLogDate();
   const dayLog = useDayLog(date);
   const programs = usePrograms();
+  const adjustment = useAdjustment(date);
   const step = action === "logWeight"
     ? "logWeight"
     : action === "copyDay"
@@ -73,10 +75,14 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
 
   // Same "whichever program was active on the viewed date" lookup
   // TodayScreen uses, so the sheet's header badges match what the Food log
-  // screen itself would show for this date.
+  // screen itself would show for this date — including any Carry Forward
+  // Shortfall adjustment, or a plate opened via the FAB/Dashboard shortcuts
+  // (this flow) would revert to the un-boosted target that TodayScreen's own
+  // AddFoodSheet instance doesn't show.
   const dayTargets = targetsForDate(programs.data ?? [], date);
-  const targets = dayTargets
-    ? { calories: dayTargets.calories, proteinG: dayTargets.proteinG, fatG: dayTargets.fatG, carbsG: dayTargets.carbsG }
+  const adjustedTargets = dayTargets ? applyAdjustment(dayTargets, adjustment.data) : null;
+  const targets = adjustedTargets
+    ? { calories: adjustedTargets.calories, proteinG: adjustedTargets.proteinG, fatG: adjustedTargets.fatG, carbsG: adjustedTargets.carbsG }
     : null;
 
   // Leaf flows that already own a full-screen backdrop+panel.

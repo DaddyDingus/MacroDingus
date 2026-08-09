@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "../db/index.js";
 import { profiles, checkins, goals, programs, programDays } from "../db/schema.js";
 import { computeTrend, daysBetween, addDaysToDateString } from "../engine/trendWeight.js";
-import { macroFactorTdee, estimateAdaptiveTdee } from "../engine/tdee.js";
+import { macroFactorTdee, estimateAdaptiveTdee, adaptiveTdeeCoverage } from "../engine/tdee.js";
 import { generateCoachedProgramDays, type DietType, type ProteinLevel } from "../engine/program.js";
 import { generateCheckinNarrative } from "../engine/checkinNarrative.js";
 import { anthropicKeyStatus } from "../engine/anthropicClient.js";
@@ -15,6 +15,7 @@ import {
   gatherDailyTdeeSeriesInputs,
   mostRecentBodyFatPercent,
   parseShiftedHighDays,
+  serializeGoal,
   serializeProgram,
 } from "./shared.js";
 import { nextCheckinDueDate } from "../lib/checkinSchedule.js";
@@ -43,6 +44,39 @@ async function activeProgramForUser(userId: string) {
 async function latestCheckinForUser(userId: string) {
   const [checkin] = await db.select().from(checkins).where(eq(checkins.userId, userId)).orderBy(desc(checkins.date)).limit(1);
   return checkin ?? null;
+}
+
+// Identifies which check-in cycle an "ignore" applies to. The due date is
+// the natural key — it only moves when a check-in actually happens, so an
+// ignore survives exactly as long as the check-in it dismissed is pending,
+// and a fresh cycle re-arms the reminders on its own. "initial" stands in
+// for the pre-first-check-in state, which has no due date of its own.
+function checkinCycleKey(nextDueDate: string | null): string {
+  return nextDueDate ?? "initial";
+}
+
+// What a check-in did to the active program's daily targets. Averaged across
+// the 7 program_days rows rather than reported per weekday: for an 'even'
+// distribution every day is identical anyway, and for 'shifted' the weekly
+// average is the number the program is actually built around. Null whenever
+// the check-in didn't touch targets (manual program, hand-edited days, or
+// no program at all) — there's no change to show, not a change of zero.
+export interface CheckinTargetChanges {
+  calories: { from: number; to: number };
+  proteinG: { from: number; to: number };
+  carbsG: { from: number; to: number };
+  fatG: { from: number; to: number };
+}
+
+function averageDayTargets(days: { targetCalories: number; targetProteinG: number; targetCarbsG: number; targetFatG: number }[]) {
+  const n = days.length;
+  const sum = (pick: (d: (typeof days)[number]) => number) => days.reduce((s, d) => s + pick(d), 0);
+  return {
+    calories: Math.round(sum((d) => d.targetCalories) / n),
+    proteinG: Math.round(sum((d) => d.targetProteinG) / n),
+    carbsG: Math.round(sum((d) => d.targetCarbsG) / n),
+    fatG: Math.round(sum((d) => d.targetFatG) / n),
+  };
 }
 
 // A check-in's real job now is just refreshing the TDEE estimate. If the
@@ -92,8 +126,13 @@ export async function performCheckin(userId: string) {
     peakWeightKg,
   });
   const tdee = adaptiveTdee?.tdee ?? formulaTdee;
+  let targetChanges: CheckinTargetChanges | null = null;
   if (activeProgram && activeProgram.style === "coached" && activeProgram.distributionMode !== "custom" && activeGoal) {
     {
+      // Read before the regenerate below overwrites them — this is the only
+      // record of what the targets were, since program_days is updated in
+      // place rather than versioned.
+      const previousDays = await db.select().from(programDays).where(eq(programDays.programId, activeProgram.id));
       const result = generateCoachedProgramDays({
         weighIns,
         dailyCalories,
@@ -133,6 +172,17 @@ export async function performCheckin(userId: string) {
           proteinBasis: result.breakdown.proteinBasisUsed,
         })
         .where(eq(programs.id, activeProgram.id));
+
+      if (previousDays.length > 0) {
+        const before = averageDayTargets(previousDays);
+        const after = averageDayTargets(result.days);
+        targetChanges = {
+          calories: { from: before.calories, to: after.calories },
+          proteinG: { from: before.proteinG, to: after.proteinG },
+          carbsG: { from: before.carbsG, to: after.carbsG },
+          fatG: { from: before.fatG, to: after.fatG },
+        };
+      }
     }
   }
 
@@ -176,8 +226,15 @@ export async function performCheckin(userId: string) {
     createdAt: new Date().toISOString(),
   });
 
+  // A completed check-in starts a new cycle, so any ignore from the old one
+  // is spent — cleared here rather than relied on to expire, so the stored
+  // value never outlives the cycle it described.
+  if (profile.checkinIgnoredForDate !== null) {
+    await db.update(profiles).set({ checkinIgnoredForDate: null }).where(eq(profiles.userId, userId));
+  }
+
   const [checkin] = await db.select().from(checkins).where(eq(checkins.id, id));
-  return { checkin, usedAdaptiveTdee: adaptiveTdee !== null };
+  return { checkin, usedAdaptiveTdee: adaptiveTdee !== null, targetChanges };
 }
 
 export function registerCoachRoutes(app: FastifyInstance) {
@@ -242,6 +299,25 @@ export function registerCoachRoutes(app: FastifyInstance) {
     return db.select().from(checkins).where(eq(checkins.userId, req.userId!)).orderBy(desc(checkins.date));
   });
 
+  // Silences this cycle's check-in reminders without checking in. Deliberately
+  // not an "am I due" override — GET /coach/status still reports the check-in
+  // as due, so the Strategy screen keeps offering it; only the reminder
+  // surfaces (Dashboard banner, bottom-nav dot) read checkinIgnored.
+  app.post("/api/checkins/ignore", async (req, reply) => {
+    const userId = req.userId!;
+    const [profile] = await db.select().from(profiles).where(eq(profiles.userId, userId));
+    if (!profile) return reply.code(400).send({ error: "Set up your profile first" });
+
+    const latestCheckin = await latestCheckinForUser(userId);
+    const nextDue = latestCheckin ? nextCheckinDueDate(latestCheckin.date, profile.checkInDayOfWeek) : null;
+    await db
+      .update(profiles)
+      .set({ checkinIgnoredForDate: checkinCycleKey(nextDue), updatedAt: new Date().toISOString() })
+      .where(eq(profiles.userId, userId));
+
+    return { ignored: true };
+  });
+
   // Re-runs estimateAdaptiveTdee() as-of every day in the window, not just at
   // check-in time — a check-in only happens weekly, so most days have no
   // real TDEE/flux value of their own; this backfills one, using exactly the
@@ -262,11 +338,18 @@ export function registerCoachRoutes(app: FastifyInstance) {
     const { weighIns, dailyCalories } = await gatherDailyTdeeSeriesInputs(userId, take);
 
     const points: { date: string; tdee: number; fluxKcal: number }[] = [];
+    const weighInDates = new Set(weighIns.map((w) => w.date));
     let date = since;
     while (date <= today) {
-      const weighInsUpToDate = weighIns.filter((w) => w.date <= date);
-      const est = estimateAdaptiveTdee(weighInsUpToDate, dailyCalories);
-      if (est) points.push({ date, tdee: Math.round(est.tdee), fluxKcal: Math.round(est.fluxKcal) });
+      // Weight is the limiting side of the energy-balance equation. A day
+      // without a new weigh-in contains no new weight-change information,
+      // so it is a held estimate in the chart rather than a filled "fresh"
+      // point. The client carries the last real point forward explicitly.
+      if (weighInDates.has(date)) {
+        const weighInsUpToDate = weighIns.filter((w) => w.date <= date);
+        const est = estimateAdaptiveTdee(weighInsUpToDate, dailyCalories);
+        if (est) points.push({ date, tdee: Math.round(est.tdee), fluxKcal: Math.round(est.fluxKcal) });
+      }
       date = addDaysToDateString(date, 1);
     }
     return points;
@@ -279,6 +362,8 @@ export function registerCoachRoutes(app: FastifyInstance) {
     const latestCheckin = await latestCheckinForUser(userId);
     const trendWeightKg = await currentTrendKg(userId);
     const bodyFatPercent = await mostRecentBodyFatPercent(userId);
+    const coverageInputs = await gatherAdaptiveTdeeInputs(userId);
+    const expenditureCoverage = adaptiveTdeeCoverage(coverageInputs.weighIns, coverageInputs.dailyCalories);
     const nextCheckinDue = latestCheckin && profile ? nextCheckinDueDate(latestCheckin.date, profile.checkInDayOfWeek) : null;
 
     const [activeGoal] = await db
@@ -296,9 +381,13 @@ export function registerCoachRoutes(app: FastifyInstance) {
       latestCheckin: latestCheckin ?? null,
       trendWeightKg,
       bodyFatPercent,
+      expenditureCoverage,
       daysSinceCheckin: latestCheckin ? daysBetween(latestCheckin.date, currentDate) : null,
       nextCheckinDueDate: nextCheckinDue,
-      activeGoal: activeGoal ?? null,
+      // True only while the ignore still describes the *current* cycle — a
+      // completed check-in moves the due date on, which re-arms reminders.
+      checkinIgnored: profile?.checkinIgnoredForDate != null && profile.checkinIgnoredForDate === checkinCycleKey(nextCheckinDue),
+      activeGoal: activeGoal ? serializeGoal(activeGoal) : null,
       activeProgram: activeProgram ? { ...serializeProgram(activeProgram), days: activeProgramDays } : null,
     };
   });

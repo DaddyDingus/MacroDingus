@@ -69,6 +69,7 @@ export default function EnergyBalanceChart({
   data,
   compareLabel,
   compareColor,
+  emptyMessage,
   windowStart,
   windowEnd,
   height,
@@ -76,6 +77,7 @@ export default function EnergyBalanceChart({
   data: { date: string; calories: number; compare: number | null }[]; // already windowed to [windowStart, windowEnd] by the caller
   compareLabel: string;
   compareColor: string;
+  emptyMessage: string;
   windowStart: number;
   windowEnd: number;
   height: number;
@@ -86,7 +88,7 @@ export default function EnergyBalanceChart({
   if (!hasCompare) {
     return (
       <div className="flex items-center justify-center" style={{ height }}>
-        <p className="text-sm text-muted">Check in at least once to see this chart.</p>
+        <p className="text-sm text-muted text-center px-8">{emptyMessage}</p>
       </div>
     );
   }

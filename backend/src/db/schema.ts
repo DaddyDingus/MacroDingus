@@ -120,6 +120,20 @@ export const logs = sqliteTable("logs", {
   userDateIdx: index("logs_user_date_idx").on(table.userId, table.date),
 }));
 
+// A food-log day is assumed complete when it has entries unless the user
+// explicitly marks it incomplete. Incomplete days stay visible in nutrition
+// history but are excluded from adaptive TDEE, where treating a breakfast-
+// only log as a full low-intake day would materially bias expenditure.
+export const nutritionDayStatuses = sqliteTable("nutrition_day_statuses", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id),
+  date: text("date").notNull(),
+  incomplete: integer("incomplete", { mode: "boolean" }).notNull().default(true),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => ({
+  userDateIdx: uniqueIndex("nutrition_day_statuses_user_date_idx").on(table.userId, table.date),
+}));
+
 // Aggregated per-user search-gap telemetry. This deliberately stores no
 // keystroke stream: one row is updated only after a debounced remote search,
 // enough to identify repeated local misses and remote foods worth curating
@@ -196,6 +210,14 @@ export const profiles = sqliteTable("profiles", {
   // a user who deletes their only weigh-in (trendWeightKg briefly null) or
   // is temporarily between goals isn't bounced back into OnboardingFlow.
   onboardingCompletedAt: text("onboarding_completed_at"),
+  // The check-in cycle the user chose to ignore, identified by that cycle's
+  // due date (or the literal "initial" before any check-in exists — see
+  // checkinCycleKey() in routes/coach.ts). Only silences the *reminders*
+  // (Dashboard banner, bottom-nav dot); the Strategy screen always keeps a
+  // working Check In button so an ignored check-in can still be done. Since
+  // the due date only advances by actually checking in, ignoring holds until
+  // the next cycle begins.
+  checkinIgnoredForDate: text("checkin_ignored_for_date"),
 });
 
 // A goal is WHAT you want (target weight + rate), separate from a Program

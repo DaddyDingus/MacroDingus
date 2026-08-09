@@ -106,7 +106,7 @@ function GoalProgressBody({
 }) {
   const config = TAB_CONFIG[tab];
   const today = localDateString();
-  const goalStartDate = goal.startedAt.slice(0, 10);
+  const goalStartDate = goal.startedDate;
   const goalWeightKg = goal.goalWeightKg!;
   const startWeightKg = goal.startWeightKg!;
 

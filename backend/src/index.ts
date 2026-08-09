@@ -21,6 +21,7 @@ import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerCookwareRoutes } from "./routes/cookware.js";
 import { registerAdjustmentRoutes } from "./routes/adjustments.js";
 import { configureAnthropicKeyStore } from "./engine/anthropicClient.js";
+import { startAutomaticServerBackups } from "./lib/serverBackups.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 3000);
@@ -34,6 +35,7 @@ configureAnthropicKeyStore(DATA_DIR);
 runMigrations();
 
 const app = Fastify({ logger: true });
+startAutomaticServerBackups(DATA_DIR, app.log);
 
 await registerAuth(app, DATA_DIR);
 await app.register(fastifyMultipart, {
