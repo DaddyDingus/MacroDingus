@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MoreHorizontal, ChevronLeft, ChevronRight } from "lucide-react";
 import type { LogEntry } from "../api/types";
-import { useDayLog, useDeleteLog, useDeleteLogEntries, useMoveLogEntries, useLoggedDates } from "../api/logs";
+import { useDayLog, useDeleteLog, useDeleteLogEntries, useMoveLogEntries, useLoggedDates, useSetDayIncomplete } from "../api/logs";
 import { usePrograms } from "../api/programs";
 import { useAdjustment, useRemoveAdjustment } from "../api/adjustments";
 import { addDays, formatDayLabel, localDateString } from "../lib/date";
@@ -49,6 +49,7 @@ export default function TodayScreen() {
   const deleteLog = useDeleteLog(date);
   const deleteEntries = useDeleteLogEntries();
   const moveEntries = useMoveLogEntries();
+  const setDayIncomplete = useSetDayIncomplete(date);
   const programs = usePrograms();
   const adjustment = useAdjustment(date);
   const removeAdjustment = useRemoveAdjustment(date);
@@ -227,42 +228,30 @@ export default function TodayScreen() {
           situation. */}
       <div className="sticky top-0 z-10 bg-dashboardBg/85 backdrop-blur-sm border-b border-dashboardDivider/50">
         <header className="px-4 pt-4 pb-1.5 max-w-md mx-auto">
-          <div className="grid grid-cols-3 items-center">
-            <button
-              onClick={() => setDate((d) => addDays(d, -1))}
-              className="justify-self-start text-white/60 active:text-white p-1 -ml-1 flex items-center"
-              aria-label="Previous day"
-            >
-              <ChevronLeft size={18} strokeWidth={2.2} />
-            </button>
-            <button onClick={() => setCalendarOpen(true)} className="justify-self-center active:opacity-70">
-              <span className="text-sm font-medium text-white">{formatDayLabel(date)}</span>
-            </button>
-            <div className="justify-self-end flex items-center gap-1.5">
-              {/* Only rendered off today — logging in advance means forward
-                  nav (below) no longer stops there, so this is the fast way
-                  back rather than tapping the date to open the whole
-                  calendar sheet just to hit its own "Today" shortcut. */}
-              {date !== localDateString() && (
-                <button
-                  onClick={() => setDate(localDateString())}
-                  className="text-[11px] font-medium text-accent px-1.5 py-1 -my-1 active:opacity-70"
-                  aria-label="Jump to today"
-                >
-                  Today
-                </button>
-              )}
+          <div className="grid grid-cols-[1fr_auto_1fr] items-center">
+            <div className="justify-self-start flex items-center"></div>
+            
+            <div className="justify-self-center flex items-center justify-between w-48">
+              <button
+                onClick={() => setDate((d) => addDays(d, -1))}
+                className="text-white/60 active:text-white p-1 flex items-center shrink-0"
+                aria-label="Previous day"
+              >
+                <ChevronLeft size={18} strokeWidth={2.2} />
+              </button>
+              <button onClick={() => setCalendarOpen(true)} className="active:opacity-70 flex-1 text-center min-w-0">
+                <span className="text-sm font-medium text-white truncate block">{formatDayLabel(date)}</span>
+              </button>
               <button
                 onClick={() => setDate((d) => addDays(d, 1))}
-                className="text-white/60 active:text-white p-1 flex items-center"
+                className="text-white/60 active:text-white p-1 flex items-center shrink-0"
                 aria-label="Next day"
               >
                 <ChevronRight size={18} strokeWidth={2.2} />
               </button>
-              {/* Was a lone Copy icon — consolidated into one "Day actions"
-                  menu (DayMenuSheet) alongside Select All/Clear Day, which
-                  need an entry point that doesn't require anything already
-                  selected. Net icon count in this header is unchanged. */}
+            </div>
+            
+            <div className="justify-self-end flex items-center gap-1.5">
               <button
                 onClick={() => setMenuOpen(true)}
                 className="text-muted p-1.5 active:text-white/70"
@@ -296,6 +285,12 @@ export default function TodayScreen() {
           header's own height on top of that. */}
       <div data-rubber-band-surface className="pb-40 bg-dashboardBg">
       <main className="px-4 pt-3 max-w-md mx-auto">
+        {dayLog.data?.incomplete && (
+          <div className="mb-3 rounded-xl border border-fat/30 bg-fat/10 px-3 py-2.5">
+            <p className="text-xs font-medium text-fat">Incomplete food log</p>
+            <p className="text-[11px] text-muted mt-0.5">Visible in your diary, excluded from expenditure coaching.</p>
+          </div>
+        )}
         {adjustment.data && (
           <p className="text-[11px] text-muted text-center pb-3">
             +{formatEnergy(adjustment.data.kcal, energyUnit)} carried forward from {formatDayLabel(adjustment.data.sourceDate)}
@@ -358,11 +353,13 @@ export default function TodayScreen() {
         <DayMenuSheet
           hasEntries={entries.length > 0}
           hasAdjustment={!!adjustment.data}
+          incomplete={dayLog.data?.incomplete ?? false}
           onSelectAll={() => setSelection(entries)}
           onCopyDay={() => setCopyOpen(true)}
           onClearDay={() => setConfirmClearDay(true)}
           onCarryForward={() => setCarryForwardOpen(true)}
           onRemoveAdjustment={() => removeAdjustment.mutate()}
+          onToggleIncomplete={() => setDayIncomplete.mutate(!(dayLog.data?.incomplete ?? false))}
           onClose={() => setMenuOpen(false)}
         />
       )}
