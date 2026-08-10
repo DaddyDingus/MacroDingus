@@ -142,8 +142,12 @@ function isRealScrollContainer(el: Element): boolean {
 
 // Walks up from the touch's start element looking for whatever actually
 // scrolls under the finger — stops before body/documentElement since the
-// window-level fallback already covers that case.
-function findScrollableAncestor(el: Element): Element | null {
+// window-level fallback already covers that case. Exported for
+// BottomSheet.tsx's own drag-to-dismiss gesture, which needs the same
+// "is this touch's scrollable ancestor already at its boundary" check to
+// tell a normal scroll apart from a pull-to-dismiss starting inside a
+// sheet's scrollable content.
+export function findScrollableAncestor(el: Element): Element | null {
   let node: Element | null = el;
   while (node && node !== document.body && node !== document.documentElement) {
     if (isRealScrollContainer(node)) return node;
@@ -341,10 +345,19 @@ export function useRubberBandScroll() {
 
     function onTouchStart(e: TouchEvent) {
       if (e.touches.length !== 1) return;
-      // A sheet/modal owns scrolling right now (BottomSheet locks body
-      // scroll while open — see its own overflow-hidden effect) — this
-      // touch belongs to whatever's on top, not the page underneath it.
-      if (document.body.style.overflow === "hidden") return;
+      // A sheet/modal owns scrolling right now — this touch belongs to
+      // whatever's on top, not the page underneath it. Two independent lock
+      // producers, two signals: PhotoAlignerModal sets body overflow:hidden
+      // directly; BottomSheet's shared lib/bodyScrollLock.ts instead pins
+      // body via position:fixed (not overflow — overflow:hidden on body
+      // specifically is what makes Android Chrome restore its collapsed
+      // address bar mid-open, resizing the visual viewport and shifting any
+      // position:sticky header on the screen underneath). Both must be
+      // checked, or removing/changing either producer's own flag silently
+      // stops this guard from tripping and the pull-to-refresh gesture keeps
+      // firing (via this hook's window-level touchmove listener) right
+      // through whatever sheet is on top.
+      if (document.body.style.overflow === "hidden" || document.body.style.position === "fixed") return;
       // A touch starting inside an element with this attribute owns its own
       // horizontal drag gesture (e.g. the Compare screen's before/after
       // slider) — a real finger swipe is never perfectly horizontal, and

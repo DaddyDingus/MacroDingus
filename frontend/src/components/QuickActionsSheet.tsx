@@ -161,7 +161,7 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
       backdropClassName="bg-black/50"
       panelClassName="max-h-[85%] bg-surface rounded-t-xl border-t border-line pb-[env(safe-area-inset-bottom)]"
     >
-      {(dragHandlers, close) => (
+      {(dragHandlers, close, scrollDragRef) => (
         <>
         {view === "menu" && (
           <>
@@ -213,7 +213,7 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
               </div>
             )}
 
-            <div className="flex-1 overflow-y-auto pb-2 border-t border-line">
+            <div ref={scrollDragRef} className="flex-1 overflow-y-auto pb-2 border-t border-line overscroll-y-contain">
               {listItems.map((s) => {
                 const Icon = s.icon;
                 return (

@@ -75,6 +75,21 @@ export function useImportRecipeUrl() {
   });
 }
 
+// Same ImportedRecipeResult shape/contract as useImportRecipeUrl — a photo
+// of a handwritten or printed ingredient list in, a pre-filled draft out.
+// Multipart like useScanNutritionLabel, not JSON.
+export function useImportRecipePhoto() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (file: File | Blob) => {
+      const form = new FormData();
+      form.append("file", file, "recipe.jpg");
+      return apiFetch<ImportedRecipeResult>("/recipes/import-photo", { method: "POST", body: form });
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["foods"] }),
+  });
+}
+
 export function useDeleteRecipe() {
   const qc = useQueryClient();
   return useMutation({

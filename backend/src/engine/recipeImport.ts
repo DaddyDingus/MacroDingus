@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { foods, logs } from "../db/schema.js";
-import { generateAiText } from "./aiProvider.js";
+import { generateAiText, type AiImageInput } from "./aiProvider.js";
 
 export interface ImportedIngredient {
   // Always a real, persisted foods row by the time this returns — matches
@@ -207,22 +207,36 @@ If a library entry is clearly the same food — not just the same category — s
 If this page doesn't actually contain a recipe, return an empty ingredients array rather than inventing one.`;
 }
 
-export async function importRecipeFromUrl(userId: string, url: string): Promise<ImportedRecipe> {
-  const pageText = await fetchPageText(url);
-  const candidates = await fetchCandidateFoods();
-  const candidateIds = new Set(candidates.map((c) => c.id));
+// Same schema/output contract as the URL prompt above — the only difference
+// is the source material and the "no recipe found" failure mode (a blank/
+// irrelevant photo rather than a non-recipe page).
+function buildPhotoPrompt(candidates: { id: string; name: string; brand: string | null }[]): string {
+  const candidateLines = candidates.map((c) => `${c.id} :: ${c.name}${c.brand ? ` (${c.brand})` : ""}`).join("\n");
+  return `This photo shows a handwritten or printed list of recipe ingredients and their amounts — someone jotted down what went into a dish (e.g. on a notepad, whiteboard, or recipe card), possibly with amounts in weight (g/kg), volume (cups/tbsp/tsp/mL), or count ("2 onions"). It may or may not state a dish name or number of servings.
 
-  const responseText = await generateAiText(userId, "recipeImport", {
-    prompt: buildPrompt(pageText, candidates),
-    maxTokens: 4096,
-    jsonSchema: RECIPE_JSON_SCHEMA,
-  });
+Extract it into structured data: a name (invent a short, reasonable one from the ingredients if none is written), how many servings it makes (assume 4 if not stated), and its full ingredient list. Convert every ingredient's amount into grams using standard cooking conversions and your own best judgment (e.g. "1 medium onion" ≈ 150g, "1 cup all-purpose flour" ≈ 120g) — quantityGrams must always be a real gram amount, never left as a volume/count. Set totalWeightGrams only if the photo itself states the dish's finished/cooked weight; otherwise null.
+
+For each ingredient, first check whether it's essentially the same food as one of these existing library entries (id :: name):
+${candidateLines || "(no existing foods yet)"}
+If a library entry is clearly the same food — not just the same category — set matchedFoodId to that entry's id, otherwise null. Regardless of whether you set a match, always fill in your own best per-100-gram nutrition estimate too (name, caloriesPer100g, proteinPer100g, carbsPer100g, fatPer100g, and fiberPer100g/sugarPer100g/saturatedFatPer100g/sodiumMgPer100g when you can reasonably estimate them, else null for just those four) — this is the fallback used if the matched entry turns out unavailable.
+
+If handwriting is ambiguous, use your best reading rather than skipping the ingredient. If the photo doesn't actually contain an ingredient list, return an empty ingredients array rather than inventing one.`;
+}
+
+// Shared by both import paths: takes the model's raw JSON response (already
+// validated against RECIPE_JSON_SCHEMA by the provider) and turns it into a
+// real ImportedRecipe — matching each ingredient against the candidate set
+// sent in the prompt, or materializing a fresh ai_estimate food when it
+// isn't a match. `notFoundMessage` is the only thing that differs between a
+// non-recipe webpage and a non-ingredient-list photo.
+async function finalizeImportedRecipe(responseText: string, candidates: { id: string; name: string; brand: string | null }[], notFoundMessage: string): Promise<ImportedRecipe> {
+  const candidateIds = new Set(candidates.map((c) => c.id));
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(responseText);
   } catch {
-    throw new Error("Couldn't make sense of that page");
+    throw new Error("Couldn't make sense of that");
   }
 
   const o = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
@@ -231,7 +245,7 @@ export async function importRecipeFromUrl(userId: string, url: string): Promise<
   const totalWeightGrams = num(o.totalWeightGrams);
   const rawIngredients = coerceIngredients(o.ingredients);
   if (rawIngredients.length === 0) {
-    throw new Error("Couldn't find a recipe on that page — try pasting the link to the recipe itself, not a category or index page");
+    throw new Error(notFoundMessage);
   }
 
   // Only trust a matchedFoodId that was actually one of the candidates sent
@@ -274,4 +288,38 @@ export async function importRecipeFromUrl(userId: string, url: string): Promise<
   }
 
   return { name, servings, totalWeightGrams, ingredients };
+}
+
+export async function importRecipeFromUrl(userId: string, url: string): Promise<ImportedRecipe> {
+  const pageText = await fetchPageText(url);
+  const candidates = await fetchCandidateFoods();
+
+  const responseText = await generateAiText(userId, "recipeImport", {
+    prompt: buildPrompt(pageText, candidates),
+    maxTokens: 4096,
+    jsonSchema: RECIPE_JSON_SCHEMA,
+  });
+
+  return finalizeImportedRecipe(
+    responseText,
+    candidates,
+    "Couldn't find a recipe on that page — try pasting the link to the recipe itself, not a category or index page"
+  );
+}
+
+export async function importRecipeFromPhoto(userId: string, image: AiImageInput): Promise<ImportedRecipe> {
+  const candidates = await fetchCandidateFoods();
+
+  const responseText = await generateAiText(userId, "recipePhotoImport", {
+    prompt: buildPhotoPrompt(candidates),
+    images: [image],
+    maxTokens: 4096,
+    jsonSchema: RECIPE_JSON_SCHEMA,
+  });
+
+  return finalizeImportedRecipe(
+    responseText,
+    candidates,
+    "Couldn't find an ingredient list in that photo — try a clearer, closer shot"
+  );
 }

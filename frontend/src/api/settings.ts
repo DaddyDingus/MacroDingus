@@ -26,7 +26,7 @@ export function useUpdateSettings() {
 }
 
 export type AiProvider = "anthropic" | "openai" | "gemini";
-export type AiTaskId = "labelScan" | "mealDescription" | "recipeImport" | "photoComparison" | "checkinNarrative";
+export type AiTaskId = "labelScan" | "mealDescription" | "recipeImport" | "recipePhotoImport" | "photoComparison" | "checkinNarrative";
 
 export interface AiProviderStatus {
   label: string;
@@ -48,6 +48,11 @@ export interface AiTaskStatus {
   provider: AiProvider;
   model: string;
   configured: boolean;
+  // Null means "no fallback configured" — never defaulted the way
+  // provider/model above are, so "None" round-trips cleanly in the UI.
+  fallbackProvider: AiProvider | null;
+  fallbackModel: string | null;
+  fallbackConfigured: boolean;
 }
 
 export interface AiSettingsStatus {
@@ -89,6 +94,27 @@ export function useSaveAiTask() {
         method: "PUT",
         body: JSON.stringify({ provider, model }),
       }),
+    onSuccess: (data) => qc.setQueryData(["settings", "ai"], data),
+  });
+}
+
+export function useSaveAiTaskFallback() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ task, provider, model }: { task: AiTaskId; provider: AiProvider; model: string }) =>
+      apiFetch<AiSettingsStatus>(`/settings/ai/tasks/${task}/fallback`, {
+        method: "PUT",
+        body: JSON.stringify({ provider, model }),
+      }),
+    onSuccess: (data) => qc.setQueryData(["settings", "ai"], data),
+  });
+}
+
+export function useClearAiTaskFallback() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (task: AiTaskId) =>
+      apiFetch<AiSettingsStatus>(`/settings/ai/tasks/${task}/fallback`, { method: "DELETE" }),
     onSuccess: (data) => qc.setQueryData(["settings", "ai"], data),
   });
 }

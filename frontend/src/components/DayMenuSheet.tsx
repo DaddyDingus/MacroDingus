@@ -85,7 +85,7 @@ export default function DayMenuSheet({
               one — the classic iOS action-sheet split between neutral and
               destructive actions, so it doesn't sit flush against Select
               All/Copy Day. */}
-          <div className="px-4 pb-4 space-y-3 shrink-0">
+          <div {...dragHandlers} className="px-4 pb-4 space-y-3 shrink-0 touch-none">
             <div className="rounded-2xl bg-dashboardCard overflow-hidden divide-y divide-dashboardDivider">
               <Row
                 icon={ListChecks}

@@ -7,15 +7,25 @@ import {
   useRemoveAiKey,
   useSaveAiKey,
   useSaveAiTask,
+  useSaveAiTaskFallback,
+  useClearAiTaskFallback,
   type AiProvider,
   type AiTaskId,
 } from "../api/settings";
 
 const PROVIDERS: AiProvider[] = ["anthropic", "openai", "gemini"];
 const PROVIDER_LABELS: Record<AiProvider, string> = { anthropic: "Anthropic", openai: "OpenAI", gemini: "Google Gemini" };
+// Sentinel value for the fallback provider picker's own "None" entry — never
+// a real AiProvider, so it can share the picker/SelectionSheet plumbing
+// primary provider/model selection already uses instead of a parallel
+// "which kind of picker is this" bolt-on.
+const NO_FALLBACK = "__none__";
 
 type TaskDraft = Record<AiTaskId, { provider: AiProvider; model: string }>;
-type PickerState = { task: AiTaskId; kind: "provider" | "model" };
+// Null means "no fallback configured" for this task — distinct from not yet
+// present in the record (not yet initialized from status.data).
+type FallbackDraft = { provider: AiProvider; model: string } | null;
+type PickerState = { task: AiTaskId; kind: "provider" | "model" | "fallbackProvider" | "fallbackModel" };
 
 // Chrome's credential heuristics can ignore autocomplete/data-manager hints
 // and show its password strip for any input near API-key fields. This remains
@@ -177,9 +187,12 @@ export default function AiSettingsSheet({ onClose }: { onClose: () => void }) {
   const saveKey = useSaveAiKey();
   const removeKey = useRemoveAiKey();
   const saveTask = useSaveAiTask();
+  const saveTaskFallback = useSaveAiTaskFallback();
+  const clearTaskFallback = useClearAiTaskFallback();
   const [keys, setKeys] = useState<Record<AiProvider, string>>({ anthropic: "", openai: "", gemini: "" });
   const [savedKey, setSavedKey] = useState<AiProvider | null>(null);
   const [drafts, setDrafts] = useState<Partial<TaskDraft>>({});
+  const [fallbackDrafts, setFallbackDrafts] = useState<Partial<Record<AiTaskId, FallbackDraft>>>({});
   const [picker, setPicker] = useState<PickerState | null>(null);
   const [customModelTasks, setCustomModelTasks] = useState<Partial<Record<AiTaskId, boolean>>>({});
   const [expandedProvider, setExpandedProvider] = useState<AiProvider | null>(null);
@@ -193,14 +206,26 @@ export default function AiSettingsSheet({ onClose }: { onClose: () => void }) {
     if (!status.data || draftsInitialized.current) return;
     draftsInitialized.current = true;
     setDrafts(Object.fromEntries(status.data.tasks.map((task) => [task.id, { provider: task.provider, model: task.model }])) as TaskDraft);
+    setFallbackDrafts(Object.fromEntries(status.data.tasks.map((task) => [
+      task.id,
+      task.fallbackProvider && task.fallbackModel ? { provider: task.fallbackProvider, model: task.fallbackModel } : null,
+    ])) as Record<AiTaskId, FallbackDraft>);
   }, [status.data]);
 
   const changedTasks = status.data?.tasks.filter((task) => {
     const draft = drafts[task.id];
     return draft && (draft.provider !== task.provider || draft.model.trim() !== task.model);
   }) ?? [];
+  const changedFallbackTasks = status.data?.tasks.filter((task) => {
+    if (!(task.id in fallbackDrafts)) return false; // not yet initialized
+    const draft = fallbackDrafts[task.id] ?? null;
+    const current = task.fallbackProvider && task.fallbackModel ? { provider: task.fallbackProvider, model: task.fallbackModel } : null;
+    if (draft === null && current === null) return false;
+    if (draft === null || current === null) return true;
+    return draft.provider !== current.provider || draft.model.trim() !== current.model;
+  }) ?? [];
   const unsavedKeyProviders = PROVIDERS.filter((provider) => keys[provider].trim().length > 0);
-  const hasUnsavedChanges = changedTasks.length > 0 || unsavedKeyProviders.length > 0;
+  const hasUnsavedChanges = changedTasks.length > 0 || changedFallbackTasks.length > 0 || unsavedKeyProviders.length > 0;
   const hasInvalidKey = unsavedKeyProviders.some((provider) => keys[provider].trim().length < 20);
 
   function submitKey(provider: AiProvider) {
@@ -231,6 +256,29 @@ export default function AiSettingsSheet({ onClose }: { onClose: () => void }) {
     });
   }
 
+  function updateFallbackProviderDraft(task: AiTaskId, provider: AiProvider | null) {
+    setSavedAll(false);
+    setFallbackDrafts((current) => {
+      if (provider === null) return { ...current, [task]: null };
+      const existing = current[task];
+      const model = existing?.provider === provider
+        ? existing.model
+        : status.data?.tasks.find((candidate) => candidate.id === task)?.recommendedModels?.[provider]
+          ?? status.data?.providers[provider].models[0]
+          ?? "";
+      return { ...current, [task]: { provider, model } };
+    });
+  }
+
+  function updateFallbackModelDraft(task: AiTaskId, model: string) {
+    setSavedAll(false);
+    setFallbackDrafts((current) => {
+      const existing = current[task];
+      if (!existing) return current;
+      return { ...current, [task]: { ...existing, model } };
+    });
+  }
+
   async function saveAllChanges() {
     if (!hasUnsavedChanges || hasInvalidKey || savingAll) return;
     const taskUpdates = changedTasks.flatMap((task) => {
@@ -246,6 +294,11 @@ export default function AiSettingsSheet({ onClose }: { onClose: () => void }) {
         setSavedKey(provider);
       }
       for (const update of taskUpdates) await saveTask.mutateAsync(update);
+      for (const task of changedFallbackTasks) {
+        const draft = fallbackDrafts[task.id] ?? null;
+        if (draft) await saveTaskFallback.mutateAsync({ task: task.id, ...draft });
+        else await clearTaskFallback.mutateAsync(task.id);
+      }
       setSavedAll(true);
     } catch {
       // The mutation hooks expose the provider/task-specific API message in
@@ -267,12 +320,12 @@ export default function AiSettingsSheet({ onClose }: { onClose: () => void }) {
       backdropClassName="bg-black/50"
       panelClassName="max-h-[92%] bg-surface rounded-t-xl border-t border-line"
     >
-      {(dragHandlers, close) => (
+      {(dragHandlers, close, scrollDragRef) => (
         <>
-          <div {...dragHandlers} className="px-4 pt-2 pb-4 text-center border-b border-line">
+          <div {...dragHandlers} className="px-4 pt-2 pb-4 text-center touch-none">
             <h2 className="text-base font-semibold">AI Providers</h2>
           </div>
-          <div className="p-4 space-y-5 overflow-y-auto">
+          <div ref={scrollDragRef} className="p-4 space-y-5 overflow-y-auto overscroll-y-contain">
             <p className="text-xs text-muted leading-relaxed">
               Add one or more provider keys, then choose the provider and model for each AI feature. Keys stay on this server and are never returned to the app.
             </p>
@@ -420,6 +473,59 @@ export default function AiSettingsSheet({ onClose }: { onClose: () => void }) {
                       </div>
                     )}
                     {!providerDetails.configured && <p className="text-[11px] text-protein">Add a {providerDetails.label} key above to use this task.</p>}
+
+                    {(() => {
+                      const fallbackDraft = fallbackDrafts[task.id] ?? null;
+                      const fallbackProviderDetails = fallbackDraft ? status.data.providers[fallbackDraft.provider] : null;
+                      return (
+                        <div className="pt-2 border-t border-line/60 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <p className="text-[11px] text-muted">Fallback if the above fails</p>
+                            {fallbackDraft && (
+                              <button
+                                type="button"
+                                onClick={() => updateFallbackProviderDraft(task.id, null)}
+                                className="text-[11px] text-muted underline active:text-white"
+                              >
+                                Clear
+                              </button>
+                            )}
+                          </div>
+                          {fallbackDraft ? (
+                            <div className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setPicker({ task: task.id, kind: "fallbackProvider" })}
+                                className="min-w-0 flex items-center justify-between gap-1.5 border border-line rounded-md px-2.5 py-2 bg-surface text-sm text-left active:bg-surface-raised"
+                              >
+                                <span className="truncate">{fallbackProviderDetails?.label}</span>
+                                <ChevronDown className="w-3.5 h-3.5 text-muted shrink-0" strokeWidth={2} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPicker({ task: task.id, kind: "fallbackModel" })}
+                                className="min-w-0 flex items-center justify-between gap-1.5 border border-line rounded-md px-2.5 py-2 bg-surface text-left active:bg-surface-raised"
+                                aria-label={`${task.label} fallback model`}
+                              >
+                                <span className="font-mono text-xs truncate">{fallbackDraft.model}</span>
+                                <ChevronDown className="w-3.5 h-3.5 text-muted shrink-0" strokeWidth={2} />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setPicker({ task: task.id, kind: "fallbackProvider" })}
+                              className="w-full border border-dashed border-line rounded-md px-2.5 py-2 text-xs text-muted text-left active:bg-surface-raised"
+                            >
+                              + Add a fallback provider
+                            </button>
+                          )}
+                          {fallbackDraft && fallbackProviderDetails && !fallbackProviderDetails.configured && (
+                            <p className="text-[11px] text-protein">Add a {fallbackProviderDetails.label} key above to use this fallback.</p>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}
@@ -435,7 +541,7 @@ export default function AiSettingsSheet({ onClose }: { onClose: () => void }) {
             </p>
           </div>
 
-          <div className="shrink-0 border-t border-line bg-surface px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+          <div {...dragHandlers} className="shrink-0 border-t border-line bg-surface px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] touch-none">
             {hasInvalidKey && <p className="text-[11px] text-protein text-center mb-2">Finish entering the API key before saving.</p>}
             <button
               type="button"
@@ -452,6 +558,7 @@ export default function AiSettingsSheet({ onClose }: { onClose: () => void }) {
             const task = status.data.tasks.find((candidate) => candidate.id === picker.task);
             const draft = drafts[picker.task]!;
             if (!task) return null;
+
             if (picker.kind === "provider") {
               return (
                 <SelectionSheet
@@ -466,22 +573,58 @@ export default function AiSettingsSheet({ onClose }: { onClose: () => void }) {
                 />
               );
             }
+            if (picker.kind === "model") {
+              return (
+                <SelectionSheet
+                  title={`${task.label} model`}
+                  options={status.data.providers[draft.provider].models.map((model) => ({
+                    value: model,
+                    label: model,
+                    recommended: model === task.recommendedModels?.[draft.provider],
+                    discovered: status.data.providers[draft.provider].discoveredModels?.includes(model),
+                  }))}
+                  selected={draft.model}
+                  allowCustom
+                  onSelect={(model) => {
+                    updateDraft(task.id, { model });
+                    setCustomModelTasks((current) => ({ ...current, [task.id]: false }));
+                  }}
+                  onCustom={() => setCustomModelTasks((current) => ({ ...current, [task.id]: true }))}
+                  onClose={() => setPicker(null)}
+                />
+              );
+            }
+
+            // Fallback pickers below never fall through to here with a null
+            // fallbackDraft for "fallbackModel" — the model button that opens
+            // it only renders once a fallback provider is already set.
+            const fallbackDraft = fallbackDrafts[task.id] ?? null;
+            if (picker.kind === "fallbackProvider") {
+              return (
+                <SelectionSheet
+                  title={`${task.label} fallback provider`}
+                  options={[
+                    { value: NO_FALLBACK, label: "None" },
+                    ...PROVIDERS.map((provider) => ({ value: provider, label: status.data.providers[provider].label })),
+                  ]}
+                  selected={fallbackDraft?.provider ?? NO_FALLBACK}
+                  onSelect={(value) => updateFallbackProviderDraft(task.id, value === NO_FALLBACK ? null : value as AiProvider)}
+                  onClose={() => setPicker(null)}
+                />
+              );
+            }
+            if (!fallbackDraft) return null;
             return (
               <SelectionSheet
-                title={`${task.label} model`}
-                options={status.data.providers[draft.provider].models.map((model) => ({
+                title={`${task.label} fallback model`}
+                options={status.data.providers[fallbackDraft.provider].models.map((model) => ({
                   value: model,
                   label: model,
-                  recommended: model === task.recommendedModels?.[draft.provider],
-                  discovered: status.data.providers[draft.provider].discoveredModels?.includes(model),
+                  recommended: model === task.recommendedModels?.[fallbackDraft.provider],
+                  discovered: status.data.providers[fallbackDraft.provider].discoveredModels?.includes(model),
                 }))}
-                selected={draft.model}
-                allowCustom
-                onSelect={(model) => {
-                  updateDraft(task.id, { model });
-                  setCustomModelTasks((current) => ({ ...current, [task.id]: false }));
-                }}
-                onCustom={() => setCustomModelTasks((current) => ({ ...current, [task.id]: true }))}
+                selected={fallbackDraft.model}
+                onSelect={(model) => updateFallbackModelDraft(task.id, model)}
                 onClose={() => setPicker(null)}
               />
             );

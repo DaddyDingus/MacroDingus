@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { useVisualViewportMetrics } from "../lib/useVisualViewportMetrics";
 import { useBackDismiss } from "../lib/useBackDismiss";
@@ -41,16 +41,35 @@ export interface SheetDragHandlers {
 // large hit box. That reads as a big blank "forehead" (and, symmetrically, a
 // "chin" of dead space below the pill before the header starts) purely for
 // touch-target reasons, not visual ones. `children` is now a render prop —
-// `(dragHandlers) => ReactNode` — so a caller can spread the same gesture
-// onto its own header row (or any other prominent, mostly-non-scrolling
-// surface, e.g. QuickActionsSheet's pinned-shortcut icon grid) in addition
-// to the grabber. That's what lets the grabber itself shrink down to a slim,
-// mostly-visual notch without losing an easy-to-hit drag target — every
-// sheet's already-present header picks up the slack instead. Same
-// commit-threshold trick DraggableSnapSheet/AddFoodSheet already use for
+// `(dragHandlers, close, scrollDragRef) => ReactNode` — so a caller can
+// spread `dragHandlers` onto its own header row (or any other prominent
+// non-scrolling surface, e.g. QuickActionsSheet's pinned-shortcut icon grid)
+// in addition to the grabber. That's what lets the grabber itself shrink
+// down to a slim, mostly-visual notch without losing an easy-to-hit drag
+// target — every sheet's already-present header picks up the slack instead.
+// Same commit-threshold trick DraggableSnapSheet/AddFoodSheet already use for
 // their tab row: a plain tap on a real button sharing the surface still
 // fires normally; only sustained movement past the threshold commits to a
 // drag.
+//
+// `scrollDragRef` is a *different* mechanism for a caller's genuinely
+// scrollable content (AiSettingsSheet's provider list, QuickActionsSheet's
+// shortcut list) — attach it as that element's `ref`, don't spread
+// `dragHandlers` there. Pointer Events can't win a swipe-to-dismiss over a
+// live `overflow-y-auto` region: once the browser's own touch-scroll
+// machinery claims the gesture (which it's free to do from the very first
+// touchmove, since the region's `touch-action` has to stay `auto` for
+// scrolling to work at all), it stops honouring anything JS does after the
+// fact — confirmed as the sheet visually dragging down a few px then
+// snapping back the instant native scroll took over. `scrollDragRef` instead
+// wires a real non-passive `touchstart`/`touchmove` pair (see the effect
+// below), the same technique hooks/useRubberBandScroll.ts already had to use
+// for the identical problem at the page level: decide eligibility (already
+// at `scrollTop` 0) at `touchstart`, before any movement, then
+// `preventDefault()` on the very first qualifying move — that's the one
+// call that actually stops the browser from starting its own scroll; every
+// later `preventDefault()` in the same gesture is a no-op once native
+// scrolling has already begun.
 export default function BottomSheet({
   onClose,
   onBeforeClose,
@@ -61,7 +80,11 @@ export default function BottomSheet({
 }: {
   onClose: () => void;
   onBeforeClose?: () => boolean;
-  children: ReactNode | ((dragHandlers: SheetDragHandlers, close: () => void) => ReactNode);
+  children: ReactNode | ((
+    dragHandlers: SheetDragHandlers,
+    close: () => void,
+    scrollDragRef: (el: HTMLElement | null) => void,
+  ) => ReactNode);
   panelClassName?: string;
   backdropClassName?: string;
   showGrabber?: boolean;
@@ -182,6 +205,109 @@ export default function BottomSheet({
     onPointerCancel: endDrag,
   };
 
+  // Always-fresh refs for the touch effect below, which attaches its
+  // listeners once on mount rather than every render (listener churn on a
+  // `window`-level touchstart/touchmove pair isn't free) — `close` itself is
+  // recreated every render and closes over that render's `onBeforeClose`
+  // (e.g. AiSettingsSheet's, which reads live `hasUnsavedChanges`), so a
+  // mount-captured `close` would silently act on stale state.
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  const closingRef = useRef(closing);
+  closingRef.current = closing;
+  const scrollElRef = useRef<HTMLElement | null>(null);
+  const scrollDragRef = useCallback((el: HTMLElement | null) => {
+    scrollElRef.current = el;
+  }, []);
+
+  // See the render-prop doc comment above for why this can't be Pointer
+  // Events like the rest of this file's drag handling. Mirrors
+  // hooks/useRubberBandScroll.ts's own onTouchStart/onTouchMove structure:
+  // decide "blocking" (already at scrollTop 0) once at touchstart, register
+  // touchmove non-passive only then, and require the *first* qualifying move
+  // to be the one that calls preventDefault (falling through into the drag
+  // update below rather than returning) so every later preventDefault in the
+  // gesture isn't a no-op.
+  useEffect(() => {
+    let active = false;
+    let armedAtY = 0;
+    let gestureStartTime = 0;
+    let moveAttached = false;
+
+    function attachMove() {
+      if (moveAttached) return;
+      window.addEventListener("touchmove", onTouchMove, { passive: false });
+      moveAttached = true;
+    }
+    function detachMove() {
+      if (!moveAttached) return;
+      window.removeEventListener("touchmove", onTouchMove);
+      moveAttached = false;
+    }
+
+    function onTouchStart(e: TouchEvent) {
+      const el = scrollElRef.current;
+      if (!el || closingRef.current || e.touches.length !== 1) return;
+      if (!(e.target instanceof Node) || !el.contains(e.target)) return;
+      if (el.scrollTop > 0) return; // not at the top edge — a normal scroll owns this touch
+      active = false;
+      armedAtY = e.touches[0].clientY;
+      gestureStartTime = Date.now();
+      attachMove();
+    }
+
+    function onTouchMove(e: TouchEvent) {
+      if (e.touches.length !== 1) return;
+      const currentY = e.touches[0].clientY;
+      if (!active) {
+        if (currentY - armedAtY <= 0) return; // upward, or hasn't moved — real scroll's job
+        active = true;
+        armedAtY = currentY; // this move becomes the 0px start of the drag, not a jump
+        setDragging(true);
+        // Falls through: this is the move that must call preventDefault.
+      }
+      const distance = currentY - armedAtY;
+      if (distance < 0) {
+        // Reversed back past the boundary mid-gesture — release immediately,
+        // same as useRubberBandScroll's own edge-release, rather than
+        // waiting for touchend to feel sticky.
+        active = false;
+        detachMove();
+        setDragging(false);
+        setDragY(0);
+        return;
+      }
+      setDragY(distance);
+      if (e.cancelable) e.preventDefault();
+    }
+
+    function onTouchEnd(e: TouchEvent) {
+      detachMove();
+      if (!active) return;
+      active = false;
+      const endY = e.changedTouches[0]?.clientY ?? armedAtY;
+      const distance = endY - armedAtY;
+      const elapsed = Date.now() - gestureStartTime;
+      const velocity = distance / Math.max(elapsed, 1);
+      setDragging(false);
+      if (distance > DISMISS_DISTANCE_PX || velocity > DISMISS_VELOCITY_PX_MS) {
+        closeRef.current();
+      } else {
+        setDragY(0);
+      }
+    }
+
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchend", onTouchEnd, { passive: true });
+    window.addEventListener("touchcancel", onTouchEnd, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchend", onTouchEnd);
+      window.removeEventListener("touchcancel", onTouchEnd);
+      detachMove();
+    };
+  }, []);
+
   // Portaled straight to <body> rather than rendered in place. This sheet's
   // own panel below always carries an active `transform` (translateY, even
   // at 0px while at rest) — the same "transform on an ancestor permanently
@@ -233,7 +359,7 @@ export default function BottomSheet({
             <span className="h-1 w-9 rounded-full bg-white/20" />
           </div>
         )}
-        {typeof children === "function" ? children(dragHandlers, close) : children}
+        {typeof children === "function" ? children(dragHandlers, close, scrollDragRef) : children}
       </div>
     </div>,
     document.body

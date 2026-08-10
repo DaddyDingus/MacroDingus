@@ -10,10 +10,12 @@ import {
   aiProviderKeyStatus,
   aiProviderModelCatalog,
   aiTaskAssignments,
+  aiTaskFallbackAssignments,
   removeAiProviderKey,
   recommendedModelsForTask,
   saveAiProviderKey,
   saveAiTaskAssignment,
+  saveAiTaskFallbackAssignment,
   type AiProvider,
   type AiTask,
 } from "../engine/aiProvider.js";
@@ -35,6 +37,7 @@ const taskAssignmentInput = z.object({
 
 async function aiSettingsStatus(userId: string) {
   const assignments = await aiTaskAssignments(userId);
+  const fallbackAssignments = await aiTaskFallbackAssignments(userId);
   const legacyAnthropicStatus = aiProviderKeyStatus(userId, "anthropic");
   const providerEntries = await Promise.all(AI_PROVIDERS.map(async (provider) => [
     provider,
@@ -52,6 +55,7 @@ async function aiSettingsStatus(userId: string) {
     providers: Object.fromEntries(providerEntries),
     tasks: AI_TASKS.map((task) => {
       const assignment = assignments[task.id];
+      const fallback = fallbackAssignments[task.id] ?? null;
       return {
         id: task.id,
         label: task.label,
@@ -59,6 +63,12 @@ async function aiSettingsStatus(userId: string) {
         recommendedModels: recommendedModelsForTask(task.id),
         ...assignment,
         configured: aiProviderKeyStatus(userId, assignment.provider).configured,
+        // Nullable and never defaulted (unlike the primary provider/model
+        // above) — absence means "no fallback," not "use some default
+        // fallback," so the UI's own "None" option round-trips cleanly.
+        fallbackProvider: fallback?.provider ?? null,
+        fallbackModel: fallback?.model ?? null,
+        fallbackConfigured: fallback ? aiProviderKeyStatus(userId, fallback.provider).configured : false,
       };
     }),
   };
@@ -112,6 +122,27 @@ export function registerSettingsRoutes(app: FastifyInstance) {
     const assignment = taskAssignmentInput.safeParse(req.body);
     if (!task.success || !assignment.success) return reply.code(400).send({ error: "Choose a valid provider and model" });
     await saveAiTaskAssignment(req.userId!, task.data, assignment.data as { provider: AiProvider; model: string });
+    return aiSettingsStatus(req.userId!);
+  });
+
+  // Fallback is a second, independent assignment per task — PUT sets it,
+  // DELETE clears it back to "none" (there's no "default fallback" to reset
+  // to, unlike the primary assignment). Deliberately its own pair of
+  // endpoints rather than an optional field folded into the PUT above: the
+  // primary assignment always has a value, this one's whole point is being
+  // absent by default.
+  app.put("/api/settings/ai/tasks/:task/fallback", async (req, reply) => {
+    const task = taskInput.safeParse((req.params as { task?: string }).task);
+    const assignment = taskAssignmentInput.safeParse(req.body);
+    if (!task.success || !assignment.success) return reply.code(400).send({ error: "Choose a valid provider and model" });
+    await saveAiTaskFallbackAssignment(req.userId!, task.data, assignment.data as { provider: AiProvider; model: string });
+    return aiSettingsStatus(req.userId!);
+  });
+
+  app.delete("/api/settings/ai/tasks/:task/fallback", async (req, reply) => {
+    const task = taskInput.safeParse((req.params as { task?: string }).task);
+    if (!task.success) return reply.code(404).send({ error: "Unknown AI task" });
+    await saveAiTaskFallbackAssignment(req.userId!, task.data, null);
     return aiSettingsStatus(req.userId!);
   });
 

@@ -33,6 +33,13 @@ export const AI_TASKS = [
     defaultModel: "claude-sonnet-5",
   },
   {
+    id: "recipePhotoImport",
+    label: "Recipe from photo",
+    description: "Reads handwritten or photographed ingredient lists into editable ingredients.",
+    defaultProvider: "anthropic",
+    defaultModel: "claude-sonnet-5",
+  },
+  {
     id: "photoComparison",
     label: "Progress photo comparison",
     description: "Compares two progress photos objectively.",
@@ -102,6 +109,11 @@ const AI_TASK_RECOMMENDED_MODELS: Record<AiTask, Record<AiProvider, string>> = {
     openai: "gpt-5.6-sol",
     gemini: "gemini-3.1-pro-preview",
   },
+  recipePhotoImport: {
+    anthropic: "claude-sonnet-5",
+    openai: "gpt-5.6-sol",
+    gemini: "gemini-3.1-pro-preview",
+  },
   photoComparison: {
     anthropic: "claude-sonnet-5",
     openai: "gpt-5.6-sol",
@@ -119,6 +131,7 @@ export function recommendedModelsForTask(task: AiTask): Record<AiProvider, strin
 }
 
 const SETTINGS_KEY = "aiTaskModels";
+const FALLBACK_SETTINGS_KEY = "aiTaskFallbackModels";
 const MODEL_CATALOG_CACHE_MS = 24 * 60 * 60 * 1000;
 let dataRoot: string | undefined;
 const anthropicClients = new Map<string, { apiKey: string; client: Anthropic }>();
@@ -372,6 +385,17 @@ async function readSettings(userId: string): Promise<{ rowExists: boolean; setti
   }
 }
 
+async function writeSettingsPatch(userId: string, patch: Record<string, unknown>): Promise<void> {
+  const { rowExists, settings } = await readSettings(userId);
+  const settingsJson = JSON.stringify({ ...settings, ...patch });
+  const updatedAt = new Date().toISOString();
+  if (rowExists) {
+    await db.update(userSettings).set({ settingsJson, updatedAt }).where(eq(userSettings.userId, userId));
+  } else {
+    await db.insert(userSettings).values({ userId, settingsJson, updatedAt });
+  }
+}
+
 export async function aiTaskAssignments(userId: string): Promise<Record<AiTask, AiTaskAssignment>> {
   const { settings } = await readSettings(userId);
   const saved = parseAssignments(settings[SETTINGS_KEY]);
@@ -382,16 +406,31 @@ export async function aiTaskAssignments(userId: string): Promise<Record<AiTask, 
 }
 
 export async function saveAiTaskAssignment(userId: string, taskId: AiTask, assignment: AiTaskAssignment): Promise<void> {
-  const { rowExists, settings } = await readSettings(userId);
+  const { settings } = await readSettings(userId);
   const assignments = parseAssignments(settings[SETTINGS_KEY]);
   assignments[taskId] = assignment;
-  const settingsJson = JSON.stringify({ ...settings, [SETTINGS_KEY]: assignments });
-  const updatedAt = new Date().toISOString();
-  if (rowExists) {
-    await db.update(userSettings).set({ settingsJson, updatedAt }).where(eq(userSettings.userId, userId));
-  } else {
-    await db.insert(userSettings).values({ userId, settingsJson, updatedAt });
-  }
+  await writeSettingsPatch(userId, { [SETTINGS_KEY]: assignments });
+}
+
+// A *second*, independent per-task assignment — unlike the primary one
+// above, absence is meaningful ("no fallback configured") rather than
+// something to default away, so this is never merged with task.defaultProvider/
+// defaultModel the way aiTaskAssignments is. Exists for the case that
+// actually happened to prompt this feature: a provider's account runs out of
+// funds/quota silently, and every task assigned to it starts failing with no
+// warning until generateAiText's own fallback attempt (below) picks up the
+// slack.
+export async function aiTaskFallbackAssignments(userId: string): Promise<Partial<Record<AiTask, AiTaskAssignment>>> {
+  const { settings } = await readSettings(userId);
+  return parseAssignments(settings[FALLBACK_SETTINGS_KEY]);
+}
+
+export async function saveAiTaskFallbackAssignment(userId: string, taskId: AiTask, assignment: AiTaskAssignment | null): Promise<void> {
+  const { settings } = await readSettings(userId);
+  const assignments = parseAssignments(settings[FALLBACK_SETTINGS_KEY]);
+  if (assignment) assignments[taskId] = assignment;
+  else delete assignments[taskId];
+  await writeSettingsPatch(userId, { [FALLBACK_SETTINGS_KEY]: assignments });
 }
 
 export async function aiTaskConfigured(userId: string, task: AiTask): Promise<boolean> {
@@ -507,31 +546,69 @@ async function generateWithGemini(apiKey: string, model: string, input: Generate
   throw new Error("No text returned by Gemini");
 }
 
-export async function generateAiText(userId: string, task: AiTask, input: GenerateAiTextInput): Promise<string> {
-  const assignment = (await aiTaskAssignments(userId))[task];
-  const resolved = resolvedKey(userId, assignment.provider);
-  if (!resolved) throw new Error(`${AI_PROVIDER_CATALOG[assignment.provider].label} API key is not configured`);
-
-  if (assignment.provider === "openai") {
-    return generateWithOpenAi(resolved.apiKey, assignment.model, task, input);
-  }
-  if (assignment.provider === "gemini") {
-    return generateWithGemini(resolved.apiKey, assignment.model, input);
-  }
-
+async function generateWithAnthropic(userId: string, apiKey: string, model: string, input: GenerateAiTextInput): Promise<string> {
   const content: Array<Record<string, unknown>> = (input.images ?? []).map((image) => ({
     type: "image",
     source: { type: "base64", media_type: image.mediaType, data: image.buffer.toString("base64") },
   }));
   content.push({ type: "text", text: input.prompt });
   const request: Record<string, unknown> = {
-    model: assignment.model,
+    model,
     max_tokens: input.maxTokens,
     messages: [{ role: "user", content }],
   };
   if (input.jsonSchema) request.output_config = { format: { type: "json_schema", schema: input.jsonSchema } };
-  const response = await getAnthropicClient(userId, resolved.apiKey).messages.create(request as never);
+  const response = await getAnthropicClient(userId, apiKey).messages.create(request as never);
   const textBlock = response.content.find((block) => block.type === "text");
   if (!textBlock || textBlock.type !== "text") throw new Error("No text returned by Anthropic");
   return textBlock.text.trim();
+}
+
+// Single dispatch point shared by generateAiText's primary attempt and its
+// fallback retry below — kept as one function precisely so the two attempts
+// can't drift (e.g. one branch gaining a provider-specific tweak the other
+// never gets).
+async function callProvider(userId: string, provider: AiProvider, model: string, apiKey: string, task: AiTask, input: GenerateAiTextInput): Promise<string> {
+  if (provider === "openai") return generateWithOpenAi(apiKey, model, task, input);
+  if (provider === "gemini") return generateWithGemini(apiKey, model, input);
+  return generateWithAnthropic(userId, apiKey, model, input);
+}
+
+export async function generateAiText(userId: string, task: AiTask, input: GenerateAiTextInput): Promise<string> {
+  const assignment = (await aiTaskAssignments(userId))[task];
+  const resolved = resolvedKey(userId, assignment.provider);
+  const primaryError = resolved
+    ? null
+    : new Error(`${AI_PROVIDER_CATALOG[assignment.provider].label} API key is not configured`);
+
+  if (resolved) {
+    try {
+      return await callProvider(userId, assignment.provider, assignment.model, resolved.apiKey, task, input);
+    } catch (err) {
+      return attemptFallback(userId, task, input, err);
+    }
+  }
+  return attemptFallback(userId, task, input, primaryError);
+}
+
+// Only reached once the primary provider has already failed (missing key,
+// auth/quota/rate-limit error, network error — anything generateWith* or the
+// key check above throws). Silent by design: this exists specifically for
+// "a provider's account ran out of funds/quota without anyone noticing," so
+// there's nowhere in this backend that surfaces *which* provider actually
+// served a given response — only the combined error message below, and only
+// once both have failed.
+async function attemptFallback(userId: string, task: AiTask, input: GenerateAiTextInput, primaryError: unknown): Promise<string> {
+  const fallback = (await aiTaskFallbackAssignments(userId))[task];
+  if (!fallback) throw primaryError;
+  const resolved = resolvedKey(userId, fallback.provider);
+  if (!resolved) throw primaryError; // fallback configured but has no key of its own — nothing more to try
+
+  try {
+    return await callProvider(userId, fallback.provider, fallback.model, resolved.apiKey, task, input);
+  } catch (fallbackError) {
+    const primaryMessage = primaryError instanceof Error ? primaryError.message : String(primaryError);
+    const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+    throw new Error(`${primaryMessage} (fallback ${AI_PROVIDER_CATALOG[fallback.provider].label} also failed: ${fallbackMessage})`);
+  }
 }

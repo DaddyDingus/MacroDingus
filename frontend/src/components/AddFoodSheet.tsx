@@ -21,7 +21,7 @@ import type { Food, LogEntry, Nutrition } from "../api/types";
 import type { MacroTargets } from "./MacroSummaryBar";
 import { useFoodSearch, useCreateFood, useCustomFoods, useBarcodeLookup, useDeleteFood, useDescribeMeal, recordFoodSearchSelection } from "../api/foods";
 import { useFavorites, useAddFavorite, useRemoveFavorite } from "../api/favorites";
-import { useRecipes, useRecipeDetail, useCreateRecipe, useUpdateRecipe, useDeleteRecipe, useImportRecipeUrl, type RecipeSummary } from "../api/recipes";
+import { useRecipes, useRecipeDetail, useCreateRecipe, useUpdateRecipe, useDeleteRecipe, useImportRecipeUrl, useImportRecipePhoto, type RecipeSummary } from "../api/recipes";
 import { useAddLog, useBulkAddLog, useUpdateLogQuantity, useDeleteLog, useSmartHistory } from "../api/logs";
 import { scaleNutrition, sumNutrition, subtractNutrition } from "../lib/nutrition";
 import { localTimeString, localIsoNoTz, formatLogTime, loggedAtTimeString, buildLoggedAt } from "../lib/date";
@@ -49,7 +49,7 @@ import SwipeToDeleteRow from "./SwipeToDeleteRow";
 // so it doesn't weigh down the initial load.
 const BarcodeScanner = lazy(() => import("./BarcodeScanner"));
 
-type Step = "browse" | "create" | "scan" | "recipe" | "recipeChoice" | "recipeImportUrl" | "detail";
+type Step = "browse" | "create" | "scan" | "recipe" | "recipeChoice" | "recipeImportUrl" | "recipeImportPhoto" | "detail";
 // Where a hardware/gesture back press from each sub-step should land — reads
 // the same as each step's own visible back button, since requestClose()
 // below drives both from this one map. Most steps are one hop from "browse"
@@ -88,6 +88,7 @@ const SHEET_SUB_STEP_BACK: Partial<Record<Step, Step>> = {
   recipe: "browse",
   recipeChoice: "browse",
   recipeImportUrl: "recipeChoice",
+  recipeImportPhoto: "recipeChoice",
 };
 type Tab = "search" | "quickAdd" | "describe" | "library";
 type LibraryView = "recipes" | "foods" | "favorites";
@@ -258,6 +259,16 @@ export default function AddFoodSheet({
   const [recipeImportUrlInput, setRecipeImportUrlInput] = useState("");
   const [recipeImportError, setRecipeImportError] = useState<string | null>(null);
   const [recipeImportInitial, setRecipeImportInitial] = useState<RecipeFormInitial | null>(null);
+  // The "recipeImportPhoto" step's own error state — separate from the URL
+  // import's above so switching between the two chooser options never shows
+  // a stale error from the other one. Two hidden file inputs (camera vs
+  // library), same PhotoSourceSheet-routed pattern as DescribeTab's own
+  // photo attach — that component's refs are scoped to itself, not reusable
+  // here.
+  const [recipeImportPhotoError, setRecipeImportPhotoError] = useState<string | null>(null);
+  const recipePhotoCameraInputRef = useRef<HTMLInputElement>(null);
+  const recipePhotoLibraryInputRef = useRef<HTMLInputElement>(null);
+  const [recipePhotoSourcePickerOpen, setRecipePhotoSourcePickerOpen] = useState(false);
   // Set only by Food Detail's recipe "Edit" action — reuses the same
   // "recipe" step/RecipeForm/recipeImportInitial prefill machinery as
   // create-from-scratch and URL import, but with a real recipe id behind it
@@ -457,6 +468,7 @@ export default function AddFoodSheet({
     setCreatePrefillFood(null);
     setRecipeImportUrlInput("");
     setRecipeImportError(null);
+    setRecipeImportPhotoError(null);
     setRecipeImportInitial(null);
     setEditingRecipeId(null);
     setPendingRecipeAction(null);
@@ -541,6 +553,7 @@ export default function AddFoodSheet({
   const updateRecipe = useUpdateRecipe(editingRecipeId ?? "");
   const deleteRecipe = useDeleteRecipe();
   const importRecipeUrl = useImportRecipeUrl();
+  const importRecipePhoto = useImportRecipePhoto();
   const barcodeLookup = useBarcodeLookup();
   const favorites = useFavorites();
   const recipes = useRecipes();
@@ -812,6 +825,27 @@ export default function AddFoodSheet({
         changeStep("recipe");
       },
       onError: (err) => setRecipeImportError(err instanceof Error ? err.message : "Couldn't import a recipe from that link"),
+    });
+  }
+
+  // Photo import's own submit — same shape/contract as submitRecipeImport
+  // above, just a photo of a handwritten/printed ingredient list instead of
+  // a URL (see engine/recipeImport.ts's importRecipeFromPhoto). Called
+  // directly from the hidden file inputs' onChange, not a form submit.
+  function submitRecipeImportPhoto(file: File) {
+    setRecipeImportPhotoError(null);
+    importRecipePhoto.mutate(file, {
+      onSuccess: (result) => {
+        setEditingRecipeId(null);
+        setRecipeImportInitial({
+          name: result.name,
+          servings: result.servings,
+          totalWeightGrams: result.totalWeightGrams ?? result.ingredients.reduce((sum, i) => sum + i.quantityGrams, 0),
+          ingredients: result.ingredients,
+        });
+        changeStep("recipe");
+      },
+      onError: (err) => setRecipeImportPhotoError(err instanceof Error ? err.message : "Couldn't import a recipe from that photo"),
     });
   }
 
@@ -1460,6 +1494,19 @@ export default function AddFoodSheet({
                 </span>
                 <ChevronRight size={16} strokeWidth={2} className="text-muted shrink-0" />
               </button>
+              <button
+                onClick={() => changeStep("recipeImportPhoto")}
+                className="w-full flex items-center gap-3 rounded-2xl bg-surface p-4 text-left active:bg-surface-raised"
+              >
+                <span className="h-11 w-11 rounded-full bg-dashboardChip flex items-center justify-center shrink-0">
+                  <Camera size={20} strokeWidth={2} className="text-white" />
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm font-semibold text-white">From a photo</span>
+                  <span className="block text-xs text-muted mt-0.5">Snap a photo of a handwritten or printed ingredient list.</span>
+                </span>
+                <ChevronRight size={16} strokeWidth={2} className="text-muted shrink-0" />
+              </button>
             </div>
           </div>
         )}
@@ -1505,6 +1552,73 @@ export default function AddFoodSheet({
                 {importRecipeUrl.isPending && <Loader2 size={16} strokeWidth={2.5} className="animate-spin" />}
                 {importRecipeUrl.isPending ? "Importing…" : "Import Recipe"}
               </button>
+            </div>
+          </div>
+        )}
+
+        {step === "recipeImportPhoto" && (
+          <div className="flex-1 flex flex-col min-h-0 step-enter">
+            <div className="px-2.5 pt-1 pb-1 flex items-center gap-1 shrink-0">
+              <button
+                onClick={() => changeStep("recipeChoice")}
+                aria-label="Back"
+                className="h-9 w-9 shrink-0 flex items-center justify-center rounded-full text-white active:bg-white/10"
+              >
+                <ChevronLeft size={18} strokeWidth={2} />
+              </button>
+              <span className="text-sm font-medium text-white">From a photo</span>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 pb-4">
+              <p className="text-xs text-muted mb-3">
+                Take or choose a photo of a handwritten or printed ingredient list — we'll read it and fill in
+                the name, ingredients, and amounts for you to review before saving.
+              </p>
+              {/* Hidden inputs + PhotoSourceSheet, same pattern as
+                  CreateFoodForm's label-scan photo capture — a bare
+                  accept="image/*" input doesn't reliably offer "Camera or
+                  Gallery?" on Android/Chrome. */}
+              <input
+                ref={recipePhotoCameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) submitRecipeImportPhoto(file);
+                }}
+              />
+              <input
+                ref={recipePhotoLibraryInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) submitRecipeImportPhoto(file);
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => setRecipePhotoSourcePickerOpen(true)}
+                disabled={importRecipePhoto.isPending}
+                className="w-full flex items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-line py-3.5 text-sm font-medium text-accent active:bg-white/5 disabled:opacity-60"
+              >
+                {importRecipePhoto.isPending ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    Reading photo…
+                  </>
+                ) : (
+                  <>
+                    <Camera size={16} strokeWidth={2} />
+                    Add a photo
+                  </>
+                )}
+              </button>
+              {recipeImportPhotoError && <p className="text-xs text-red-400 mt-2">{recipeImportPhotoError}</p>}
             </div>
           </div>
         )}
@@ -1650,6 +1764,14 @@ export default function AddFoodSheet({
             setShowTimePicker(false);
           }}
           onClose={() => setShowTimePicker(false)}
+        />
+      )}
+
+      {recipePhotoSourcePickerOpen && (
+        <PhotoSourceSheet
+          onChooseCamera={() => recipePhotoCameraInputRef.current?.click()}
+          onChooseLibrary={() => recipePhotoLibraryInputRef.current?.click()}
+          onClose={() => setRecipePhotoSourcePickerOpen(false)}
         />
       )}
     </>,

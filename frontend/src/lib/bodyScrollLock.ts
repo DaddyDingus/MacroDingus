@@ -14,21 +14,30 @@
 // lock, only the 1-to-0 transition restores it; an overlapping second lock
 // just increments/decrements without touching the saved snapshot.
 let lockCount = 0;
-let saved: { overflow: string; htmlOverflow: string; position: string; top: string; width: string; scrollY: number } | null = null;
+let saved: { htmlOverflow: string; position: string; top: string; width: string; scrollY: number } | null = null;
 
 export function lockBodyScroll() {
   lockCount++;
   if (lockCount > 1) return;
   const scrollY = window.scrollY;
   saved = {
-    overflow: document.body.style.overflow,
     htmlOverflow: document.documentElement.style.overflow,
     position: document.body.style.position,
     top: document.body.style.top,
     width: document.body.style.width,
     scrollY,
   };
-  document.body.style.overflow = "hidden";
+  // `<html>`, not `<body>`, is the real scrolling box in standards mode, so
+  // it still needs `overflow: hidden` to actually stop background
+  // touch-driven scroll/rubber-band — `position: fixed` on body alone isn't
+  // enough (confirmed: dropping this too let scrolling inside a sheet's own
+  // content, e.g. AiSettingsSheet's provider list, chain through to the page
+  // behind it). Deliberately does NOT also set `document.body.style.overflow
+  // = "hidden"` though — that specific one (body, not html) is what made
+  // Android Chrome restore its collapsed address bar the moment a sheet
+  // opened, resizing the visual viewport mid-open and visibly shifting any
+  // `position: sticky` header on the screen underneath (confirmed on
+  // TodayScreen's sticky macro-bar header opening DayMenuSheet).
   document.documentElement.style.overflow = "hidden";
   document.body.style.position = "fixed";
   document.body.style.top = `-${scrollY}px`;
@@ -38,9 +47,8 @@ export function lockBodyScroll() {
 export function unlockBodyScroll() {
   lockCount = Math.max(0, lockCount - 1);
   if (lockCount > 0 || !saved) return;
-  const { overflow, htmlOverflow, position, top, width, scrollY } = saved;
+  const { htmlOverflow, position, top, width, scrollY } = saved;
   saved = null;
-  document.body.style.overflow = overflow;
   document.documentElement.style.overflow = htmlOverflow;
   document.body.style.position = position;
   document.body.style.top = top;

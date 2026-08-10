@@ -5,8 +5,15 @@ import { randomUUID } from "node:crypto";
 import { db } from "../db/index.js";
 import { foods, recipes, recipeIngredients } from "../db/schema.js";
 import { scaleNutrition, sumNutrition } from "../engine/nutrition.js";
-import { importRecipeFromUrl } from "../engine/recipeImport.js";
+import { importRecipeFromUrl, importRecipeFromPhoto } from "../engine/recipeImport.js";
 import { aiTaskConfigured } from "../engine/aiProvider.js";
+import { toBoundedJpeg } from "../engine/imagePrep.js";
+
+// Same reasoning as foods.ts's own LABEL_MAX_DIMENSION — this is reading
+// fine print (handwriting, in this case), not judging a plate, so it keeps
+// more detail than a plain photo would need.
+const RECIPE_PHOTO_MAX_DIMENSION = 2000;
+const RECIPE_PHOTO_JPEG_QUALITY = 90;
 
 const recipeInput = z.object({
   name: z.string().min(1),
@@ -121,6 +128,41 @@ export function registerRecipeRoutes(app: FastifyInstance) {
       req.log.error(err);
       reply.code(502);
       return { error: err instanceof Error ? err.message : "Couldn't import a recipe from that link" };
+    }
+  });
+
+  // Same "always a real, reviewable draft, never auto-saved" contract as
+  // import-url and label scanning — a photo of a handwritten ingredient
+  // list (the common case this was built for: someone else in the house
+  // cooked and jotted ingredients/weights on paper) in, an ImportedRecipe
+  // out, ready for RecipeForm's `initial` prop. See engine/recipeImport.ts's
+  // importRecipeFromPhoto for the vision/matching logic — identical output
+  // shape to import-url so the frontend handles both the same way.
+  app.post("/api/recipes/import-photo", async (req, reply) => {
+    if (!(await aiTaskConfigured(req.userId!, "recipePhotoImport"))) {
+      reply.code(503);
+      return { error: "Recipe photo import isn't configured on this server yet" };
+    }
+
+    const data = await req.file();
+    if (!data) return reply.code(400).send({ error: "No file uploaded" });
+
+    const raw = await data.toBuffer();
+    let jpeg: Buffer;
+    try {
+      jpeg = await toBoundedJpeg(raw, { maxDimension: RECIPE_PHOTO_MAX_DIMENSION, quality: RECIPE_PHOTO_JPEG_QUALITY });
+    } catch (err) {
+      req.log.error(err);
+      reply.code(400);
+      return { error: "Couldn't process that image" };
+    }
+
+    try {
+      return await importRecipeFromPhoto(req.userId!, { buffer: jpeg, mediaType: "image/jpeg" });
+    } catch (err) {
+      req.log.error(err);
+      reply.code(502);
+      return { error: err instanceof Error ? err.message : "Couldn't import a recipe from that photo" };
     }
   });
 
