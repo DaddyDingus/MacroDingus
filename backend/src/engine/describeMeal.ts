@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { foods, logs } from "../db/schema.js";
-import { getAnthropicClient } from "./anthropicClient.js";
+import { generateAiText } from "./aiProvider.js";
 
 export interface DescribedItem {
   // The real, persisted foods row — either an existing one the model matched
@@ -176,26 +176,16 @@ export async function describeMeal(
   const candidateIds = new Set(candidates.map((c) => c.id));
 
   const prompt = buildPrompt(text, photo != null, candidates);
-  const content: Array<
-    | { type: "image"; source: { type: "base64"; media_type: "image/jpeg"; data: string } }
-    | { type: "text"; text: string }
-  > = [];
-  if (photo) content.push({ type: "image", source: { type: "base64", media_type: photo.mediaType, data: photo.buffer.toString("base64") } });
-  content.push({ type: "text", text: prompt });
-
-  const response = await getAnthropicClient(userId).messages.create({
-    model: "claude-sonnet-5",
-    max_tokens: 4096,
-    messages: [{ role: "user", content }],
-    output_config: { format: { type: "json_schema", schema: DESCRIBE_MEAL_JSON_SCHEMA } },
+  const responseText = await generateAiText(userId, "mealDescription", {
+    prompt,
+    images: photo ? [{ buffer: photo.buffer, mediaType: photo.mediaType }] : undefined,
+    maxTokens: 4096,
+    jsonSchema: DESCRIBE_MEAL_JSON_SCHEMA,
   });
-
-  const textBlock = response.content.find((b) => b.type === "text");
-  if (!textBlock || textBlock.type !== "text") throw new Error("Couldn't make sense of that meal");
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(textBlock.text);
+    parsed = JSON.parse(responseText);
   } catch {
     throw new Error("Couldn't make sense of that meal");
   }

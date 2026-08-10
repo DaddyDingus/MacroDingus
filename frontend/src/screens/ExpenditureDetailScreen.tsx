@@ -39,6 +39,46 @@ function signed(n: number): string {
   return n >= 0 ? `+${Math.round(n).toLocaleString()}` : Math.round(n).toLocaleString();
 }
 
+function AdaptiveReadinessCard({
+  coverage,
+}: {
+  coverage: NonNullable<ReturnType<typeof useCoachStatus>["data"]>["expenditureCoverage"];
+}) {
+  return (
+    <div className="border border-line bg-surface rounded-2xl p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium">Adaptive readiness</p>
+          <p className="text-xs text-muted mt-0.5">
+            {coverage.ready ? "Ready for your next check-in." : "Building your personal expenditure estimate."}
+          </p>
+        </div>
+        <span className={`text-xs px-2.5 py-1 rounded-full ${coverage.ready ? "bg-carbs/15 text-carbs" : "bg-line/30 text-muted"}`}>
+          {coverage.ready ? "Ready" : "Collecting"}
+        </span>
+      </div>
+      {[
+        { label: "Complete food-log days", value: coverage.nutritionDays, required: coverage.nutritionDaysRequired },
+        { label: "Weigh-ins in range", value: coverage.weighIns, required: coverage.weighInsRequired },
+      ].map((row) => {
+        const progress = Math.min(100, (row.value / row.required) * 100);
+        return (
+          <div key={row.label}>
+            <div className="flex justify-between text-xs mb-1.5">
+              <span className="text-muted">{row.label}</span>
+              <span className="tabular">{row.value}/{row.required}{row.label.startsWith("Weigh") ? "+" : ""}</span>
+            </div>
+            <div className="h-1.5 rounded-full bg-line/40 overflow-hidden">
+              <div className="h-full rounded-full bg-expenditure" style={{ width: `${progress}%` }} />
+            </div>
+          </div>
+        );
+      })}
+      <p className="text-[11px] text-muted">Days marked incomplete are not counted.</p>
+    </div>
+  );
+}
+
 export default function ExpenditureDetailScreen() {
   const navigate = useNavigate();
   const status = useCoachStatus();
@@ -75,6 +115,7 @@ export default function ExpenditureDetailScreen() {
 
   const strategy = checkin?.usedAdaptiveTdee === true ? "adaptive" : checkin?.usedAdaptiveTdee === false ? "formula" : null;
   const coverage = status.data?.expenditureCoverage ?? null;
+  const showAdaptiveReadiness = coverage !== null && strategy !== "adaptive";
 
   // Daily history rows: delta is always against the previous entry in the
   // *full* series (so a row at the visible window's edge still shows a real
@@ -120,6 +161,12 @@ export default function ExpenditureDetailScreen() {
       </header>
 
       <main className="px-4 space-y-3 max-w-md mx-auto">
+        {showAdaptiveReadiness && coverage && (
+          <div className="tile-enter" style={staggerStyle(block++, 60, 5)}>
+            <AdaptiveReadinessCard coverage={coverage} />
+          </div>
+        )}
+
         <div className="tile-enter border border-line bg-surface rounded-2xl p-4" style={staggerStyle(block++, 60, 5)}>
           <div className="relative grid grid-cols-2 gap-6">
             <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/10" />
@@ -194,39 +241,6 @@ export default function ExpenditureDetailScreen() {
             label="Current Expenditure"
             description="The latest estimate of your daily energy expenditure, based on your weight trend and nutrition data."
           />
-          {coverage && strategy !== "adaptive" && (
-            <div className="border border-line bg-surface rounded-2xl p-4 space-y-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-medium">Adaptive readiness</p>
-                  <p className="text-xs text-muted mt-0.5">
-                    {coverage.ready ? "Ready for your next check-in." : "Building your personal expenditure estimate."}
-                  </p>
-                </div>
-                <span className={`text-xs px-2.5 py-1 rounded-full ${coverage.ready ? "bg-carbs/15 text-carbs" : "bg-line/30 text-muted"}`}>
-                  {coverage.ready ? "Ready" : "Collecting"}
-                </span>
-              </div>
-              {[
-                { label: "Complete food-log days", value: coverage.nutritionDays, required: coverage.nutritionDaysRequired },
-                { label: "Weigh-ins in range", value: coverage.weighIns, required: coverage.weighInsRequired },
-              ].map((row) => {
-                const progress = Math.min(100, (row.value / row.required) * 100);
-                return (
-                  <div key={row.label}>
-                    <div className="flex justify-between text-xs mb-1.5">
-                      <span className="text-muted">{row.label}</span>
-                      <span className="tabular">{row.value}/{row.required}{row.label.startsWith("Weigh") ? "+" : ""}</span>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-line/40 overflow-hidden">
-                      <div className="h-full rounded-full bg-expenditure" style={{ width: `${progress}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
-              <p className="text-[11px] text-muted">Days marked incomplete are not counted.</p>
-            </div>
-          )}
           <StatTile
             value={strategy === "adaptive" ? "Adaptive" : strategy === "formula" ? "Estimated" : "—"}
             valueClassName="text-lg"

@@ -32,6 +32,11 @@ const INSTANT_ARM_MAX_AGE_MS = 60;
 // viewport heights (browser chrome, zoom) mean scrollY often stops a
 // fraction short of the computed maximum.
 const BOTTOM_EPSILON_PX = 4;
+// A swipeable surface that explicitly shares vertical pulls with this hook
+// gets a few pixels to reveal whether the user's intent is horizontal paging
+// or vertical overscroll. Below this distance, normal finger jitter commits
+// to neither gesture.
+const AXIS_LOCK_THRESHOLD_PX = 6;
 
 export const PULL_REFRESH_PROGRESS_EVENT = "macrotrack:pull-refresh-progress";
 export const PULL_REFRESH_EVENT = "macrotrack:pull-refresh";
@@ -118,6 +123,9 @@ interface DragState {
   // Current resisted visual distance. Dashboard uses this to turn its normal
   // top-edge rubber band into an explicit pull-to-refresh threshold.
   pullPx: number;
+  startX: number;
+  startY: number;
+  axisIntent: "none" | "pending" | "horizontal" | "vertical";
 }
 
 interface FlingState {
@@ -354,6 +362,7 @@ export function useRubberBandScroll() {
         ? e.target.closest<HTMLElement>("[data-rubber-band-surface]") ?? document.body
         : document.body;
       const y = e.touches[0].clientY;
+      const x = e.touches[0].clientX;
       const scrollEl = e.target instanceof Element ? findScrollableAncestor(e.target) : null;
       const { scrollTop, scrollMax } = scrollBoundary(scrollEl);
       const blocking = scrollTop <= 0 || scrollTop >= scrollMax - BOTTOM_EPSILON_PX;
@@ -369,12 +378,28 @@ export function useRubberBandScroll() {
         scrollEl,
         blocking,
         pullPx: 0,
+        startX: x,
+        startY: y,
+        axisIntent: e.target instanceof Element && e.target.closest("[data-rubber-band-horizontal-swipe]")
+          ? "pending"
+          : "none",
       };
     }
 
     function onTouchMove(e: TouchEvent) {
       if (!drag || e.touches.length !== 1) return;
       const currentY = e.touches[0].clientY;
+      const currentX = e.touches[0].clientX;
+      if (drag.axisIntent === "pending") {
+        const dx = Math.abs(currentX - drag.startX);
+        const dy = Math.abs(currentY - drag.startY);
+        if (Math.max(dx, dy) < AXIS_LOCK_THRESHOLD_PX) return;
+        drag.axisIntent = dx > dy ? "horizontal" : "vertical";
+      }
+      // Let the native horizontal scroll-snap surface own a horizontal swipe
+      // completely. A vertical intent continues through the ordinary edge
+      // logic below and can become a Dashboard pull-to-refresh.
+      if (drag.axisIntent === "horizontal") return;
       const moveDelta = currentY - drag.lastY;
       const now = performance.now();
       const elapsed = Math.max(1, now - drag.lastMoveAt);

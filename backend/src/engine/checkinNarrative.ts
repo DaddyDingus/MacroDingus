@@ -1,4 +1,4 @@
-import { getAnthropicClient } from "./anthropicClient.js";
+import { generateAiText } from "./aiProvider.js";
 
 export interface CheckinNarrativeInput {
   isFirstCheckin: boolean;
@@ -49,12 +49,8 @@ Write 2-4 short sentences that plainly restate what happened, in the numbers' ow
 }
 
 export async function generateCheckinNarrative(userId: string, input: CheckinNarrativeInput): Promise<string> {
-  const response = await getAnthropicClient(userId).messages.create({
-    model: "claude-sonnet-5",
-    max_tokens: 300,
-    messages: [{ role: "user", content: buildPrompt(input) }],
+  return generateAiText(userId, "checkinNarrative", {
+    prompt: buildPrompt(input),
+    maxTokens: 300,
   });
-  const textBlock = response.content.find((b) => b.type === "text");
-  if (!textBlock || textBlock.type !== "text") throw new Error("No narrative returned");
-  return textBlock.text.trim();
 }

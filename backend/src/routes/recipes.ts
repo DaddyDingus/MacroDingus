@@ -6,7 +6,7 @@ import { db } from "../db/index.js";
 import { foods, recipes, recipeIngredients } from "../db/schema.js";
 import { scaleNutrition, sumNutrition } from "../engine/nutrition.js";
 import { importRecipeFromUrl } from "../engine/recipeImport.js";
-import { anthropicKeyStatus } from "../engine/anthropicClient.js";
+import { aiTaskConfigured } from "../engine/aiProvider.js";
 
 const recipeInput = z.object({
   name: z.string().min(1),
@@ -100,13 +100,14 @@ export function registerRecipeRoutes(app: FastifyInstance) {
     return detail;
   });
 
-  // Fetches a recipe URL and hands it to Claude to extract into structured
+  // Fetches a recipe URL and hands it to the configured AI model to extract
+  // structured
   // data, ready for RecipeForm's `initial` prop — same "always a real,
   // reviewable draft, never auto-saved" shape as label scanning and
   // describe-meal. See engine/recipeImport.ts for the fetch/parse/match
   // logic. Same 503-when-unconfigured convention as those two features.
   app.post("/api/recipes/import-url", async (req, reply) => {
-    if (!anthropicKeyStatus(req.userId!).configured) {
+    if (!(await aiTaskConfigured(req.userId!, "recipeImport"))) {
       reply.code(503);
       return { error: "Recipe import isn't configured on this server yet" };
     }

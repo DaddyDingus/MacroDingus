@@ -53,12 +53,14 @@ export interface SheetDragHandlers {
 // drag.
 export default function BottomSheet({
   onClose,
+  onBeforeClose,
   children,
   panelClassName = "max-h-[85%] bg-dashboardBg rounded-t-xl border-t border-white/10 pb-[env(safe-area-inset-bottom)]",
   backdropClassName = "bg-black/60",
   showGrabber = true,
 }: {
   onClose: () => void;
+  onBeforeClose?: () => boolean;
   children: ReactNode | ((dragHandlers: SheetDragHandlers, close: () => void) => ReactNode);
   panelClassName?: string;
   backdropClassName?: string;
@@ -81,6 +83,11 @@ export default function BottomSheet({
 
   function close() {
     if (closing) return; // already animating out — ignore a repeat trigger
+    // Some sheets own drafted state and need to intercept every dismissal
+    // path (backdrop, back button, or swipe) before the exit animation begins.
+    // Returning false leaves this sheet fully mounted and interactive while
+    // the caller presents its confirmation UI.
+    if (onBeforeClose && !onBeforeClose()) return;
     // A sheet disappearing does not reliably dismiss Android's IME if its
     // focused input is unmounted in the same render. Blur while the field is
     // still present, synchronously inside the user's dismiss gesture, so the

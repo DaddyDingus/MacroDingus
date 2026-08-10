@@ -261,14 +261,14 @@ export default function DashboardTotalsArcCard({
   return (
     <div className="bg-dashboardCard rounded-2xl overflow-hidden">
       <div className="px-5 py-5">
-        {/* Same escape hatch MacroSummaryBar's scroller needs (see that
-            file's own comment): this card sits at the very top of the
-            Dashboard (scrollY 0), where useRubberBandScroll's pull-to-refresh
-            listener otherwise wins the race against a real horizontal swipe. */}
+        {/* This card shares its touch surface between horizontal page swipes
+            and Dashboard pull-to-refresh. The rubber-band hook axis-locks
+            after the first few pixels: horizontal intent stays with native
+            scroll-snap, while vertical intent can pull the Dashboard. */}
         <div
           ref={scrollerRef}
           onScroll={handleScroll}
-          data-no-rubber-band
+          data-rubber-band-horizontal-swipe
           className="flex overflow-x-auto no-scrollbar overscroll-x-contain select-none"
           style={{ scrollSnapType: "x mandatory", touchAction: "pan-x" }}
         >

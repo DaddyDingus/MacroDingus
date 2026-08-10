@@ -8,7 +8,7 @@ import { computeTrend, daysBetween, addDaysToDateString } from "../engine/trendW
 import { macroFactorTdee, estimateAdaptiveTdee, adaptiveTdeeCoverage } from "../engine/tdee.js";
 import { generateCoachedProgramDays, type DietType, type ProteinLevel } from "../engine/program.js";
 import { generateCheckinNarrative } from "../engine/checkinNarrative.js";
-import { anthropicKeyStatus } from "../engine/anthropicClient.js";
+import { aiTaskConfigured } from "../engine/aiProvider.js";
 import {
   currentTrendKg,
   gatherAdaptiveTdeeInputs,
@@ -246,7 +246,7 @@ export async function performCheckin(userId: string) {
   // and swallowed here rather than left to the route handler: everything
   // else in performCheckin() is the real check-in logic, this is additive.
   let narrative: string | null = null;
-  if (anthropicKeyStatus(userId).configured) {
+  if (await aiTaskConfigured(userId, "checkinNarrative")) {
     try {
       const windowStart = latestCheckin ? addDaysToDateString(latestCheckin.date, 1) : addDaysToDateString(today, -6);
       const windowDays = latestCheckin ? Math.max(1, daysBetween(latestCheckin.date, today)) : 7;

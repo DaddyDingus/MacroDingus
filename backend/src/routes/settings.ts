@@ -3,7 +3,20 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { userSettings } from "../db/schema.js";
-import { anthropicKeyStatus, removeAnthropicApiKey, saveAnthropicApiKey } from "../engine/anthropicClient.js";
+import {
+  AI_PROVIDER_CATALOG,
+  AI_PROVIDERS,
+  AI_TASKS,
+  aiProviderKeyStatus,
+  aiProviderModelCatalog,
+  aiTaskAssignments,
+  removeAiProviderKey,
+  recommendedModelsForTask,
+  saveAiProviderKey,
+  saveAiTaskAssignment,
+  type AiProvider,
+  type AiTask,
+} from "../engine/aiProvider.js";
 
 // One loosely-typed JSON blob rather than a strict schema — this is a bag of
 // independent frontend preferences (theme, units, dashboard shortcuts/colors,
@@ -12,17 +25,55 @@ import { anthropicKeyStatus, removeAnthropicApiKey, saveAnthropicApiKey } from "
 // merged shallowly into whatever's already stored (see PATCH below), so a
 // client only ever needs to send the keys it actually changed.
 const patchInput = z.record(z.string(), z.unknown());
-const anthropicKeyInput = z.object({ apiKey: z.string().trim().min(20).max(300) });
+const apiKeyInput = z.object({ apiKey: z.string().trim().min(20).max(500) });
+const providerInput = z.enum(AI_PROVIDERS);
+const taskInput = z.enum(AI_TASKS.map((task) => task.id) as [AiTask, ...AiTask[]]);
+const taskAssignmentInput = z.object({
+  provider: providerInput,
+  model: z.string().trim().min(1).max(120).regex(/^[A-Za-z0-9._:/-]+$/, "Invalid model ID"),
+});
+
+async function aiSettingsStatus(userId: string) {
+  const assignments = await aiTaskAssignments(userId);
+  const legacyAnthropicStatus = aiProviderKeyStatus(userId, "anthropic");
+  const providerEntries = await Promise.all(AI_PROVIDERS.map(async (provider) => [
+    provider,
+    {
+      ...AI_PROVIDER_CATALOG[provider],
+      ...await aiProviderModelCatalog(userId, provider),
+      ...aiProviderKeyStatus(userId, provider),
+    },
+  ] as const));
+  return {
+    // Top-level fields preserve the old response contract for a cached app
+    // shell during a rolling deploy. The new UI reads `providers` below.
+    configured: legacyAnthropicStatus.configured,
+    source: legacyAnthropicStatus.source,
+    providers: Object.fromEntries(providerEntries),
+    tasks: AI_TASKS.map((task) => {
+      const assignment = assignments[task.id];
+      return {
+        id: task.id,
+        label: task.label,
+        description: task.description,
+        recommendedModels: recommendedModelsForTask(task.id),
+        ...assignment,
+        configured: aiProviderKeyStatus(userId, assignment.provider).configured,
+      };
+    }),
+  };
+}
 
 export function registerSettingsRoutes(app: FastifyInstance) {
-  app.get("/api/settings/ai", async (req) => anthropicKeyStatus(req.userId!));
+  app.get("/api/settings/ai", async (req) => aiSettingsStatus(req.userId!));
 
+  // Keep these two legacy endpoints working for a cached pre-deploy frontend.
   app.put("/api/settings/ai", async (req, reply) => {
-    const parsed = anthropicKeyInput.safeParse(req.body);
+    const parsed = apiKeyInput.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Enter a valid Anthropic API key" });
     try {
-      await saveAnthropicApiKey(req.userId!, parsed.data.apiKey);
-      return anthropicKeyStatus(req.userId!);
+      await saveAiProviderKey(req.userId!, "anthropic", parsed.data.apiKey);
+      return aiSettingsStatus(req.userId!);
     } catch (err) {
       req.log.warn({ err }, "Anthropic API key validation failed");
       return reply.code(400).send({ error: "Couldn't validate that key with Anthropic" });
@@ -30,9 +81,38 @@ export function registerSettingsRoutes(app: FastifyInstance) {
   });
 
   app.delete("/api/settings/ai", async (req, reply) => {
-    await removeAnthropicApiKey(req.userId!);
+    await removeAiProviderKey(req.userId!, "anthropic");
     reply.code(204);
     return null;
+  });
+
+  app.put("/api/settings/ai/providers/:provider", async (req, reply) => {
+    const provider = providerInput.safeParse((req.params as { provider?: string }).provider);
+    const body = apiKeyInput.safeParse(req.body);
+    if (!provider.success || !body.success) return reply.code(400).send({ error: "Enter a valid API key" });
+    try {
+      await saveAiProviderKey(req.userId!, provider.data, body.data.apiKey);
+      return aiSettingsStatus(req.userId!);
+    } catch (err) {
+      req.log.warn({ err, provider: provider.data }, "AI provider API key validation failed");
+      return reply.code(400).send({ error: `Couldn't validate that key with ${AI_PROVIDER_CATALOG[provider.data].label}` });
+    }
+  });
+
+  app.delete("/api/settings/ai/providers/:provider", async (req, reply) => {
+    const provider = providerInput.safeParse((req.params as { provider?: string }).provider);
+    if (!provider.success) return reply.code(404).send({ error: "Unknown AI provider" });
+    await removeAiProviderKey(req.userId!, provider.data);
+    reply.code(204);
+    return null;
+  });
+
+  app.put("/api/settings/ai/tasks/:task", async (req, reply) => {
+    const task = taskInput.safeParse((req.params as { task?: string }).task);
+    const assignment = taskAssignmentInput.safeParse(req.body);
+    if (!task.success || !assignment.success) return reply.code(400).send({ error: "Choose a valid provider and model" });
+    await saveAiTaskAssignment(req.userId!, task.data, assignment.data as { provider: AiProvider; model: string });
+    return aiSettingsStatus(req.userId!);
   });
 
   app.get("/api/settings", async (req) => {

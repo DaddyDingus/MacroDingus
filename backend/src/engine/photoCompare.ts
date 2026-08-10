@@ -1,4 +1,4 @@
-import { getAnthropicClient } from "./anthropicClient.js";
+import { generateAiText } from "./aiProvider.js";
 
 export interface PhotoCompareResult {
   hasVisibleChange: boolean;
@@ -38,28 +38,16 @@ export async function comparePhotos(
   photoB: { buffer: Buffer; mediaType: "image/jpeg" },
   daysApart: number
 ): Promise<PhotoCompareResult> {
-  const response = await getAnthropicClient(userId).messages.create({
-    model: "claude-sonnet-5",
-    max_tokens: 1024,
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "image", source: { type: "base64", media_type: photoA.mediaType, data: photoA.buffer.toString("base64") } },
-          { type: "image", source: { type: "base64", media_type: photoB.mediaType, data: photoB.buffer.toString("base64") } },
-          { type: "text", text: buildPrompt(daysApart) },
-        ],
-      },
-    ],
-    output_config: { format: { type: "json_schema", schema: PHOTO_COMPARE_JSON_SCHEMA } },
+  const responseText = await generateAiText(userId, "photoComparison", {
+    prompt: buildPrompt(daysApart),
+    images: [photoA, photoB],
+    maxTokens: 1024,
+    jsonSchema: PHOTO_COMPARE_JSON_SCHEMA,
   });
-
-  const textBlock = response.content.find((b) => b.type === "text");
-  if (!textBlock || textBlock.type !== "text") throw new Error("Couldn't compare those photos");
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(textBlock.text);
+    parsed = JSON.parse(responseText);
   } catch {
     throw new Error("Couldn't compare those photos");
   }

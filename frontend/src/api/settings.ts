@@ -25,9 +25,34 @@ export function useUpdateSettings() {
   });
 }
 
-export interface AiSettingsStatus {
+export type AiProvider = "anthropic" | "openai" | "gemini";
+export type AiTaskId = "labelScan" | "mealDescription" | "recipeImport" | "photoComparison" | "checkinNarrative";
+
+export interface AiProviderStatus {
+  label: string;
+  keyPlaceholder: string;
+  keyUrl: string;
+  models: string[];
+  discoveredModels?: string[];
+  modelCatalogSource?: "live" | "cache" | "fallback";
+  modelsRefreshedAt?: string | null;
   configured: boolean;
   source: "account" | "environment" | null;
+}
+
+export interface AiTaskStatus {
+  id: AiTaskId;
+  label: string;
+  description: string;
+  recommendedModels: Record<AiProvider, string>;
+  provider: AiProvider;
+  model: string;
+  configured: boolean;
+}
+
+export interface AiSettingsStatus {
+  providers: Record<AiProvider, AiProviderStatus>;
+  tasks: AiTaskStatus[];
 }
 
 export function useAiSettings() {
@@ -42,8 +67,8 @@ export function useAiSettings() {
 export function useSaveAiKey() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (apiKey: string) =>
-      apiFetch<AiSettingsStatus>("/settings/ai", { method: "PUT", body: JSON.stringify({ apiKey }) }),
+    mutationFn: ({ provider, apiKey }: { provider: AiProvider; apiKey: string }) =>
+      apiFetch<AiSettingsStatus>(`/settings/ai/providers/${provider}`, { method: "PUT", body: JSON.stringify({ apiKey }) }),
     onSuccess: (data) => qc.setQueryData(["settings", "ai"], data),
   });
 }
@@ -51,7 +76,19 @@ export function useSaveAiKey() {
 export function useRemoveAiKey() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => apiFetch<void>("/settings/ai", { method: "DELETE" }),
+    mutationFn: (provider: AiProvider) => apiFetch<void>(`/settings/ai/providers/${provider}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["settings", "ai"] }),
+  });
+}
+
+export function useSaveAiTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ task, provider, model }: { task: AiTaskId; provider: AiProvider; model: string }) =>
+      apiFetch<AiSettingsStatus>(`/settings/ai/tasks/${task}`, {
+        method: "PUT",
+        body: JSON.stringify({ provider, model }),
+      }),
+    onSuccess: (data) => qc.setQueryData(["settings", "ai"], data),
   });
 }

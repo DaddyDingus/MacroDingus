@@ -1,4 +1,4 @@
-import { getAnthropicClient } from "./anthropicClient.js";
+import { generateAiText } from "./aiProvider.js";
 
 // Every nutrient the model returns is per-100g, not per-serving — it does the
 // serving-size conversion itself (see the prompt below) so the result drops
@@ -63,27 +63,16 @@ function coerceLabelScanResult(raw: unknown): LabelScanResult {
 const PROMPT = `This is a photo of a food package's Nutrition Facts label. Read it carefully and extract the fields in the schema, normalizing every nutrient amount to a per-100-gram basis — labels state amounts per serving, so use the serving size in grams printed on the label to convert (e.g. a 55g serving with 220 calories is 400 calories per 100g). Also report the serving size in grams and the label's own serving description (e.g. "2/3 cup") separately, unconverted. \`caloriesPer100g\` must always be in kilocalories (Calories/kcal) — if the label's energy row is given only in kilojoules (kJ), convert it to kcal by dividing by 4.184 before applying the per-100g conversion (e.g. "Energy 1046kJ per 100g" is 1046 / 4.184 ≈ 250 kcal per 100g). If a label shows both kJ and kcal, use the kcal figure directly rather than converting. If the product name or brand is visible anywhere in the photo, include it. Sodium is in milligrams; every other nutrient is in grams. If a field isn't present on the label or you can't determine it confidently, return null for that field — never guess or estimate a value.`;
 
 export async function scanNutritionLabel(userId: string, imageBuffer: Buffer, mediaType: "image/jpeg"): Promise<LabelScanResult> {
-  const response = await getAnthropicClient(userId).messages.create({
-    model: "claude-haiku-4-5",
-    max_tokens: 1024,
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "image", source: { type: "base64", media_type: mediaType, data: imageBuffer.toString("base64") } },
-          { type: "text", text: PROMPT },
-        ],
-      },
-    ],
-    output_config: { format: { type: "json_schema", schema: LABEL_SCAN_JSON_SCHEMA } },
+  const text = await generateAiText(userId, "labelScan", {
+    prompt: PROMPT,
+    images: [{ buffer: imageBuffer, mediaType }],
+    maxTokens: 1024,
+    jsonSchema: LABEL_SCAN_JSON_SCHEMA,
   });
-
-  const textBlock = response.content.find((b) => b.type === "text");
-  if (!textBlock || textBlock.type !== "text") throw new Error("Couldn't read a nutrition label from that photo");
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(textBlock.text);
+    parsed = JSON.parse(text);
   } catch {
     throw new Error("Couldn't read a nutrition label from that photo");
   }

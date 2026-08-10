@@ -15,6 +15,8 @@ services:
       # Optional installation-wide fallback. Each account can instead save
       # its own key under More > AI features; account keys take precedence.
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
       # Optional integration with a separate weight-sync relay. Both values
       # must be set; otherwise weight mutations remain entirely local.
       - WEIGHT_SYNC_RELAY_URL=${WEIGHT_SYNC_RELAY_URL}

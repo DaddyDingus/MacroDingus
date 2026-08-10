@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useWeightTrend, useWeights, useDeleteWeight } from "../api/weights";
+import { useWeightTrend, useWeights } from "../api/weights";
 import { formatDayLabel, dayIndex, addDays, localDateString } from "../lib/date";
 import { useWeightUnit, kgToUnit } from "../lib/weightUnit";
 import { trendChangeOverDays, weeklyTrendRateKgPerWeek, projectTrendKg, KCAL_PER_KG } from "../lib/weightInsights";
@@ -10,7 +10,6 @@ import WeightChart, { WeightChartLegend } from "../components/WeightChart";
 import ChartCard from "../components/ChartCard";
 import MiniLineSpark from "../components/MiniLineSpark";
 import ChangeDirectionIcon from "../components/ChangeDirectionIcon";
-import ConfirmDeleteSheet from "../components/ConfirmDeleteSheet";
 import StatTile from "../components/StatTile";
 import { staggerStyle } from "../lib/stagger";
 
@@ -47,7 +46,6 @@ export default function WeightDetailScreen() {
   const [showScale, setShowScale] = useState(true);
   const [showTrend, setShowTrend] = useState(true);
   const [showHistory, setShowHistory] = useState(false);
-  const [pendingDeleteWeightId, setPendingDeleteWeightId] = useState<string | null>(null);
 
   // One dense fetch covers both the gesture-driven chart and the fixed
   // Insights window — the backend already computes the EWMA over full
@@ -55,7 +53,6 @@ export default function WeightDetailScreen() {
   // pan/pinch re-slice an already-loaded array instead of refetching mid-gesture.
   const trend = useWeightTrend(3650);
   const allWeighIns = useWeights(3650);
-  const deleteWeight = useDeleteWeight();
 
   const allTrendPoints = trend.data ?? [];
   const hasData = allTrendPoints.length > 0;
@@ -101,13 +98,21 @@ export default function WeightDetailScreen() {
     setShowTrend((v) => !v);
   };
 
-  // Grouped-by-month history with a day-over-day change indicator, computed
-  // ascending first (so each entry can see the previous day it's compared
-  // against) then reversed for display — most recent month, most recent day
-  // first, matching the chronological reading order of the rest of the app.
+  // Grouped-by-month trend history. A previous version accidentally rendered
+  // the raw scale reading and its raw day-over-day direction here, duplicating
+  // Scale Weight inside a screen whose headline and insights all describe the
+  // smoothed trend. Make both the displayed value and direction come from
+  // the dense trend series; raw readings already have their own screen.
   const sortedAsc = [...(allWeighIns.data ?? [])].sort((a, b) => a.date.localeCompare(b.date));
-  const monthGroups = new Map<string, { label: string; entries: { id: string; date: string; weightKg: number; bodyFatPercent: number | null; deltaKg: number | null }[] }>();
-  sortedAsc.forEach((w, i) => {
+  const trendByDate = new Map(allTrendPoints.map((point, index) => [
+    point.date,
+    {
+      trendKg: point.trendKg,
+      deltaKg: index > 0 ? Math.round((point.trendKg - allTrendPoints[index - 1].trendKg) * 100) / 100 : null,
+    },
+  ]));
+  const monthGroups = new Map<string, { label: string; entries: { id: string; date: string; trendKg: number | null; bodyFatPercent: number | null; deltaKg: number | null }[] }>();
+  sortedAsc.forEach((w) => {
     const key = w.date.slice(0, 7);
     if (!monthGroups.has(key)) {
       const [y, m] = key.split("-").map(Number);
@@ -116,12 +121,13 @@ export default function WeightDetailScreen() {
         entries: [],
       });
     }
+    const trendPoint = trendByDate.get(w.date);
     monthGroups.get(key)!.entries.push({
       id: w.id,
       date: w.date,
-      weightKg: w.weightKg,
+      trendKg: trendPoint?.trendKg ?? null,
       bodyFatPercent: w.bodyFatPercent,
-      deltaKg: i > 0 ? Math.round((w.weightKg - sortedAsc[i - 1].weightKg) * 100) / 100 : null,
+      deltaKg: trendPoint?.deltaKg ?? null,
     });
   });
   const monthGroupsDesc = [...monthGroups.entries()]
@@ -295,25 +301,18 @@ export default function WeightDetailScreen() {
                       >
                         <div>
                           <p className="tabular text-sm">
-                            {kgToUnit(w.weightKg, unit).toFixed(1)} {unit}
+                            {w.trendKg !== null ? kgToUnit(w.trendKg, unit).toFixed(1) : "—"} {unit}
                             {w.bodyFatPercent !== null && (
                               <span className="text-muted"> · {w.bodyFatPercent.toFixed(1)}% BF</span>
                             )}
                           </p>
                           <p className="text-xs text-muted">{formatDayLabel(w.date)}</p>
                         </div>
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center">
                           <span className="flex items-center gap-1 text-xs text-muted">
                             <ChangeDirectionIcon direction={dir} colorClassName="text-weight" />
                             {changeDirectionLabel(dir)}
                           </span>
-                          <button
-                            onClick={() => setPendingDeleteWeightId(w.id)}
-                            aria-label={`Delete weigh-in from ${formatDayLabel(w.date)}`}
-                            className="text-muted text-base leading-none px-1"
-                          >
-                            ×
-                          </button>
                         </div>
                       </div>
                     );
@@ -324,16 +323,6 @@ export default function WeightDetailScreen() {
         )}
       </main>
 
-      {pendingDeleteWeightId && (
-        <ConfirmDeleteSheet
-          title="Delete Weigh-In"
-          message="Remove this weigh-in from your history? This can't be undone."
-          confirmLabel="Delete Weigh-In"
-          onConfirm={() => deleteWeight.mutate(pendingDeleteWeightId, { onSuccess: () => setPendingDeleteWeightId(null) })}
-          onClose={() => setPendingDeleteWeightId(null)}
-          isPending={deleteWeight.isPending}
-        />
-      )}
     </div>
   );
 }

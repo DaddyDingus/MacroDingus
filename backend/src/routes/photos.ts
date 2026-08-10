@@ -9,7 +9,7 @@ import { db } from "../db/index.js";
 import { photos } from "../db/schema.js";
 import { comparePhotos } from "../engine/photoCompare.js";
 import { daysBetween } from "../engine/trendWeight.js";
-import { anthropicKeyStatus } from "../engine/anthropicClient.js";
+import { aiTaskConfigured } from "../engine/aiProvider.js";
 
 const MAX_DIMENSION = 1600;
 const JPEG_QUALITY = 90;
@@ -88,10 +88,11 @@ export function registerPhotoRoutes(app: FastifyInstance, dataDir: string) {
   // is fine at a few cents a month for a single-household deployment. Reads
   // the two already-stored, already-processed progress photos straight off
   // disk rather than re-uploading anything; the only new data sent to
-  // Anthropic is the day-gap between them (see engine/photoCompare.ts for
+  // the configured provider is the day-gap between them (see
+  // engine/photoCompare.ts for
   // why weight/scale numbers are deliberately withheld).
   app.post("/api/photos/compare", async (req, reply) => {
-    if (!anthropicKeyStatus(req.userId!).configured) {
+    if (!(await aiTaskConfigured(req.userId!, "photoComparison"))) {
       reply.code(503);
       return { error: "Photo comparison isn't configured on this server yet" };
     }

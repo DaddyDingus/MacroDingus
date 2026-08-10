@@ -20,7 +20,7 @@ import { registerAccountRoutes } from "./routes/account.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerCookwareRoutes } from "./routes/cookware.js";
 import { registerAdjustmentRoutes } from "./routes/adjustments.js";
-import { configureAnthropicKeyStore } from "./engine/anthropicClient.js";
+import { configureAiProviderStore } from "./engine/aiProvider.js";
 import { startAutomaticServerBackups } from "./lib/serverBackups.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -30,7 +30,7 @@ const DATA_DIR = process.env.DATA_DIR ?? path.join(__dirname, "..", "..", "data"
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(path.join(DATA_DIR, "photos"), { recursive: true });
-configureAnthropicKeyStore(DATA_DIR);
+configureAiProviderStore(DATA_DIR);
 
 runMigrations();
 

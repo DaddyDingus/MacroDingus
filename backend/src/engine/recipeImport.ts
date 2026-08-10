@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { foods, logs } from "../db/schema.js";
-import { getAnthropicClient } from "./anthropicClient.js";
+import { generateAiText } from "./aiProvider.js";
 
 export interface ImportedIngredient {
   // Always a real, persisted foods row by the time this returns — matches
@@ -212,19 +212,15 @@ export async function importRecipeFromUrl(userId: string, url: string): Promise<
   const candidates = await fetchCandidateFoods();
   const candidateIds = new Set(candidates.map((c) => c.id));
 
-  const response = await getAnthropicClient(userId).messages.create({
-    model: "claude-sonnet-5",
-    max_tokens: 4096,
-    messages: [{ role: "user", content: buildPrompt(pageText, candidates) }],
-    output_config: { format: { type: "json_schema", schema: RECIPE_JSON_SCHEMA } },
+  const responseText = await generateAiText(userId, "recipeImport", {
+    prompt: buildPrompt(pageText, candidates),
+    maxTokens: 4096,
+    jsonSchema: RECIPE_JSON_SCHEMA,
   });
-
-  const textBlock = response.content.find((b) => b.type === "text");
-  if (!textBlock || textBlock.type !== "text") throw new Error("Couldn't make sense of that page");
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(textBlock.text);
+    parsed = JSON.parse(responseText);
   } catch {
     throw new Error("Couldn't make sense of that page");
   }
