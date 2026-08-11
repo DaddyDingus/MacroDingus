@@ -2,21 +2,24 @@ import { useEffect } from "react";
 
 // How much of the raw finger movement actually shows up as pull — <1 so it
 // feels like pulling against resistance, not moving 1:1 with the finger.
-const RESISTANCE = 0.4;
-// Caps the stretch so a long, fast drag doesn't pull the page absurdly far.
-const MAX_PULL_PX = 96;
+const REFRESH_RESISTANCE = 0.4;
+// The visible displacement matches DaddysTunes' shorter, progressively
+// firmer stretch. Refresh progress remains linear and independent below so
+// this visual tuning cannot make Dashboard refresh unreachable.
+const MAX_VISUAL_PULL_PX = 56;
+const MAX_REFRESH_PULL_PX = 96;
 const REFRESH_TRIGGER_PX = 64;
-const SPRING_BACK_MS = 320;
+const SPRING_BACK_MS = 340;
 // Chromium keeps its inertial scroll after touchend but does not expose the
 // unused momentum once it clamps at an edge. A recent, sufficiently fast
 // finger velocity lets us synthesize a smaller continuation when that fling
 // reaches the boundary shortly afterward.
-const MIN_FLING_VELOCITY_PX_MS = 0.35;
-const FLING_MAX_AGE_MS = 1_600;
+const MIN_FLING_VELOCITY_PX_MS = 0.55;
+const MIN_FLING_DISTANCE_PX = 28;
+const FLING_MAX_AGE_MS = 1_200;
 const FLING_LIFT_GRACE_MS = 120;
-const FLING_OUT_MS = 90;
-const MIN_FLING_PULL_PX = 12;
-const MAX_FLING_PULL_PX = 32;
+const MIN_FLING_PULL_PX = 10;
+const MAX_FLING_PULL_PX = 34;
 // On a short/barely-scrollable page, the whole scroll range can already sit
 // at a boundary at touchstart (see isRealScrollContainer's caller comments
 // below), so a fast flick's own raw finger movement — not just its
@@ -162,7 +165,6 @@ export function useRubberBandScroll() {
     let fling: FlingState | null = null;
     let springTimer = 0;
     let flingTimer = 0;
-    let flingOutTimer = 0;
     let flingFrame = 0;
     let pullFrame = 0;
     let pendingPullOffset = 0;
@@ -268,7 +270,6 @@ export function useRubberBandScroll() {
 
     function clearOffset() {
       window.clearTimeout(springTimer);
-      window.clearTimeout(flingOutTimer);
       window.cancelAnimationFrame(flingFrame);
       cancelPullFrame();
       reportRefreshProgress(0);
@@ -305,7 +306,7 @@ export function useRubberBandScroll() {
 
     function springBack() {
       cancelPullFrame();
-      setOffsetTransition(`${SPRING_BACK_MS}ms cubic-bezier(0.2, 0, 0, 1)`);
+      setOffsetTransition(`${SPRING_BACK_MS}ms cubic-bezier(0.22, 0.85, 0.28, 1.08)`);
       setOffset(0);
       window.clearTimeout(springTimer);
       springTimer = window.setTimeout(clearOffset, SPRING_BACK_MS);
@@ -315,14 +316,15 @@ export function useRubberBandScroll() {
       clearFling();
       if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || document.hidden) return;
 
-      const pull = Math.min(MAX_FLING_PULL_PX, MIN_FLING_PULL_PX + speedPxMs * 8);
+      const pull = Math.min(MAX_FLING_PULL_PX, MIN_FLING_PULL_PX + speedPxMs * 16);
       clearOffset();
-      setOffset(0);
       setOffsetTransition("none");
+      setOffset(edge === "top" ? pull : -pull);
+      // Two frames guarantee the impact displacement is composited before
+      // the spring-to-zero write. This is the crisp DaddysTunes behavior;
+      // the old extra 90ms outward animation made the rebound feel mushy.
       flingFrame = window.requestAnimationFrame(() => {
-        setOffsetTransition(`${FLING_OUT_MS}ms cubic-bezier(0.2, 0, 0.2, 1)`);
-        setOffset(edge === "top" ? pull : -pull);
-        flingOutTimer = window.setTimeout(springBack, FLING_OUT_MS);
+        flingFrame = window.requestAnimationFrame(springBack);
       });
     }
 
@@ -464,10 +466,11 @@ export function useRubberBandScroll() {
         return;
       }
 
-      const pull = Math.min(MAX_PULL_PX, raw * RESISTANCE);
-      drag.pullPx = pull;
-      reportRefreshProgress(drag.edge === "top" ? pull / REFRESH_TRIGGER_PX : 0);
-      schedulePullOffset(drag.edge === "top" ? pull : -pull);
+      const refreshPull = Math.min(MAX_REFRESH_PULL_PX, raw * REFRESH_RESISTANCE);
+      const visualPull = Math.min(MAX_VISUAL_PULL_PX, Math.sqrt(raw) * 5.2);
+      drag.pullPx = refreshPull;
+      reportRefreshProgress(drag.edge === "top" ? refreshPull / REFRESH_TRIGGER_PX : 0);
+      schedulePullOffset(drag.edge === "top" ? visualPull : -visualPull);
       // Only once we're actually mid-pull, and only if this gesture's
       // listener was registered non-passive in the first place — calling
       // preventDefault from inside a passive invocation just logs a console
@@ -490,6 +493,7 @@ export function useRubberBandScroll() {
         if (
           armedForMs !== null
           && armedForMs <= INSTANT_ARM_MAX_AGE_MS
+          && Math.abs(drag.lastY - drag.startY) >= MIN_FLING_DISTANCE_PX
           && Math.abs(drag.velocityPxMs) >= MIN_FLING_VELOCITY_PX_MS
         ) {
           startFlingBounce(drag.edge, Math.abs(drag.velocityPxMs));
@@ -500,6 +504,7 @@ export function useRubberBandScroll() {
       } else if (
         drag
         && performance.now() - drag.lastMoveAt <= FLING_LIFT_GRACE_MS
+        && Math.abs(drag.lastY - drag.startY) >= MIN_FLING_DISTANCE_PX
         && Math.abs(drag.velocityPxMs) >= MIN_FLING_VELOCITY_PX_MS
       ) {
         fling = {

@@ -227,7 +227,7 @@ export default function TodayScreen() {
           against it) — this header borders scrollable content directly, same
           situation. */}
       <div className="sticky top-0 z-10 bg-dashboardBg/85 backdrop-blur-sm border-b border-dashboardDivider/50">
-        <header className="px-4 pt-4 pb-1.5 max-w-md mx-auto">
+        <header className="px-4 pt-2 pb-1.5 max-w-md mx-auto">
           <div className="grid grid-cols-[1fr_auto_1fr] items-center">
             <div className="justify-self-start flex items-center"></div>
             

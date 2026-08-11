@@ -117,7 +117,7 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
   app.addHook("preHandler", async (req, reply) => {
     const url = req.raw.url ?? "";
     if (!url.startsWith("/api/")) return;
-    if (url.startsWith("/api/auth/") || url === "/api/health") return;
+    if (url.startsWith("/api/auth/") || url.startsWith("/api/android/") || url === "/api/health") return;
     const userId = parseSession(req);
     if (!userId) {
       reply.code(401).send({ error: "Not authenticated" });

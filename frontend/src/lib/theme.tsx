@@ -58,6 +58,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.querySelector('meta[name="theme-color"]')?.setAttribute("content", THEME_COLOR[theme]);
+    // The Android shell can't read meta theme-color — it paints the status/nav
+    // bar inset strips from its own container background, so push the value.
+    // Optional-chained: older installed APKs don't have this bridge method.
+    window.MacroTrackAndroid?.setThemeColor?.(THEME_COLOR[theme]);
   }, [theme]);
 
   function applyTheme(t: Theme) {

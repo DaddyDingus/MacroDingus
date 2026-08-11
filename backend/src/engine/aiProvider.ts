@@ -458,6 +458,16 @@ interface GenerateAiTextInput {
   maxTokens: number;
 }
 
+// Gemini and OpenAI charge a reasoning model's *thinking* tokens against the
+// same ceiling as its visible answer; Anthropic's max_tokens covers only the
+// reply. Passing a caller's prose budget straight through therefore starves the
+// answer rather than capping it — measured on gemini-3.6-flash, a 300-token
+// ceiling went 284 tokens on thinking and came back as a 6-word fragment with
+// finishReason=MAX_TOKENS, which the old code returned as a successful result.
+// Thinking on a short prose task measured ~3k tokens, so this is deliberately
+// generous. It's a ceiling, not a target: unused headroom costs nothing.
+const REASONING_TOKEN_ALLOWANCE = 4000;
+
 async function generateWithOpenAi(apiKey: string, model: string, task: AiTask, input: GenerateAiTextInput): Promise<string> {
   const content: Array<Record<string, unknown>> = (input.images ?? []).map((image) => ({
     type: "input_image",
@@ -467,7 +477,7 @@ async function generateWithOpenAi(apiKey: string, model: string, task: AiTask, i
   const body: Record<string, unknown> = {
     model,
     input: [{ role: "user", content }],
-    max_output_tokens: input.maxTokens,
+    max_output_tokens: input.maxTokens + REASONING_TOKEN_ALLOWANCE,
     store: false,
   };
   if (input.jsonSchema) {
@@ -510,7 +520,7 @@ async function generateWithGemini(apiKey: string, model: string, input: Generate
     inlineData: { mimeType: image.mediaType, data: image.buffer.toString("base64") },
   }));
   parts.push({ text: input.prompt });
-  const generationConfig: Record<string, unknown> = { maxOutputTokens: input.maxTokens };
+  const generationConfig: Record<string, unknown> = { maxOutputTokens: input.maxTokens + REASONING_TOKEN_ALLOWANCE };
   if (input.jsonSchema) {
     generationConfig.responseMimeType = "application/json";
     generationConfig.responseJsonSchema = input.jsonSchema;
@@ -538,9 +548,19 @@ async function generateWithGemini(apiKey: string, model: string, input: Generate
       ? (content as Record<string, unknown>).parts as unknown[]
       : [];
     for (const part of responseParts) {
-      if (part && typeof part === "object" && typeof (part as Record<string, unknown>).text === "string") {
+      if (!part || typeof part !== "object") continue;
+      // A reasoning model streams its thinking back in the same parts array,
+      // flagged `thought: true`. Taking the first part with any text at all can
+      // hand back the model's own scratchpad as the answer.
+      if ((part as Record<string, unknown>).thought === true) continue;
+      if (typeof (part as Record<string, unknown>).text === "string") {
         return ((part as Record<string, unknown>).text as string).trim();
       }
+    }
+    // Reached only when nothing usable came back. A truncated answer must fail
+    // loudly rather than surface as a successful (and silently cut off) result.
+    if ((candidate as Record<string, unknown>).finishReason === "MAX_TOKENS") {
+      throw new Error("Gemini hit its output limit before finishing a reply");
     }
   }
   throw new Error("No text returned by Gemini");

@@ -30,6 +30,74 @@ No lint script or test suite — don't invent one. Type-check with each package'
 
 **After any code change the user should be able to see: redeploy the live container** — `docker compose build && docker compose up -d`, then `docker ps` + `curl .../api/health`. Skipping this means the user's phone shows the old build regardless of how hard they refresh.
 
+## Web and Android workflow
+
+MacroTrack now has a signed Android WebView shell in `android/` that loads the
+same live app from `https://macrotrack.tail984e80.ts.net`. Ordinary frontend
+and backend work still ships through Docker and appears in the APK
+automatically; do not rebuild or ask the user to reinstall for web-only work.
+The existing refresh-app flow remains the stale-service-worker escape hatch.
+
+Any change under `android/` or to native capabilities requires all of these:
+
+1. Increment `versionCode` and `versionName` in
+   `android/app/build.gradle.kts`, and match them in backend
+   `ANDROID_RELEASE`.
+2. Build the signed APK with:
+   `cd android && JAVA_HOME=/home/daddydingus/.local/share/jdks/temurin-17 ANDROID_HOME=/home/daddydingus/Android/Sdk /home/daddydingus/.gradle/wrapper/dists/gradle-9.1.0-bin/9agqghryom9wkf8r80qlhnts3/gradle-9.1.0/bin/gradle clean assembleRelease`
+3. Rebuild/restart Docker, which publishes that artifact at
+   `/api/android/apk`, and verify `/api/android/version` plus its signature.
+4. End the user handoff with a clickable cache-busted link such as
+   `[Download MacroTrack vX.Y](https://macrotrack.tail984e80.ts.net/api/android/apk?v=X.Y)`.
+
+Also provide the current clickable link whenever the user asks for the APK,
+install/update link, or says they need to reinstall. State whether installing
+it is actually necessary. `android/macrotrack-release.jks` and
+`android/.signing-password` are ignored permanent secrets: back both up and
+never regenerate them, because every in-place Android update must use the same
+key.
+
+**WebView safe-area insets (2026-08-11)**: `WebView.setPadding()` does *not*
+inset Chromium's viewport — the value reads back correctly on the Java object
+while `window.innerHeight` stays at the full unpadded height and nothing moves
+on screen. The WebView must be wrapped in a `FrameLayout` and the *wrapper*
+padded, so ordinary Android layout shrinks the child's real bounds. Pad by
+exactly `bars.top` (systemBars ∪ displayCutout) with **no extra buffer**: that
+reproduces the installed PWA, where Chrome starts the viewport at the status
+bar bottom and the app's own CSS header padding supplies the visual gap — a
+buffer here is additive with that CSS and visibly overshoots. `env(safe-area-inset-top)`
+is `0px` in this WebView, so CSS cannot do this job. Also note the app renders
+edge-to-edge only because `onCreate` sets `setDecorFitsSystemWindows(false)` +
+`LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES`.
+
+**Barcode scanner camera constraints**: request `facingMode: { ideal: "environment" }`,
+never the bare string — Android WebView's Chromium resolves a bare value as
+mandatory and throws `OverconstrainedError` where desktop Chrome succeeds.
+`BarcodeScanner.tsx` falls back to `{ video: true }` (clearing any saved
+`deviceId`) on that error. The `<video>` also needs a blank data-URI `poster`,
+or WebView paints a large default media-placeholder glyph before first frame.
+A `NotReadableError: Could not start video source` is usually OS-level camera
+contention from a previous session, not a code bug — force-close the app first.
+But **a reproducible one on the session's *first* scan was ours** (fixed 1.7):
+only one `getUserMedia` may be in flight at a time. Recovering from a rejected
+lens pin used to `setDeviceId(null)` *and* start a fallback stream inline; the
+state change re-runs the effect, so two opens raced for one camera and one
+shared `<video>`. Drop the pin and `return` — the re-run owns the retry.
+
+**Media `deviceId`s do not survive an app restart.** Chromium salts them per
+browsing session and the WebView shell re-salts every launch, so a pinned lens
+is always rejected on first open. The saved preference therefore stores
+`{id, label}`; the label is stable hardware identity and re-pins the id after
+the fallback stream comes up (labels are blank until camera access is granted,
+so this can't happen earlier). One recovery attempt per mount — re-pinning
+restarts the stream and an unmatchable label would otherwise loop.
+
+**`navigator.vibrate()` in the WebView runs against the host app's Android
+permissions, not the browser's.** All keypad/check-in haptics were silently
+dead in the shell while still working in Chrome until `android.permission.VIBRATE`
+was declared (added 1.7). Any web API with an Android permission behind it needs
+the same check — a working PWA proves nothing about the APK.
+
 ## Architecture
 
 **Data model** (`backend/src/db/schema.ts`, Drizzle ORM + `better-sqlite3`): `users`, `foods` (shared), `recipes` + `recipe_ingredients`, `logs`, `weights`, `profiles`, `checkins`, `photos`, `goals`, `programs`, `program_days`, `favorites`. Key invariants:
@@ -55,6 +123,7 @@ Standalone Quick Add embeds `DecimalKeypad` in its own sheet instead of opening 
 - A logged day can be explicitly marked incomplete in `nutrition_day_statuses`. It remains visible in the diary but is excluded from adaptive TDEE, Energy Balance, and multi-day nutrition averages. Absence of a status row means an otherwise logged day is complete.
 - `performCheckin()` snapshots TDEE to `checkins`, falls back to Mifflin-St Jeor when < 2 weigh-ins or < 11 calorie days. Coached programs regenerate `program_days` on every check-in unless `distributionMode = 'custom'`. It also returns `targetChanges` (before/after calories/protein/carbs/fat, averaged over the 7 `program_days` rows — read *before* the regenerate overwrites them in place, since program_days isn't versioned) for `CheckInFlow`. Null when nothing regenerated (manual/hand-edited program) — that's "no change to show", not a change of zero, and the screen says so (and promotes the refreshed expenditure to its headline instead).
 - **`CheckInFlow.tsx`** (replaced `CheckInResultSheet`, 2026-08-10) owns the whole check-in as a full-screen overlay, mutation included, so Dashboard and Strategy only decide when to open it. Phases: orbit illustration held for a `MIN_WORKING_MS` floor (the API is normally faster — the floor sets the pace), the headline Calorie delta *dropped* onto the screen (`@keyframes checkin-drop`), then the detail. What's easy to break: per-keyframe `animation-timing-function` (ease-in falling, ease-out rising) + scale tracking height + a one-frame squash at each impact are jointly what make it read as a dropped object rather than a floaty slide, and translates are percentages of the number's own height (never `vh`) so the fall scales with the type. Keyframes animating `transform` override a `-translate-x-1/2` class outright — the impact line centers with a negative margin instead. Haptics are one `navigator.vibrate([0, …])` pattern, not timers, so the taps stay glued to the landings under jank; dropped along with the animation under reduced motion. Phase advance and the next phase's timer must live in *separate* effects, or the advance's own cleanup cancels the timer it just set. Accept/decline is real (2026-08-10): the screen opens on `POST /api/checkins/preview`, which runs `planCheckin()` — the whole computation with **no writes** — and Accept then re-runs it for real through `POST /api/checkins`. Keep `planCheckin()` side-effect-free; `performCheckin()` re-plans rather than accepting a plan over the wire, so a client can't dictate its own targets, and the two agree because generation is deterministic on the same data. The narrative is deliberately generated only on commit (it's a paid Claude call the preview never displays). **Decline is just `POST /api/checkins/ignore`** — the same silence-this-cycle mechanism as the Ignore buttons on Dashboard/Strategy, so there's no third "declined" state in the schema; closing with X/back is neither, leaving the check-in due and reminders on.
+- **Check-in narrative tone** (`engine/checkinNarrative.ts`): the original prompt banned all sentiment ("No encouragement, congratulations, praise"). Reversed on request 2026-08-11 — it reads as sterile — for a warm, plain-spoken voice that acknowledges a cycle that went well and is straight about one that didn't. **The rule that keeps it honest: code reaches the verdict, the model only phrases it.** `assessProgress()` classifies the cycle (on_track / faster / slower / wrong_direction / holding_steady / drifting / insufficient_data / no_goal) from the observed vs. target kg/week, and each verdict carries its own tone instruction. Handing a model both the numbers and permission to encourage gets praise for any week at all, which is the one thing a factual summary can't do. Bands are deliberately loose (±0.15 kg/wk, ratio 0.75–1.5) because the verdict drives the tone and a summary that flips between "nice work" and "this slipped" on EWMA noise reads as insincere. The kg/week figure is withheld below `MIN_VERDICT_DAYS` (5) — a 3-day cycle annualizes into a wild number the model would otherwise quote next to "not enough data to judge". Tone was pushed further the same day, in three steps, to a **"muscle mommy" girlfriend persona supplied verbatim by the user** (fiercely protective, slightly bossy, references lifting/protein, "babe"/"little guy"/"good boy", calls herself Mummy). Requested deliberately for their own single-household app — **don't sanitize it back toward neutral without asking.** The persona's "makes sure you eat your protein" is why `gatherAdaptiveTdeeInputs()` now also returns `dailyProtein` (same scan, same exclusions as calories — nothing in the TDEE engine reads it) and `planCheckin()` returns the average target protein: told to talk about protein with no protein in the Facts, the model simply invents a figure. The general rule — **give the persona real data for whatever it's bound to mention, or forbid it from mentioning it.** The verdict is what decides whether he's been good or bad, which is exactly why it stays in code: a "good boy" for a cycle that missed breaks the dynamic in the same way unearned praise broke the factual version. Guardrails this voice specifically needs, all load-bearing: consequences stay teasing and **unspecified**, and may never be made out of food, meals or eating less (a punitive nutrition app would be genuinely harmful); nothing explicit; no inventing shared life context ("I know that weekend threw you off" — it knows only the Facts block); and no inferring a day-to-day pattern from an average ("under target most days" — Claude did exactly this before the rule was added). Still banned: invented numbers, emoji, more than two exclamation marks. The blanket no-advice rule was relaxed to fit the persona — she may say "keep your protein up" / "keep logging", but must not invent targets or prescribe numbers the app hasn't set. Two voice-calibration examples carry the register across providers; they're marked as other weeks so their numbers aren't reused. The narrative needs goal + in-force target calories, so `planCheckin()` reads `program_days` *before* the accept path overwrites them in place.
 - **`MIN_CHECKIN_CYCLE_DAYS`** (`lib/checkinSchedule.ts`, 4): `nextCheckinDueDate()` starts its search for the chosen weekday that many days after the last check-in, not the next day. Inert in steady state (same weekday to same weekday is 7 days either way) — it exists solely for *changing* the check-in weekday, which re-aims the due date within the same week and used to be able to make a check-in due 1–2 days after the previous one (happened live 2026-08-10; the narrative it generated opened "Only 1 day has passed since the last check-in"). A cycle that short has no new data in it: the 21-day adaptive window and alpha-0.1 EWMA both return the previous answer, targets regenerate off nothing, and it burns a paid narrative call. 4 rather than 7 keeps every cycle inside 4–10 days; a 7-day floor would defer a day change by up to 13.
 - **"Ignore check-in"** (`profiles.checkinIgnoredForDate`, `POST /api/checkins/ignore`): silences only the *reminders* — Dashboard banner and BottomNav's attention dot both gate on `CoachStatus.checkinIgnored`. The Strategy screen deliberately does not: its card always keeps a working Check In button (that's the "changed my mind" path), it just drops the urgent/overdue styling. The stored value is the ignored cycle's due date (or `"initial"` pre-first-check-in), so it expires by itself — a completed check-in advances the due date, which re-arms reminders. Since the due date only moves by checking in, ignoring and never checking in stays quiet indefinitely, which is the point.
 - **Target resolution**: `lib/programTargets.ts`'s `targetsForDate()`. `lib/checkins.ts`'s `activeCheckinForDate()` is only for TDEE lookups.
@@ -129,7 +198,9 @@ The docked footer (quantity/keypad/Log Foods+Add) is a `shrink-0` flex sibling *
 
 **`foods.hiddenAt`**: "deleting" a food never removes the row if a log still references it — nutrition is computed live from `foods`, never snapshotted, so hard-deleting would corrupt logs. `DELETE /api/foods/:id` sets `hiddenAt` on FK conflict instead: resolvable by id, but filtered out of every browse/pick surface (`isNull(foods.hiddenAt)`). `ai_estimate` foods from Describe are hidden from creation, not just on delete. Any new browse/search query over foods needs this same filter.
 
-**AI providers, tasks, and keys** (`engine/aiProvider.ts`, `labelScan.ts`, `describeMeal.ts`): each account may save Anthropic, OpenAI, and/or Google Gemini keys from More → AI features, then independently select a provider and free-form model ID for label scans, meal descriptions, recipe imports, photo comparisons, and check-in summaries. Keys are files under `DATA_DIR/secrets/ai/<provider>`, never part of browser-readable settings or account exports; an account key overrides optional installation-wide `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY`. Legacy Anthropic keys under `DATA_DIR/secrets/anthropic` remain readable. Task assignments are non-secret `user_settings` data and do travel with account exports. Every AI engine resolves with the requesting `userId`. Defaults preserve the original behavior: label scanning uses Claude Haiku 4.5 and the other tasks use Sonnet 5. Structured tasks use a hand-written JSON Schema through the shared adapter; meal description matches household foods when confident or persists a hidden `source: 'ai_estimate'` fallback.
+**AI providers, tasks, and keys** (`engine/aiProvider.ts`, `labelScan.ts`, `describeMeal.ts`): each account may save Anthropic, OpenAI, and/or Google Gemini keys from More → AI features, then independently select a provider and free-form model ID for label scans, meal descriptions, recipe imports, photo comparisons, and check-in summaries. Keys are files under `DATA_DIR/secrets/ai/<provider>`, never part of browser-readable settings or account exports; an account key overrides optional installation-wide `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY`. Legacy Anthropic keys under `DATA_DIR/secrets/anthropic` remain readable. Task assignments are non-secret `user_settings` data and do travel with account exports. Every AI engine resolves with the requesting `userId`.
+
+**Reasoning models count thinking against the output ceiling** (found 2026-08-11): Gemini's `maxOutputTokens` and OpenAI's `max_output_tokens` cover the model's thinking *and* its reply, while Anthropic's `max_tokens` covers only the reply. Passing a caller's prose budget straight through starves the answer instead of capping it — `gemini-3.6-flash` spent 284 of a 300-token ceiling thinking and returned a 6-word fragment with `finishReason: MAX_TOKENS`, which the old code handed back as a *successful* narrative. Both non-Anthropic paths now add `REASONING_TOKEN_ALLOWANCE` (4000; measured ~3k thinking tokens for short prose) and Gemini throws on a MAX_TOKENS candidate rather than returning a truncated string. Gemini also streams its thinking back in the same `parts` array flagged `thought: true` — take the first *non-thought* text part, or the scratchpad becomes the answer. Only Gemini is verified (no OpenAI key on this install). Since the whole point of the fallback is "the primary silently ran dry", nothing surfaces which provider served a response — test a fallback by calling it directly, never by assuming the primary was used. Defaults preserve the original behavior: label scanning uses Claude Haiku 4.5 and the other tasks use Sonnet 5. Structured tasks use a hand-written JSON Schema through the shared adapter; meal description matches household foods when confident or persists a hidden `source: 'ai_estimate'` fallback.
 
 **Progress photos**: six UI poses: front/side/back relaxed and front/side/back flexed. The original stored values (`'front' | 'side' | 'back'`) intentionally mean relaxed so existing photos need no migration; flexed values use an `_flexed` suffix. `photos.pose` remains nullable — null means an older/uncategorized shot, still shown in history but excluded from pose comparison. No separate "latest photo by pose" endpoint: derived client-side from the already-fetched full `usePhotos()` list.
 New uploads keep a bounded 2560px working image for alignment, then render one fixed 1200×1600 lossless crop before the server's final metadata-stripping JPEG encode. Don't restore the old 0.4MB post-crop compression pass: it caused redundant JPEG loss and left comparison exports upscaling small crops.

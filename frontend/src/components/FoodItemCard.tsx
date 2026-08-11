@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { Trash2 } from "lucide-react";
+import { Trash2, Flame } from "lucide-react";
 import type { LogEntry } from "../api/types";
 import FoodIconAvatar from "./FoodIconAvatar";
 import RecipeIconStack from "./RecipeIconStack";
@@ -215,12 +215,17 @@ export default function FoodItemCard({
             {/* Macros before serving size (was serving size first) — the
                 three macros are what's actually being compared entry to
                 entry, so they lead; the gram weight is supporting detail. */}
-            <span className="block text-xs text-muted tabular leading-tight truncate -mt-0.5">
-              P{fmt(entry.nutrition.protein)} F{fmt(entry.nutrition.fat)} C{fmt(entry.nutrition.carbs)} ·{" "}
-              {fmt(entry.quantityGrams)} g
+            <span className="block text-xs tabular leading-tight truncate -mt-0.5">
+              <span className="text-protein">P</span>{fmt(entry.nutrition.protein)}{" "}
+              <span className="text-fat">F</span>{fmt(entry.nutrition.fat)}{" "}
+              <span className="text-carbs">C</span>{fmt(entry.nutrition.carbs)} <span className="text-muted">·{" "}
+              {fmt(entry.quantityGrams)} g</span>
             </span>
           </span>
-          <span className="tabular text-sm text-white shrink-0">{fmt(kcalToUnit(entry.nutrition.calories, energyUnit))}</span>
+          <span className="flex items-center gap-1 tabular text-sm shrink-0">
+            <Flame className="w-3.5 h-3.5 text-calories" strokeWidth={2.5} />
+            <span className="text-white">{fmt(kcalToUnit(entry.nutrition.calories, energyUnit))}</span>
+          </span>
         </button>
       </div>
     </div>

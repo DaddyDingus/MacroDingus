@@ -6,4 +6,7 @@ frontend/dist/
 backend/node_modules/
 backend/dist/
 backend/public/
+android/.gradle/
+android/.signing-password
+android/*.jks
 .git/

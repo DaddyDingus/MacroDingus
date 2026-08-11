@@ -266,6 +266,9 @@ export default function AddFoodSheet({
   // photo attach — that component's refs are scoped to itself, not reusable
   // here.
   const [recipeImportPhotoError, setRecipeImportPhotoError] = useState<string | null>(null);
+  const [recipePhotoDescription, setRecipePhotoDescription] = useState("");
+  const [recipePhotoFile, setRecipePhotoFile] = useState<File | null>(null);
+  const [recipePhotoPreviewUrl, setRecipePhotoPreviewUrl] = useState<string | null>(null);
   const recipePhotoCameraInputRef = useRef<HTMLInputElement>(null);
   const recipePhotoLibraryInputRef = useRef<HTMLInputElement>(null);
   const [recipePhotoSourcePickerOpen, setRecipePhotoSourcePickerOpen] = useState(false);
@@ -469,6 +472,10 @@ export default function AddFoodSheet({
     setRecipeImportUrlInput("");
     setRecipeImportError(null);
     setRecipeImportPhotoError(null);
+    setRecipePhotoDescription("");
+    setRecipePhotoFile(null);
+    if (recipePhotoPreviewUrl) URL.revokeObjectURL(recipePhotoPreviewUrl);
+    setRecipePhotoPreviewUrl(null);
     setRecipeImportInitial(null);
     setEditingRecipeId(null);
     setPendingRecipeAction(null);
@@ -834,7 +841,7 @@ export default function AddFoodSheet({
   // directly from the hidden file inputs' onChange, not a form submit.
   function submitRecipeImportPhoto(file: File) {
     setRecipeImportPhotoError(null);
-    importRecipePhoto.mutate(file, {
+    importRecipePhoto.mutate({ file, description: recipePhotoDescription }, {
       onSuccess: (result) => {
         setEditingRecipeId(null);
         setRecipeImportInitial({
@@ -1586,7 +1593,10 @@ export default function AddFoodSheet({
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   e.target.value = "";
-                  if (file) submitRecipeImportPhoto(file);
+                  if (file) {
+                    setRecipePhotoFile(file);
+                    setRecipePhotoPreviewUrl(URL.createObjectURL(file));
+                  }
                 }}
               />
               <input
@@ -1597,27 +1607,57 @@ export default function AddFoodSheet({
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   e.target.value = "";
-                  if (file) submitRecipeImportPhoto(file);
+                  if (file) {
+                    setRecipePhotoFile(file);
+                    setRecipePhotoPreviewUrl(URL.createObjectURL(file));
+                  }
                 }}
               />
-              <button
-                type="button"
-                onClick={() => setRecipePhotoSourcePickerOpen(true)}
-                disabled={importRecipePhoto.isPending}
-                className="w-full flex items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-line py-3.5 text-sm font-medium text-accent active:bg-white/5 disabled:opacity-60"
-              >
-                {importRecipePhoto.isPending ? (
-                  <>
-                    <Loader2 size={16} className="animate-spin" />
-                    Reading photo…
-                  </>
-                ) : (
-                  <>
-                    <Camera size={16} strokeWidth={2} />
-                    Add a photo
-                  </>
-                )}
-              </button>
+              
+              {recipePhotoPreviewUrl ? (
+                <div className="mb-4">
+                  <img src={recipePhotoPreviewUrl} alt="Recipe" className="w-full rounded-2xl object-cover h-48 mb-3" />
+                  <input
+                    type="text"
+                    placeholder="Optional description (e.g. 'all ingredients are raw')"
+                    value={recipePhotoDescription}
+                    onChange={(e) => setRecipePhotoDescription(e.target.value)}
+                    className="w-full rounded-2xl border-2 border-line bg-surface px-4 py-3.5 text-sm font-medium text-primary placeholder-tertiary focus:border-accent focus:outline-none mb-3"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRecipePhotoFile(null);
+                        setRecipePhotoPreviewUrl(null);
+                        setRecipePhotoDescription("");
+                      }}
+                      className="flex-1 py-3.5 rounded-xl bg-surface text-primary border border-line text-sm font-medium active:bg-line"
+                    >
+                      Retake
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => submitRecipeImportPhoto(recipePhotoFile!)}
+                      disabled={importRecipePhoto.isPending}
+                      className="flex-1 py-3.5 rounded-xl bg-accent text-base disabled:opacity-40 font-semibold flex items-center justify-center gap-2"
+                      style={{ color: "#0B1210" }}
+                    >
+                      {importRecipePhoto.isPending && <Loader2 size={16} strokeWidth={2.5} className="animate-spin" />}
+                      {importRecipePhoto.isPending ? "Reading…" : "Submit to AI"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setRecipePhotoSourcePickerOpen(true)}
+                  className="w-full flex items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-line py-3.5 text-sm font-medium text-accent active:bg-white/5"
+                >
+                  <Camera size={16} strokeWidth={2} />
+                  Add a photo
+                </button>
+              )}
               {recipeImportPhotoError && <p className="text-xs text-red-400 mt-2">{recipeImportPhotoError}</p>}
             </div>
           </div>

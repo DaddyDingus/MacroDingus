@@ -147,6 +147,9 @@ export function registerRecipeRoutes(app: FastifyInstance) {
     const data = await req.file();
     if (!data) return reply.code(400).send({ error: "No file uploaded" });
 
+    const descriptionField = data.fields.description as any;
+    const description = descriptionField?.value as string | undefined;
+
     const raw = await data.toBuffer();
     let jpeg: Buffer;
     try {
@@ -158,7 +161,7 @@ export function registerRecipeRoutes(app: FastifyInstance) {
     }
 
     try {
-      return await importRecipeFromPhoto(req.userId!, { buffer: jpeg, mediaType: "image/jpeg" });
+      return await importRecipeFromPhoto(req.userId!, { buffer: jpeg, mediaType: "image/jpeg" }, description);
     } catch (err) {
       req.log.error(err);
       reply.code(502);

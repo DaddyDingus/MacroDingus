@@ -121,7 +121,7 @@ export async function planCheckin(userId: string) {
     if (today < dueDate) return refuse({ error: "checkin_not_due", dueDate });
   }
 
-  const { weighIns, dailyCalories } = await gatherAdaptiveTdeeInputs(userId);
+  const { weighIns, dailyCalories, dailyProtein } = await gatherAdaptiveTdeeInputs(userId);
   if (weighIns.length === 0) return refuse({ error: "weight_required" });
 
   const trend = computeTrend(weighIns);
@@ -133,6 +133,17 @@ export async function planCheckin(userId: string) {
     ? (await db.select().from(goals).where(eq(goals.id, activeProgram.goalId)))[0] ?? null
     : null;
   const bodyFatPercent = await mostRecentBodyFatPercent(userId);
+
+  // Read before anything regenerates: program_days isn't versioned and the
+  // accept path overwrites these rows in place, so this is the only record of
+  // the targets that were actually in force during the cycle just gone — which
+  // is what the narrative compares logged intake against.
+  const currentDays = activeProgram
+    ? await db.select().from(programDays).where(eq(programDays.programId, activeProgram.id))
+    : [];
+  const currentTargets = currentDays.length > 0 ? averageDayTargets(currentDays) : null;
+  const currentTargetCalories = currentTargets?.calories ?? null;
+  const currentTargetProteinG = currentTargets?.proteinG ?? null;
 
   const adaptiveTdee = estimateAdaptiveTdee(weighIns, dailyCalories);
   const age = new Date().getFullYear() - profile.birthYear;
@@ -157,10 +168,6 @@ export async function planCheckin(userId: string) {
   } | null = null;
   if (activeProgram && activeProgram.style === "coached" && activeProgram.distributionMode !== "custom" && activeGoal) {
     {
-      // The targets as they stand. Once accepted the regenerate below
-      // overwrites them in place (program_days isn't versioned), so this read
-      // is the only record of what they were.
-      const previousDays = await db.select().from(programDays).where(eq(programDays.programId, activeProgram.id));
       const result = generateCoachedProgramDays({
         weighIns,
         dailyCalories,
@@ -189,8 +196,8 @@ export async function planCheckin(userId: string) {
         proteinBasisUsed: result.breakdown.proteinBasisUsed,
       };
 
-      if (previousDays.length > 0) {
-        const before = averageDayTargets(previousDays);
+      if (currentDays.length > 0) {
+        const before = averageDayTargets(currentDays);
         const after = averageDayTargets(result.days);
         targetChanges = {
           calories: { from: before.calories, to: after.calories },
@@ -212,6 +219,10 @@ export async function planCheckin(userId: string) {
     adaptiveTdee,
     regenerate,
     targetChanges,
+    activeGoal,
+    currentTargetCalories,
+    currentTargetProteinG,
+    dailyProtein,
   };
 }
 
@@ -221,7 +232,7 @@ export async function planCheckin(userId: string) {
 export async function performCheckin(userId: string) {
   const plan = await planCheckin(userId);
   if ("error" in plan) return plan;
-  const { profile, latestCheckin, today, dailyCalories, trendWeightKg, tdee, adaptiveTdee, regenerate, targetChanges } = plan;
+  const { profile, latestCheckin, today, dailyCalories, trendWeightKg, tdee, adaptiveTdee, regenerate, targetChanges, activeGoal, currentTargetCalories, currentTargetProteinG, dailyProtein } = plan;
 
   if (regenerate) {
     for (const day of regenerate.days) {
@@ -252,6 +263,8 @@ export async function performCheckin(userId: string) {
       const windowDays = latestCheckin ? Math.max(1, daysBetween(latestCheckin.date, today)) : 7;
       const inWindow = dailyCalories.filter((d) => d.date >= windowStart && d.date <= today);
       const avgCaloriesInWindow = inWindow.length > 0 ? inWindow.reduce((s, d) => s + d.calories, 0) / inWindow.length : null;
+      const proteinInWindow = dailyProtein.filter((d) => d.date >= windowStart && d.date <= today);
+      const avgProteinInWindow = proteinInWindow.length > 0 ? proteinInWindow.reduce((s, d) => s + d.protein, 0) / proteinInWindow.length : null;
       narrative = await generateCheckinNarrative(userId, {
         isFirstCheckin: latestCheckin == null,
         windowDays,
@@ -262,6 +275,10 @@ export async function performCheckin(userId: string) {
         previousTdee: latestCheckin?.tdee ?? null,
         usedAdaptiveTdee: adaptiveTdee !== null,
         avgCaloriesInWindow,
+        goal: activeGoal ? { goalType: activeGoal.goalType, targetRateKgPerWeek: activeGoal.targetRateKgPerWeek } : null,
+        targetCalories: currentTargetCalories,
+        avgProteinInWindow,
+        targetProteinG: currentTargetProteinG,
       });
     } catch (err) {
       console.error("checkin narrative generation failed:", err);

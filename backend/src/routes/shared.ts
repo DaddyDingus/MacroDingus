@@ -98,16 +98,24 @@ export async function gatherAdaptiveTdeeInputs(userId: string) {
   );
 
   const caloriesByDate = new Map<string, number>();
+  // Protein rides along on this same scan purely so the check-in narrative can
+  // talk about it — nothing in the TDEE engine reads it. Summed over the
+  // identical rows and exclusions as calories, so a day that counts for one
+  // counts for the other.
+  const proteinByDate = new Map<string, number>();
   for (const { log, food } of logRows) {
     if (incompleteDates.has(log.date)) continue;
-    const calories = scaleNutrition(food, log.quantityGrams).calories;
-    caloriesByDate.set(log.date, (caloriesByDate.get(log.date) ?? 0) + calories);
+    const scaled = scaleNutrition(food, log.quantityGrams);
+    caloriesByDate.set(log.date, (caloriesByDate.get(log.date) ?? 0) + scaled.calories);
+    proteinByDate.set(log.date, (proteinByDate.get(log.date) ?? 0) + scaled.protein);
   }
   const dailyCalories = [...caloriesByDate.entries()].map(([date, calories]) => ({ date, calories }));
+  const dailyProtein = [...proteinByDate.entries()].map(([date, protein]) => ({ date, protein }));
 
   return {
     weighIns: weighIns.map((w) => ({ date: w.date, weightKg: w.weightKg })),
     dailyCalories,
+    dailyProtein,
   };
 }
 

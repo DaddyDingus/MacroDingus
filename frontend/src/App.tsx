@@ -21,6 +21,7 @@ import {
   shouldRestoreDashboardScroll,
 } from "./lib/dashboardScroll";
 import { useRubberBandScroll } from "./hooks/useRubberBandScroll";
+import AndroidUpdatePrompt from "./components/AndroidUpdatePrompt";
 
 const OnboardingFlow = lazy(() => import("./screens/OnboardingFlow"));
 
@@ -71,6 +72,7 @@ export default function App() {
     return (
       <ThemeProvider>
         <LoginScreen />
+        <AndroidUpdatePrompt />
       </ThemeProvider>
     );
   }
@@ -87,6 +89,7 @@ export default function App() {
                     <AppRoutes />
                   </NavVisibilityProvider>
                 </BrowserRouter>
+                <AndroidUpdatePrompt />
               </ViewedDateProvider>
             </DashboardLayoutProvider>
           </ShortcutsProvider>
@@ -217,7 +220,7 @@ function AppRoutes() {
   if (needsOnboarding) {
     return (
       <Suspense fallback={null}>
-        <div key={location.key} className="page-enter">
+        <div key={location.key} data-rubber-band-surface className="page-enter min-h-dvh">
           <Routes>
             {/* Explicit escape hatch from the catch-all below: OnboardingFlow's
                 own hand-off navigates to /strategy/new-goal once a profile and
@@ -240,7 +243,7 @@ function AppRoutes() {
   return (
     <>
       <Suspense fallback={null}>
-        <div key={location.key} className="page-enter">
+        <div key={location.key} data-rubber-band-surface className="page-enter min-h-dvh">
           <Routes>
             <Route path="/" element={<DashboardScreen />} />
             <Route path="/log" element={<TodayScreen />} />

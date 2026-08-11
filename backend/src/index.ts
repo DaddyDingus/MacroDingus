@@ -27,6 +27,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 3000);
 const STATIC_DIR = path.join(__dirname, "..", "public");
 const DATA_DIR = process.env.DATA_DIR ?? path.join(__dirname, "..", "..", "data");
+const ANDROID_RELEASE = {
+  versionCode: 8,
+  versionName: "1.7",
+  downloadUrl: "/api/android/apk?v=1.7",
+};
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(path.join(DATA_DIR, "photos"), { recursive: true });
@@ -57,7 +62,7 @@ registerSettingsRoutes(app);
 registerCookwareRoutes(app);
 registerAdjustmentRoutes(app);
 
-app.register(fastifyStatic, {
+await app.register(fastifyStatic, {
   root: STATIC_DIR,
   index: "index.html",
   // The service worker script and the HTML/manifest that bootstrap it must
@@ -78,6 +83,19 @@ app.register(fastifyStatic, {
       reply.header("Cache-Control", "no-cache");
     }
   },
+});
+
+app.get("/api/android/version", async (_req, reply) => {
+  reply.header("cache-control", "no-store");
+  return ANDROID_RELEASE;
+});
+
+app.get("/api/android/apk", async (_req, reply) => {
+  reply.header("content-disposition", `attachment; filename="MacroTrack-v${ANDROID_RELEASE.versionName}.apk"`);
+  reply.header("cache-control", "no-store, no-cache, must-revalidate, private");
+  reply.header("pragma", "no-cache");
+  reply.header("expires", "0");
+  return reply.sendFile("macrotrack.apk");
 });
 
 app.get("/api/health", async () => ({ ok: true, time: new Date().toISOString() }));

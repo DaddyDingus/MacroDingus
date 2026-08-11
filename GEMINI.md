@@ -11,3 +11,7 @@ docker compose build && docker compose up -d
 ```
 
 then confirm with `docker ps` + a health check. Skipping this means the user's phone keeps showing the old build no matter how hard they refresh — indistinguishable from "the fix didn't work," which wastes further debugging attempts on both sides.
+
+For Android/APK work, follow `CLAUDE.md`'s **Web and Android workflow** in
+full, including version matching, signed build, deployment verification, and
+the clickable APK link in the user handoff.

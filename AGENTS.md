@@ -30,6 +30,33 @@ No lint script or test suite — don't invent one. Type-check with each package'
 
 **After any code change the user should be able to see: redeploy the live container** — `docker compose build && docker compose up -d`, then `docker ps` + `curl .../api/health`. Skipping this means the user's phone shows the old build regardless of how hard they refresh.
 
+## Web and Android workflow
+
+MacroTrack now has a signed Android WebView shell in `android/` that loads the
+same live app from `https://macrotrack.tail984e80.ts.net`. Ordinary frontend
+and backend work still ships through Docker and appears in the APK
+automatically; do not rebuild or ask the user to reinstall for web-only work.
+The existing refresh-app flow remains the stale-service-worker escape hatch.
+
+Any change under `android/` or to native capabilities requires all of these:
+
+1. Increment `versionCode` and `versionName` in
+   `android/app/build.gradle.kts`, and match them in backend
+   `ANDROID_RELEASE`.
+2. Build the signed APK with:
+   `cd android && JAVA_HOME=/home/daddydingus/.local/share/jdks/temurin-17 ANDROID_HOME=/home/daddydingus/Android/Sdk /home/daddydingus/.gradle/wrapper/dists/gradle-9.1.0-bin/9agqghryom9wkf8r80qlhnts3/gradle-9.1.0/bin/gradle clean assembleRelease`
+3. Rebuild/restart Docker, which publishes that artifact at
+   `/api/android/apk`, and verify `/api/android/version` plus its signature.
+4. End the user handoff with a clickable cache-busted link such as
+   `[Download MacroTrack vX.Y](https://macrotrack.tail984e80.ts.net/api/android/apk?v=X.Y)`.
+
+Also provide the current clickable link whenever the user asks for the APK,
+install/update link, or says they need to reinstall. State whether installing
+it is actually necessary. `android/macrotrack-release.jks` and
+`android/.signing-password` are ignored permanent secrets: back both up and
+never regenerate them, because every in-place Android update must use the same
+key.
+
 ## Architecture
 
 **Data model** (`backend/src/db/schema.ts`, Drizzle ORM + `better-sqlite3`): `users`, `foods` (shared), `recipes` + `recipe_ingredients`, `logs`, `weights`, `profiles`, `checkins`, `photos`, `goals`, `programs`, `program_days`, `favorites`. Key invariants:

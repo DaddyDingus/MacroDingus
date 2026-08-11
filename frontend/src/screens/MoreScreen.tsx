@@ -19,6 +19,7 @@ import CookwareSheet from "../components/CookwareSheet";
 import RestoreAccountDataSheet from "../components/RestoreAccountDataSheet";
 import { useExportAccountData, useRunServerBackup, useServerBackupStatus } from "../api/account";
 import { localDateString } from "../lib/date";
+import { ANDROID_UPDATE_CHECK_EVENT } from "../components/AndroidUpdatePrompt";
 
 const ENERGY_UNITS: EnergyUnit[] = ["kcal", "kj"];
 const WEIGHT_UNITS: WeightUnit[] = ["kg", "lb"];
@@ -363,6 +364,22 @@ export default function MoreScreen() {
             <p className="px-4 pb-2.5 text-xs text-protein">That backup action did not finish. Try again.</p>
           )}
         </section>
+
+        {window.MacroTrackAndroid?.getVersionName && (
+          <section className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new Event(ANDROID_UPDATE_CHECK_EVENT))}
+              className="w-full flex items-center justify-between px-4 py-2.5 text-left active:bg-surface-raised"
+            >
+              <span className="flex items-center gap-2 text-sm">
+                <Download size={14} strokeWidth={2} className="text-muted" />
+                Check for app update
+              </span>
+              <span className="text-xs text-muted">v{window.MacroTrackAndroid.getVersionName()}</span>
+            </button>
+          </section>
+        )}
 
         <section className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
           <button

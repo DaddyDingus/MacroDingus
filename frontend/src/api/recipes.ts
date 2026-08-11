@@ -81,9 +81,12 @@ export function useImportRecipeUrl() {
 export function useImportRecipePhoto() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (file: File | Blob) => {
+    mutationFn: (params: { file: File | Blob; description?: string }) => {
       const form = new FormData();
-      form.append("file", file, "recipe.jpg");
+      if (params.description) {
+        form.append("description", params.description);
+      }
+      form.append("file", params.file, "recipe.jpg");
       return apiFetch<ImportedRecipeResult>("/recipes/import-photo", { method: "POST", body: form });
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["foods"] }),

@@ -32,6 +32,30 @@ const MAX_USEFUL_FOCUS_METERS = 1; // capability "max" is often a meaningless hu
 
 const LENS_STORAGE_KEY = "macrotrack.barcodeCameraDeviceId";
 
+// The saved lens carries its label as well as its deviceId, because a deviceId
+// alone does not survive an app restart: Chromium salts media device ids per
+// browsing session, and the Android WebView shell re-salts on every launch. The
+// label ("camera2 0, facing back") is stable hardware identity, so it's what
+// actually restores the preference — see the recovery step in the start effect.
+type LensPref = { id: string; label: string };
+
+function readLensPref(): LensPref | null {
+  const raw = localStorage.getItem(LENS_STORAGE_KEY);
+  if (!raw) return null;
+  // Values written before labels were stored are a bare deviceId string.
+  if (!raw.startsWith("{")) return { id: raw, label: "" };
+  try {
+    const parsed = JSON.parse(raw) as Partial<LensPref>;
+    return parsed?.id ? { id: parsed.id, label: parsed.label ?? "" } : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLensPref(pref: LensPref) {
+  localStorage.setItem(LENS_STORAGE_KEY, JSON.stringify(pref));
+}
+
 // Maps a tap's on-screen (client) coordinates to a normalized [0,1] point in the
 // video *frame's* own coordinate space, accounting for object-fit: cover cropping
 // (the displayed video is scaled up and cropped to fill its container, so a naive
@@ -71,7 +95,9 @@ export default function BarcodeScanner({
   const [focusRange, setFocusRange] = useState<{ min: number; max: number; step: number } | null>(null);
   const [focusDistance, setFocusDistance] = useState(0.1);
   const [tapMarker, setTapMarker] = useState<{ x: number; y: number } | null>(null);
-  const [deviceId, setDeviceId] = useState<string | null>(() => localStorage.getItem(LENS_STORAGE_KEY));
+  const [deviceId, setDeviceId] = useState<string | null>(() => readLensPref()?.id ?? null);
+  const lensLabelRef = useRef(readLensPref()?.label ?? "");
+  const lensRecoveryDoneRef = useRef(false);
   const [lensOptions, setLensOptions] = useState<MediaDeviceInfo[]>([]);
   const [torchAvailable, setTorchAvailable] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
@@ -99,6 +125,7 @@ export default function BarcodeScanner({
     setFocusRange(null);
     trackRef.current = null;
     scannerControlsRef.current = null;
+    setError(null);
     setTorchAvailable(false);
     setTorchOn(false);
     setTorchBusy(false);
@@ -108,82 +135,135 @@ export default function BarcodeScanner({
     // Otherwise leave lens choice to the browser/OS — on multi-lens phones this
     // frequently lands on the ultra-wide, which the zoom heuristic below tries to
     // correct for on this first, undirected attempt only.
+    // facingMode is wrapped in `ideal` rather than passed as a bare value: some
+    // WebView/Chromium builds resolve a bare ConstrainDOMString as an exact
+    // requirement, and throw OverconstrainedError when the device's camera(s)
+    // don't report facingMode metadata at all (confirmed on a Galaxy S24+ inside
+    // the Android WebView shell, where this reliably worked in Chrome itself).
     const videoConstraints: ExtendedConstraints = deviceId
       ? { deviceId: { exact: deviceId } }
-      : { facingMode: "environment" };
+      : { facingMode: { ideal: "environment" } };
 
-    reader
-      .decodeFromConstraints({ video: videoConstraints }, videoRef.current!, (result) => {
-        if (result && !stopped) {
-          stopped = true;
-          controls?.stop();
-          onScanRef.current(result.getText());
-        }
-      })
-      .then(async (c) => {
-        controls = c;
-        if (cancelled) {
-          controls.stop();
+    async function start(constraints: ExtendedConstraints | true, isFallback: boolean) {
+      let c: IScannerControls;
+      try {
+        c = await reader.decodeFromConstraints({ video: constraints }, videoRef.current!, (result) => {
+          if (result && !stopped) {
+            stopped = true;
+            controls?.stop();
+            onScanRef.current(result.getText());
+          }
+        });
+      } catch (err) {
+        const name = err instanceof Error ? err.name : "";
+        // A pinned deviceId this session can't open. Drop the pin and let the
+        // effect re-run (deps: [deviceId]) own the retry — returning here is
+        // load-bearing. Starting the fallback inline *as well* left two
+        // getUserMedia calls racing for the same camera, and Android fails
+        // whichever loses with NotReadableError ("Could not start video
+        // source"), on top of both readers sharing one <video> element. That
+        // was the reliable error on the session's first scan, because a lens
+        // saved in a previous app launch is always rejected (see below).
+        // The saved preference is deliberately NOT cleared here: the label
+        // recovery further down is what re-pins it to this session's id.
+        if (!isFallback && deviceId && (name === "OverconstrainedError" || name === "NotFoundError" || name === "NotReadableError")) {
+          setDeviceId(null);
           return;
         }
-        scannerControlsRef.current = c;
-        setTorchAvailable(typeof c.switchTorch === "function");
-
-        const stream = videoRef.current?.srcObject as MediaStream | undefined;
-        const track = stream?.getVideoTracks()[0];
-        if (!track || typeof track.getCapabilities !== "function") return;
-        trackRef.current = track;
-
-        let caps: ExtendedCapabilities;
-        try {
-          caps = track.getCapabilities() as ExtendedCapabilities;
-        } catch {
-          caps = {} as ExtendedCapabilities;
+        if (!isFallback && !deviceId && name === "OverconstrainedError") {
+          // No pin to drop — loosen to "any camera" rather than leaving the
+          // scanner permanently broken.
+          if (!cancelled) start(true, true);
+          return;
         }
+        const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+        setError(`Couldn't access the camera. Check camera permission for this site. (${detail})`);
+        return;
+      }
 
-        const advanced: Array<Record<string, unknown>> = [];
+      controls = c;
+      if (cancelled) {
+        controls.stop();
+        return;
+      }
+      scannerControlsRef.current = c;
+      setTorchAvailable(typeof c.switchTorch === "function");
 
-        if (caps.focusMode?.includes("continuous")) {
-          advanced.push({ focusMode: "continuous" });
-        } else if (caps.focusMode?.includes("manual") && caps.focusDistance) {
-          const range = {
-            min: caps.focusDistance.min,
-            max: Math.min(caps.focusDistance.max, MAX_USEFUL_FOCUS_METERS),
-            step: caps.focusDistance.step || 0.01,
-          };
-          const initial = Math.min(Math.max(0.1, range.min), range.max);
-          setFocusRange(range);
-          setFocusDistance(initial);
-          advanced.push({ focusMode: "manual", focusDistance: initial });
+      const stream = videoRef.current?.srcObject as MediaStream | undefined;
+      const track = stream?.getVideoTracks()[0];
+      if (!track || typeof track.getCapabilities !== "function") return;
+      trackRef.current = track;
+
+      let caps: ExtendedCapabilities;
+      try {
+        caps = track.getCapabilities() as ExtendedCapabilities;
+      } catch {
+        caps = {} as ExtendedCapabilities;
+      }
+
+      const advanced: Array<Record<string, unknown>> = [];
+
+      if (caps.focusMode?.includes("continuous")) {
+        advanced.push({ focusMode: "continuous" });
+      } else if (caps.focusMode?.includes("manual") && caps.focusDistance) {
+        const range = {
+          min: caps.focusDistance.min,
+          max: Math.min(caps.focusDistance.max, MAX_USEFUL_FOCUS_METERS),
+          step: caps.focusDistance.step || 0.01,
+        };
+        const initial = Math.min(Math.max(0.1, range.min), range.max);
+        setFocusRange(range);
+        setFocusDistance(initial);
+        advanced.push({ focusMode: "manual", focusDistance: initial });
+      }
+
+      // Samsung's fused multi-camera "environment" stream reports a zoom
+      // capability starting below 1x when the ultra-wide is in the blend
+      // (only meaningful pre-fix, i.e. no deviceId pin yet). Nudging zoom up
+      // to 1x tends to hand the stream to the main lens instead, which has
+      // real autofocus for close-range barcode reading.
+      if (!deviceId && caps.zoom && caps.zoom.min < 1) {
+        const zoomTarget = Math.min(Math.max(1, caps.zoom.min), caps.zoom.max);
+        advanced.push({ zoom: zoomTarget });
+      }
+
+      if (advanced.length > 0) {
+        track.applyConstraints({ advanced } as MediaTrackConstraints).catch(() => {});
+      }
+
+      if (cancelled) return;
+      try {
+        const all = await navigator.mediaDevices.enumerateDevices();
+        const videoInputs = all.filter((d) => d.kind === "videoinput");
+        const backish = videoInputs.filter((d) => /back|rear/i.test(d.label));
+        const options = backish.length > 1 ? backish : videoInputs;
+        setLensOptions(options);
+
+        // Restore a saved lens whose deviceId this session re-salted away. It
+        // can only happen here: labels are blank until camera access has been
+        // granted, so the ids are unmatchable before a stream exists. The ref
+        // guard keeps this to one attempt per mount — re-pinning restarts the
+        // stream, and a label that never matches must not loop.
+        const wantedLabel = lensLabelRef.current;
+        if (!deviceId && wantedLabel && !lensRecoveryDoneRef.current) {
+          lensRecoveryDoneRef.current = true;
+          const match = options.find((d) => d.label === wantedLabel);
+          if (!match) {
+            localStorage.removeItem(LENS_STORAGE_KEY);
+            lensLabelRef.current = "";
+          } else {
+            writeLensPref({ id: match.deviceId, label: match.label });
+            if (!cancelled && match.deviceId !== trackRef.current?.getSettings().deviceId) {
+              setDeviceId(match.deviceId);
+            }
+          }
         }
+      } catch {
+        // enumerateDevices failing just means no manual switch button — non-fatal.
+      }
+    }
 
-        // Samsung's fused multi-camera "environment" stream reports a zoom
-        // capability starting below 1x when the ultra-wide is in the blend
-        // (only meaningful pre-fix, i.e. no deviceId pin yet). Nudging zoom up
-        // to 1x tends to hand the stream to the main lens instead, which has
-        // real autofocus for close-range barcode reading.
-        if (!deviceId && caps.zoom && caps.zoom.min < 1) {
-          const zoomTarget = Math.min(Math.max(1, caps.zoom.min), caps.zoom.max);
-          advanced.push({ zoom: zoomTarget });
-        }
-
-        if (advanced.length > 0) {
-          track.applyConstraints({ advanced } as MediaTrackConstraints).catch(() => {});
-        }
-
-        if (cancelled) return;
-        try {
-          const all = await navigator.mediaDevices.enumerateDevices();
-          const videoInputs = all.filter((d) => d.kind === "videoinput");
-          const backish = videoInputs.filter((d) => /back|rear/i.test(d.label));
-          setLensOptions(backish.length > 1 ? backish : videoInputs);
-        } catch {
-          // enumerateDevices failing just means no manual switch button — non-fatal.
-        }
-      })
-      .catch(() => {
-        setError("Couldn't access the camera. Check camera permission for this site.");
-      });
+    start(videoConstraints, false);
 
     return () => {
       cancelled = true;
@@ -197,7 +277,10 @@ export default function BarcodeScanner({
     const currentId = trackRef.current?.getSettings().deviceId ?? deviceId;
     const idx = lensOptions.findIndex((d) => d.deviceId === currentId);
     const next = lensOptions[(idx + 1) % lensOptions.length];
-    localStorage.setItem(LENS_STORAGE_KEY, next.deviceId);
+    writeLensPref({ id: next.deviceId, label: next.label });
+    lensLabelRef.current = next.label;
+    // An explicit choice supersedes any pending label recovery for this mount.
+    lensRecoveryDoneRef.current = true;
     setDeviceId(next.deviceId);
   }
 
@@ -254,7 +337,17 @@ export default function BarcodeScanner({
   return (
     <div className="fixed inset-0 z-[60] bg-black overflow-hidden">
       <div className="absolute inset-0" onClick={handleTap}>
-        <video ref={videoRef} className="absolute inset-0 w-full h-full object-cover" muted playsInline />
+        {/* poster: Android WebView (unlike desktop Chrome) renders a large default
+            media placeholder icon before the stream's first frame paints. A blank
+            poster suppresses it instead of showing that scaled-up play glyph. */}
+        <video
+          ref={videoRef}
+          className="absolute inset-0 w-full h-full object-cover"
+          muted
+          playsInline
+          autoPlay
+          poster="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
+        />
 
         {/* The surrounding shadow quiets the preview outside the useful scan
             region without putting an opaque panel over the live camera. */}

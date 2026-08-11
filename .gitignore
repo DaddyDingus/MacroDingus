@@ -10,3 +10,7 @@ data/photos/*
 !data/photos/.gitkeep
 .env
 tailscale-state/
+android/.gradle/
+android/app/build/
+android/.signing-password
+android/*.jks

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronLeft, ChevronRight, CookingPot, Pencil, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, CookingPot, Pencil, Plus, Flame } from "lucide-react";
 import type { Food } from "../api/types";
 import { scaleNutrition, sumNutrition } from "../lib/nutrition";
 import { localDateString } from "../lib/date";
@@ -274,7 +274,28 @@ export default function RecipeForm({
                   className="flex items-center gap-3 min-w-0 flex-1 text-left active:opacity-70"
                 >
                   <FoodIconAvatar name={ing.food.name} icon={ing.food.icon} className="w-8 h-8" />
-                  <span className="text-sm text-white truncate min-w-0">{ing.food.name}</span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-sm text-white leading-tight truncate">{ing.food.name}</span>
+                    {(() => {
+                      const scaled = scaleNutrition(ing.food, ing.quantityGrams);
+                      return (
+                        <span className="block text-xs tabular leading-tight truncate -mt-0.5">
+                          <span className="text-protein">P</span>{Math.round(scaled.protein)}{" "}
+                          <span className="text-fat">F</span>{Math.round(scaled.fat)}{" "}
+                          <span className="text-carbs">C</span>{Math.round(scaled.carbs)}
+                        </span>
+                      );
+                    })()}
+                  </span>
+                  {(() => {
+                    const scaled = scaleNutrition(ing.food, ing.quantityGrams);
+                    return (
+                      <span className="flex items-center gap-1 tabular text-sm shrink-0">
+                        <Flame className="w-3.5 h-3.5 text-calories" strokeWidth={2.5} />
+                        <span className="text-white">{Math.round(kcalToUnit(scaled.calories, energyUnit))}</span>
+                      </span>
+                    );
+                  })()}
                 </button>
                 <div className="flex items-center gap-1.5 shrink-0">
                   <DecimalInput

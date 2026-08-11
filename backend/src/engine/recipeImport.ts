@@ -210,9 +210,10 @@ If this page doesn't actually contain a recipe, return an empty ingredients arra
 // Same schema/output contract as the URL prompt above — the only difference
 // is the source material and the "no recipe found" failure mode (a blank/
 // irrelevant photo rather than a non-recipe page).
-function buildPhotoPrompt(candidates: { id: string; name: string; brand: string | null }[]): string {
+function buildPhotoPrompt(candidates: { id: string; name: string; brand: string | null }[], description?: string): string {
   const candidateLines = candidates.map((c) => `${c.id} :: ${c.name}${c.brand ? ` (${c.brand})` : ""}`).join("\n");
-  return `This photo shows a handwritten or printed list of recipe ingredients and their amounts — someone jotted down what went into a dish (e.g. on a notepad, whiteboard, or recipe card), possibly with amounts in weight (g/kg), volume (cups/tbsp/tsp/mL), or count ("2 onions"). It may or may not state a dish name or number of servings.
+  const descriptionText = description ? `\n\nThe user provided this additional context about the recipe: "${description}". Please take this into account when extracting the ingredients and their states.` : "";
+  return `This photo shows a handwritten or printed list of recipe ingredients and their amounts — someone jotted down what went into a dish (e.g. on a notepad, whiteboard, or recipe card), possibly with amounts in weight (g/kg), volume (cups/tbsp/tsp/mL), or count ("2 onions"). It may or may not state a dish name or number of servings.${descriptionText}
 
 Extract it into structured data: a name (invent a short, reasonable one from the ingredients if none is written), how many servings it makes (assume 4 if not stated), and its full ingredient list. Convert every ingredient's amount into grams using standard cooking conversions and your own best judgment (e.g. "1 medium onion" ≈ 150g, "1 cup all-purpose flour" ≈ 120g) — quantityGrams must always be a real gram amount, never left as a volume/count. Set totalWeightGrams only if the photo itself states the dish's finished/cooked weight; otherwise null.
 
@@ -307,11 +308,11 @@ export async function importRecipeFromUrl(userId: string, url: string): Promise<
   );
 }
 
-export async function importRecipeFromPhoto(userId: string, image: AiImageInput): Promise<ImportedRecipe> {
+export async function importRecipeFromPhoto(userId: string, image: AiImageInput, description?: string): Promise<ImportedRecipe> {
   const candidates = await fetchCandidateFoods();
 
   const responseText = await generateAiText(userId, "recipePhotoImport", {
-    prompt: buildPhotoPrompt(candidates),
+    prompt: buildPhotoPrompt(candidates, description),
     images: [image],
     maxTokens: 4096,
     jsonSchema: RECIPE_JSON_SCHEMA,

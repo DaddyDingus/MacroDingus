@@ -37,6 +37,10 @@ export default defineConfig({
         // method-unsafe caching layer underneath it.
         globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
         navigateFallback: "/index.html",
+        // Downloads and API calls must reach Fastify. Without this denylist,
+        // an installed PWA can treat a top-level APK link as client-side
+        // navigation and return index.html instead of the package.
+        navigateFallbackDenylist: [/^\/api\//, /\.apk$/i],
       },
     }),
   ],
