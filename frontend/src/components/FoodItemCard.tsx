@@ -196,7 +196,7 @@ export default function FoodItemCard({
         // border on a genuinely rounded box does, so the selected-state
         // border looked cut off right at the corner even though the fill
         // behind it clipped fine.
-        className={`relative flex items-center gap-2.5 px-3 py-2 border ${dragX === 0 ? "rounded-2xl" : "rounded-l-2xl"} ${
+        className={`relative flex items-center gap-2.5 px-3 py-1.5 border ${dragX === 0 ? "rounded-2xl" : "rounded-l-2xl"} ${
           selected ? "bg-accent/[0.12] border-accent/25" : "bg-dashboardCard border-transparent"
         }`}
       >
@@ -215,7 +215,7 @@ export default function FoodItemCard({
             {/* Macros before serving size (was serving size first) — the
                 three macros are what's actually being compared entry to
                 entry, so they lead; the gram weight is supporting detail. */}
-            <span className="block text-xs tabular leading-tight truncate -mt-0.5 text-white/70">
+            <span className="block text-xs tabular leading-tight truncate -mt-0.5 text-white/80">
               <span className="text-protein">P</span>{fmt(entry.nutrition.protein)}{" "}
               <span className="text-fat">F</span>{fmt(entry.nutrition.fat)}{" "}
               <span className="text-carbs">C</span>{fmt(entry.nutrition.carbs)} <span className="text-muted">·{" "}

@@ -95,7 +95,7 @@ const TimeBlockGroup = memo(function TimeBlockGroup({
       }`}
     >
       <div className="flex items-center gap-2">
-        <div className="shrink-0 min-w-0 flex items-center gap-2.5 text-[10px] text-muted tabular bg-white/5 rounded-full px-2.5 py-1.5">
+        <div className="shrink-0 min-w-0 flex items-center gap-2.5 text-xs text-muted tabular bg-white/5 rounded-full px-2.5 py-1.5">
           {/* Letter-prefix (P119, not 119P) to match MacroSummaryBar's own
               convention above — this pill and the sticky header used to
               disagree with each other on which side of the number the
@@ -111,15 +111,15 @@ const TimeBlockGroup = memo(function TimeBlockGroup({
           </span>
           <span className="shrink-0">
             <span className="text-protein">P</span>
-            <span className="text-white/70">{fmt(totals.protein)}</span>
+            <span className="text-white/80">{fmt(totals.protein)}</span>
           </span>
           <span className="shrink-0">
             <span className="text-fat">F</span>
-            <span className="text-white/70">{fmt(totals.fat)}</span>
+            <span className="text-white/80">{fmt(totals.fat)}</span>
           </span>
           <span className="shrink-0">
             <span className="text-carbs">C</span>
-            <span className="text-white/70">{fmt(totals.carbs)}</span>
+            <span className="text-white/80">{fmt(totals.carbs)}</span>
           </span>
         </div>
         <div className="flex-1" />
@@ -190,7 +190,7 @@ const TimeBlockGroup = memo(function TimeBlockGroup({
                   overlap. */}
               {!anySelected && (
                 <span
-                  className="absolute top-1/2 -translate-y-1/2 w-[54px] py-0.5 text-center text-[8px] text-muted tabular pointer-events-none bg-dashboardBg"
+                  className="absolute top-1/2 -translate-y-1/2 w-[54px] py-0.5 text-center text-[10px] text-white/60 tabular pointer-events-none bg-dashboardBg"
                   style={{ right: "-56px" }}
                 >
                   {formatLogTimeShort(entry.loggedAt)}

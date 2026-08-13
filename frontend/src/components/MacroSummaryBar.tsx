@@ -132,7 +132,7 @@ function MacroPage({
                 {fmt(displayValue, decimals)}
               </span>
               {targets && (
-                <span className="text-[9px] text-muted">
+                <span className="text-[10px] text-white/60">
                   {mode === "consumed" ? `/${fmt(displayTarget, decimals)}` : over ? "over" : "left"}
                 </span>
               )}
