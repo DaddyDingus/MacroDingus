@@ -149,7 +149,7 @@ const TimeBlockGroup = memo(function TimeBlockGroup({
           type="button"
           onClick={() => onSelectGroup(entries)}
           aria-label="Select this time group"
-          className="relative z-10 shrink-0 w-[54px] flex items-center justify-center -my-1 py-1"
+          className="relative z-10 shrink-0 w-[46px] flex items-center justify-center -my-1 py-1"
         >
           <span
             className={`text-[9px] font-semibold whitespace-nowrap rounded-full px-2 py-1 transition-all ${
@@ -160,7 +160,7 @@ const TimeBlockGroup = memo(function TimeBlockGroup({
           </span>
         </button>
       </div>
-      <div className="space-y-1 mt-1.5 pr-14">
+      <div className="space-y-1 mt-1.5 pr-12">
         {entries.map((entry, idx) => {
           const isChecked = selectedMask[idx] === "1";
           return (
@@ -190,8 +190,8 @@ const TimeBlockGroup = memo(function TimeBlockGroup({
                   overlap. */}
               {!anySelected && (
                 <span
-                  className="absolute top-1/2 -translate-y-1/2 w-[54px] py-0.5 text-center text-[10px] text-white/60 tabular pointer-events-none bg-dashboardBg"
-                  style={{ right: "-56px" }}
+                  className="absolute top-1/2 -translate-y-1/2 w-[46px] py-0.5 text-center text-[10px] text-white/60 tabular pointer-events-none bg-dashboardBg"
+                  style={{ right: "-48px" }}
                 >
                   {formatLogTimeShort(entry.loggedAt)}
                 </span>
@@ -201,7 +201,7 @@ const TimeBlockGroup = memo(function TimeBlockGroup({
                   type="button"
                   onClick={() => onSelectEntry(entry)}
                   className="absolute top-1/2 -translate-y-1/2 flex items-center justify-center"
-                  style={{ right: "-29px", transform: "translate(50%, -50%)" }}
+                  style={{ right: "-25px", transform: "translate(50%, -50%)" }}
                   aria-label={isChecked ? "Deselect this food" : "Select this food"}
                 >
                   {isChecked ? (

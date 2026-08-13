@@ -285,7 +285,7 @@ export default function TodayScreen() {
           viewport tall, and this surface no longer needs to cover the
           header's own height on top of that. */}
       <div data-rubber-band-surface className="pb-40 bg-dashboardBg">
-      <main className="px-4 pt-3 max-w-md mx-auto">
+      <main className="pl-4 pr-2 pt-3 max-w-md mx-auto">
         {dayLog.data?.incomplete && (
           <div className="mb-3 rounded-xl border border-fat/30 bg-fat/10 px-3 py-2.5">
             <p className="text-xs font-medium text-fat">Incomplete food log</p>
@@ -313,7 +313,7 @@ export default function TodayScreen() {
             {/* TimeBlockGroup's dot is w-2 (8px) flush to this container's right edge, so its
                 center sits 4px in from the edge. This 1px-wide line must start 0.5px further
                 out (right: 3.5px) so its own center lands on that same 4px point. */}
-            <div className="absolute top-2 bottom-2 w-px bg-dashboardDivider" style={{ right: "27px" }} />
+            <div className="absolute top-2 bottom-2 w-px bg-dashboardDivider" style={{ right: "23px" }} />
             <div className="space-y-6">
               {groups.map((group, i) => {
                 // A string, not a filtered array: unaffected groups get the
