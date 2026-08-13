@@ -1,9 +1,7 @@
 import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useDayLog } from "../api/logs";
-import { usePrograms } from "../api/programs";
-import { useAdjustment } from "../api/adjustments";
-import { targetsForDate, applyAdjustment } from "../lib/programTargets";
+import { useResolvedTargets } from "../lib/useResolvedTargets";
 import { useEffectiveLogDate } from "../lib/viewedDate";
 import type { ShortcutId } from "../lib/shortcuts";
 import AddFoodSheet from "./AddFoodSheet";
@@ -29,8 +27,18 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
   const location = useLocation();
   const date = useEffectiveLogDate();
   const dayLog = useDayLog(date);
-  const programs = usePrograms();
-  const adjustment = useAdjustment(date);
+  // Same "whichever program was active on the viewed date" lookup TodayScreen
+  // uses, so the sheet's header badges match what the Food log screen itself
+  // would show for this date — including a Carry Forward Shortfall boost or an
+  // event-plan delta, or a plate opened via the FAB/Dashboard shortcuts (this
+  // flow) reverts to the un-adjusted target that TodayScreen's own
+  // AddFoodSheet instance doesn't show.
+  //
+  // Stays ABOVE this component's `action === "photos"` early return: hooks
+  // below a conditional return change the hook count when the condition flips
+  // on an already-mounted instance, which throws and (no error boundary
+  // anywhere in this app) blanks the whole tree.
+  const resolved = useResolvedTargets(date);
   const step = action === "logWeight"
     ? "logWeight"
     : action === "copyDay"
@@ -73,16 +81,8 @@ export default function QuickActionFlow({ action, onClose }: { action: ShortcutI
     onClose();
   }
 
-  // Same "whichever program was active on the viewed date" lookup
-  // TodayScreen uses, so the sheet's header badges match what the Food log
-  // screen itself would show for this date — including any Carry Forward
-  // Shortfall adjustment, or a plate opened via the FAB/Dashboard shortcuts
-  // (this flow) would revert to the un-boosted target that TodayScreen's own
-  // AddFoodSheet instance doesn't show.
-  const dayTargets = targetsForDate(programs.data ?? [], date);
-  const adjustedTargets = dayTargets ? applyAdjustment(dayTargets, adjustment.data) : null;
-  const targets = adjustedTargets
-    ? { calories: adjustedTargets.calories, proteinG: adjustedTargets.proteinG, fatG: adjustedTargets.fatG, carbsG: adjustedTargets.carbsG }
+  const targets = resolved.targets
+    ? { calories: resolved.targets.calories, proteinG: resolved.targets.proteinG, fatG: resolved.targets.fatG, carbsG: resolved.targets.carbsG }
     : null;
 
   // Leaf flows that already own a full-screen backdrop+panel.

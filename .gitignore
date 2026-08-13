@@ -6,6 +6,7 @@ data/*.sqlite
 data/*.sqlite-*
 data/backups/
 data/.cookie-secret
+data/.revoked-sessions.json
 data/photos/*
 !data/photos/.gitkeep
 .env

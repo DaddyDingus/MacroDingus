@@ -36,10 +36,11 @@ import java.io.File
 
 class MainActivity : ComponentActivity() {
     companion object {
-        private const val APP_ORIGIN = "https://macrotrack.tail984e80.ts.net"
+        private const val APP_ORIGIN = "https://macrodaddy.tail984e80.ts.net"
+        private const val AUTHENTIK_HOST = "auth.tail984e80.ts.net"
         private const val UPDATE_PREFS = "native_updates"
         private const val UPDATE_DOWNLOAD_ID = "download_id"
-        private const val UPDATE_APK_PATH = "updates/MacroTrack-update.apk"
+        private const val UPDATE_APK_PATH = "updates/MacroDaddy-update.apk"
         private const val APK_MIME = "application/vnd.android.package-archive"
     }
 
@@ -117,7 +118,8 @@ class MainActivity : ComponentActivity() {
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     val uri = request.url
-                    if (uri.scheme == "https" && uri.host == Uri.parse(APP_ORIGIN).host) return false
+                    val trustedHost = uri.host == Uri.parse(APP_ORIGIN).host || uri.host == AUTHENTIK_HOST
+                    if (uri.scheme == "https" && trustedHost) return false
                     startActivity(Intent(Intent.ACTION_VIEW, uri))
                     return true
                 }
@@ -249,7 +251,7 @@ class MainActivity : ComponentActivity() {
         File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), UPDATE_APK_PATH).delete()
 
         val request = DownloadManager.Request(uri)
-            .setTitle("MacroTrack update")
+            .setTitle("MacroDaddy update")
             .setDescription("Downloading the latest app version")
             .setMimeType(APK_MIME)
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
@@ -259,7 +261,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         saveUpdateDownloadId(id)
-        android.widget.Toast.makeText(this, "Downloading MacroTrack update…", android.widget.Toast.LENGTH_LONG).show()
+        android.widget.Toast.makeText(this, "Downloading MacroDaddy update…", android.widget.Toast.LENGTH_LONG).show()
     }
 
     private fun installDownloadedUpdate(id: Long) {

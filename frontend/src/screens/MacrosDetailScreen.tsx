@@ -6,6 +6,7 @@ import { useChartGesture } from "../hooks/useChartGesture";
 import { RANGE_PRESETS } from "../lib/chartLayout";
 import MacroHistoryChart, { MacroHistoryChartLegend } from "../components/MacroHistoryChart";
 import ChartCard from "../components/ChartCard";
+import MonthSection from "../components/MonthSection";
 import { staggerStyle } from "../lib/stagger";
 
 const PROTEIN = "#EF8D6A";
@@ -145,11 +146,13 @@ export default function MacrosDetailScreen() {
 
         {monthGroupsDesc.length > 0 && (
           <div className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(2, 60, 5)}>
-            {monthGroupsDesc.map((g) => (
-              <div key={g.key}>
-                <div className="px-4 py-2 border-t border-line bg-surface-raised first:border-t-0">
-                  <span className="text-xs text-muted">{g.label}</span>
-                </div>
+            {monthGroupsDesc.map((g, gi) => (
+              <MonthSection
+                key={g.key}
+                label={g.label}
+                summary={`${g.entries.length} ${g.entries.length === 1 ? "day" : "days"}`}
+                defaultOpen={gi === 0}
+              >
                 {g.entries.map((d) => (
                   <button
                     key={d.date}
@@ -170,7 +173,7 @@ export default function MacrosDetailScreen() {
                     </div>
                   </button>
                 ))}
-              </div>
+              </MonthSection>
             ))}
           </div>
         )}

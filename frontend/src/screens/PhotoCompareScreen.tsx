@@ -163,7 +163,7 @@ export default function PhotoCompareScreen() {
       }
 
       const blob = await canvasToBlob(canvas);
-      downloadBlob(blob, `macrotrack-${activePose}-progress.png`);
+      downloadBlob(blob, `macrodaddy-${activePose}-progress.png`);
     } catch (err) {
       console.error("Progress collage export failed:", err);
       setExportError("Could not export progress collage.");

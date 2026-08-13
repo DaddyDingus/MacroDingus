@@ -16,6 +16,7 @@ import ChartCard from "../components/ChartCard";
 import EnergyBalanceChart, { EnergyBalanceChartLegend } from "../components/EnergyBalanceChart";
 import MiniLineSpark from "../components/MiniLineSpark";
 import ChangeDirectionIcon from "../components/ChangeDirectionIcon";
+import MonthSection from "../components/MonthSection";
 import { staggerStyle } from "../lib/stagger";
 
 const CHANGE_WINDOWS = [3, 7, 14, 30, 90];
@@ -221,11 +222,13 @@ export default function EnergyBalanceDetailScreen() {
               <span className="text-xs text-accent">{showHistory ? "Hide" : "Show"}</span>
             </button>
             {showHistory &&
-              monthGroupsDesc.map((g) => (
-                <div key={g.key}>
-                  <div className="px-4 py-2 border-t border-line bg-surface-raised">
-                    <span className="text-xs text-muted">{g.label}</span>
-                  </div>
+              monthGroupsDesc.map((g, gi) => (
+                <MonthSection
+                  key={g.key}
+                  label={g.label}
+                  summary={`${g.entries.length} ${g.entries.length === 1 ? "day" : "days"}`}
+                  defaultOpen={gi === 0}
+                >
                   {g.entries.map((p) => {
                     const dir = changeDirection(p.balance, BALANCE_EPSILON);
                     return (
@@ -243,7 +246,7 @@ export default function EnergyBalanceDetailScreen() {
                       </div>
                     );
                   })}
-                </div>
+                </MonthSection>
               ))}
           </div>
         )}

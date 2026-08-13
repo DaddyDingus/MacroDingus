@@ -196,7 +196,7 @@ export function registerAccountRoutes(app: FastifyInstance, dataDir: string) {
 
   app.post("/api/account/import", { bodyLimit: 25 * 1024 * 1024 }, async (req, reply) => {
     const parsed = accountImportSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "That isn't a compatible macrotrack export" });
+    if (!parsed.success) return reply.code(400).send({ error: "That isn't a compatible MacroDaddy export" });
     try {
       // Always leave a recoverable server snapshot immediately before the
       // destructive replace, independent of the daily schedule.
@@ -225,7 +225,8 @@ export function registerAccountRoutes(app: FastifyInstance, dataDir: string) {
     }
 
     await db.update(users).set({ name }).where(eq(users.id, userId));
-    return { ok: true, user: { id: userId, name } };
+    const [user] = await db.select({ role: users.role }).from(users).where(eq(users.id, userId));
+    return { ok: true, user: { id: userId, name, role: user?.role === "admin" ? "admin" : "member" } };
   });
 
   app.patch("/api/account/password", async (req, reply) => {

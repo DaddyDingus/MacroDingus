@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Check, Palette, Ruler, CalendarDays, UtensilsCrossed, CookingPot, Camera, ChevronDown, ChevronRight, AlertTriangle, LogOut, User, KeyRound, Activity, Sparkles, Download, Upload, Database, RefreshCw } from "lucide-react";
+import { Check, Palette, Ruler, CalendarDays, UtensilsCrossed, CookingPot, Camera, ChevronDown, ChevronRight, AlertTriangle, LogOut, User, KeyRound, Activity, Sparkles, Download, Upload, Database, RefreshCw, ShieldCheck, Share2, Globe2, Smartphone } from "lucide-react";
 import { useRecipes } from "../api/recipes";
 import { useAuthStatus, useLogout } from "../api/auth";
 import { useCoachStatus, useSaveProfile } from "../api/coach";
@@ -57,10 +57,12 @@ export default function MoreScreen() {
   const [showCookwareSheet, setShowCookwareSheet] = useState(false);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [sharedLink, setSharedLink] = useState<"pwa" | "apk" | null>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
 
   let block = 0;
   const name = authStatus.data?.user?.name ?? "";
+  const isAdmin = authStatus.data?.user?.role === "admin";
   const initial = name.trim().charAt(0).toUpperCase() || "?";
   const profile = coachStatus.data?.profile ?? null;
   const selectedTheme = THEME_CATALOG.find((t) => t.id === theme)!;
@@ -75,13 +77,33 @@ export default function MoreScreen() {
         const url = URL.createObjectURL(blob);
         const anchor = document.createElement("a");
         anchor.href = url;
-        anchor.download = `macrotrack-export-${localDateString()}.json`;
+        anchor.download = `macrodaddy-export-${localDateString()}.json`;
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
         window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
       },
     });
+  }
+
+  async function shareApp(kind: "pwa" | "apk") {
+    const canonicalOrigin = "https://macrodaddy.tail984e80.ts.net";
+    const url = kind === "apk" ? `${canonicalOrigin}/api/android/apk` : `${canonicalOrigin}/`;
+    const title = kind === "apk" ? "MacroDaddy for Android" : "MacroDaddy";
+    try {
+      if (navigator.share) {
+        await navigator.share({ title, text: kind === "apk" ? "Download the MacroDaddy Android app" : "Open MacroDaddy", url });
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      setSharedLink(kind);
+      window.setTimeout(() => setSharedLink((current) => current === kind ? null : current), 2_000);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      await navigator.clipboard.writeText(url);
+      setSharedLink(kind);
+      window.setTimeout(() => setSharedLink((current) => current === kind ? null : current), 2_000);
+    }
   }
 
   return (
@@ -110,7 +132,10 @@ export default function MoreScreen() {
             </span>
             <div className="min-w-0 flex-1">
               <p className="text-base font-semibold truncate">{name || "—"}</p>
-              <p className="text-xs text-muted mt-0.5">Signed in</p>
+              <p className="text-xs text-muted mt-0.5 flex items-center gap-1.5">
+                {isAdmin && <ShieldCheck size={12} className="text-accent" />}
+                {isAdmin ? "Administrator account" : "Member account"}
+              </p>
             </div>
             <button
               onClick={() => logout.mutate()}
@@ -217,6 +242,39 @@ export default function MoreScreen() {
             <ChevronRight size={16} strokeWidth={2.5} className="text-muted shrink-0" />
           </button>
         </section>
+
+        {isAdmin && (
+          <section className="tile-enter border border-accent/25 bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
+            <SectionHeader icon={<Share2 size={15} strokeWidth={2} className="text-accent" />} label="Invite & share" />
+            <div className="px-4 py-3 border-b border-line/60">
+              <p className="text-xs text-muted leading-relaxed">
+                Add a person in Authentik, then send either link. Their first sign-in creates a separate MacroDaddy account.
+              </p>
+            </div>
+            {([
+              { kind: "pwa" as const, label: "Progressive web app", detail: "Open or install in a browser", icon: Globe2 },
+              { kind: "apk" as const, label: "Android app", detail: "Download the latest APK", icon: Smartphone },
+            ]).map(({ kind, label, detail, icon: Icon }) => (
+              <div key={kind} className="px-4 py-2.5 flex items-center gap-3 border-b border-line/60 last:border-b-0">
+                <span className="w-9 h-9 shrink-0 rounded-xl bg-accent/10 text-accent flex items-center justify-center">
+                  <Icon size={17} strokeWidth={2} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm">{label}</span>
+                  <span className="block text-xs text-muted">{detail}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void shareApp(kind)}
+                  className="min-h-10 shrink-0 flex items-center gap-1.5 text-xs font-medium text-accent px-3 rounded-full border border-accent/25 bg-accent/5 active:scale-95 transition-all duration-200"
+                >
+                  {sharedLink === kind ? <Check size={13} /> : <Share2 size={13} />}
+                  {sharedLink === kind ? "Copied" : "Share"}
+                </button>
+              </div>
+            ))}
+          </section>
+        )}
 
         {profile && (
           <section className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>

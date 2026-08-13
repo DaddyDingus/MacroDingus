@@ -105,10 +105,11 @@ export default function NutrientStatusBar({
   // row's height constant from the first paint means there's nothing left to
   // correct later.
   return (
-    <div className="flex flex-col items-center gap-1 min-w-0">
+    <div className="flex flex-col items-center gap-1 min-w-0 pointer-events-none">
       {/* One "Remaining today" label for the whole row instead of repeating
-          "left" on every pill — same information, said once. */}
-      <p className="text-[9px] tracking-widest uppercase text-white/40">Remaining Today</p>
+          "left" on every pill — same information, said once. The modal's
+          X/back/time row occupies its own slot above this one. */}
+      <p className="h-[11px] text-[9px] leading-[11px] tracking-widest uppercase text-white/40">Remaining Today</p>
       {/* grid grid-cols-4, not the flex+gap row this used to be — flex sized
           each column to its own label's rendered width, so protein/fat/carbs
           (short labels like "44P") ended up with visibly stubby bars next to

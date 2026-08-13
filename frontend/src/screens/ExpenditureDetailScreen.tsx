@@ -9,6 +9,7 @@ import { changeDirection, changeDirectionLabel } from "../lib/changeIndicator";
 import ExpenditureChartCard from "../components/ExpenditureChartCard";
 import MiniLineSpark from "../components/MiniLineSpark";
 import ChangeDirectionIcon from "../components/ChangeDirectionIcon";
+import MonthSection from "../components/MonthSection";
 import StatTile from "../components/StatTile";
 import { staggerStyle } from "../lib/stagger";
 
@@ -299,11 +300,13 @@ export default function ExpenditureDetailScreen() {
               <span className="text-xs text-accent">{showHistory ? "Hide" : "Show"}</span>
             </button>
             {showHistory &&
-              monthGroupsDesc.map((g) => (
-                <div key={g.key}>
-                  <div className="px-4 py-2 border-t border-line bg-surface-raised">
-                    <span className="text-xs text-muted">{g.label}</span>
-                  </div>
+              monthGroupsDesc.map((g, gi) => (
+                <MonthSection
+                  key={g.key}
+                  label={g.label}
+                  summary={`${g.entries.length} ${g.entries.length === 1 ? "day" : "days"}`}
+                  defaultOpen={gi === 0}
+                >
                   {g.entries.map((p) => {
                     const dir = changeDirection(p.delta, EXPENDITURE_CHANGE_EPSILON);
                     return (
@@ -323,7 +326,7 @@ export default function ExpenditureDetailScreen() {
                       </div>
                     );
                   })}
-                </div>
+                </MonthSection>
               ))}
           </div>
         )}

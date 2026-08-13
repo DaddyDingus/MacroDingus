@@ -142,7 +142,7 @@ export default function DashboardScreen() {
           // pill hard against the top of the viewport. The transform below
           // moves it -18px→+4px across the pull, so this is the floor for all
           // three states, not just the refreshing one.
-          top: "calc(env(safe-area-inset-top) + 28px)",
+          top: "env(safe-area-inset-top)",
           opacity: refreshing || pullProgress > 0.05 ? 1 : 0,
           transform: `translate(-50%, ${refreshing ? 0 : -18 + pullProgress * 22}px) scale(${0.9 + pullProgress * 0.1})`,
           transition: pullProgress === 0 || refreshing ? "opacity 160ms ease, transform 160ms ease" : "none",

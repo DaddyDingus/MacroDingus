@@ -30,6 +30,16 @@ type ExtendedConstraints = MediaTrackConstraints & { advanced?: Array<Record<str
 
 const MAX_USEFUL_FOCUS_METERS = 1; // capability "max" is often a meaningless huge sentinel value
 
+// Without explicit dimensions Chromium/WebView is free to choose any camera
+// stream size, and Android has been observed selecting a visibly soft preview.
+// These are ideals rather than exact/minimum requirements so older devices can
+// still open the scanner at their best supported resolution.
+const SCANNER_VIDEO_QUALITY: ExtendedConstraints = {
+  width: { ideal: 1920 },
+  height: { ideal: 1080 },
+  frameRate: { ideal: 30, max: 30 },
+};
+
 const LENS_STORAGE_KEY = "macrotrack.barcodeCameraDeviceId";
 
 // The saved lens carries its label as well as its deviceId, because a deviceId
@@ -104,10 +114,31 @@ export default function BarcodeScanner({
   const [torchBusy, setTorchBusy] = useState(false);
   const [torchError, setTorchError] = useState<string | null>(null);
   const [showFocusHint, setShowFocusHint] = useState(true);
+  const [cameraSession, setCameraSession] = useState(0);
 
   useEffect(() => {
     const id = window.setTimeout(() => setShowFocusHint(false), 2400);
     return () => window.clearTimeout(id);
+  }, []);
+
+  // Android WebView can leave a camera track alive-but-frozen after the app
+  // is backgrounded. Release it as soon as the page becomes hidden, then
+  // create a fresh stream when the app is visible again. Restarting the same
+  // track with play() is insufficient on affected devices because Chromium
+  // still considers that stalled track live.
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState === "hidden") {
+        scannerControlsRef.current?.stop();
+        scannerControlsRef.current = null;
+        trackRef.current = null;
+        return;
+      }
+      setCameraSession((session) => session + 1);
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, []);
 
   // Deps: [deviceId]. Re-runs (tearing down and restarting the stream) when the
@@ -141,8 +172,8 @@ export default function BarcodeScanner({
     // don't report facingMode metadata at all (confirmed on a Galaxy S24+ inside
     // the Android WebView shell, where this reliably worked in Chrome itself).
     const videoConstraints: ExtendedConstraints = deviceId
-      ? { deviceId: { exact: deviceId } }
-      : { facingMode: { ideal: "environment" } };
+      ? { ...SCANNER_VIDEO_QUALITY, deviceId: { exact: deviceId } }
+      : { ...SCANNER_VIDEO_QUALITY, facingMode: { ideal: "environment" } };
 
     async function start(constraints: ExtendedConstraints | true, isFallback: boolean) {
       let c: IScannerControls;
@@ -193,6 +224,15 @@ export default function BarcodeScanner({
       const track = stream?.getVideoTracks()[0];
       if (!track || typeof track.getCapabilities !== "function") return;
       trackRef.current = track;
+
+      // Report the granted size rather than assuming WebView honoured the ideal
+      // request. This makes device-specific quality problems diagnosable via
+      // Chrome's WebView inspector without adding scanner UI for normal users.
+      const settings = track.getSettings();
+      console.info(
+        `[barcode-camera] ${settings.width ?? "?"}x${settings.height ?? "?"}` +
+          (settings.frameRate ? ` @ ${Math.round(settings.frameRate)}fps` : ""),
+      );
 
       let caps: ExtendedCapabilities;
       try {
@@ -270,7 +310,7 @@ export default function BarcodeScanner({
       if (scannerControlsRef.current === controls) scannerControlsRef.current = null;
       controls?.stop();
     };
-  }, [deviceId]);
+  }, [deviceId, cameraSession]);
 
   function handleSwitchLens() {
     if (lensOptions.length < 2) return;

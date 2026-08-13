@@ -279,7 +279,7 @@ export default function RecipeForm({
                     {(() => {
                       const scaled = scaleNutrition(ing.food, ing.quantityGrams);
                       return (
-                        <span className="block text-xs tabular leading-tight truncate -mt-0.5">
+                        <span className="block text-xs tabular leading-tight truncate -mt-0.5 text-white/70">
                           <span className="text-protein">P</span>{Math.round(scaled.protein)}{" "}
                           <span className="text-fat">F</span>{Math.round(scaled.fat)}{" "}
                           <span className="text-carbs">C</span>{Math.round(scaled.carbs)}

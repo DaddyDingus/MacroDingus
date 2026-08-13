@@ -111,15 +111,15 @@ const TimeBlockGroup = memo(function TimeBlockGroup({
           </span>
           <span className="shrink-0">
             <span className="text-protein">P</span>
-            <span className="text-white">{fmt(totals.protein)}</span>
+            <span className="text-white/70">{fmt(totals.protein)}</span>
           </span>
           <span className="shrink-0">
             <span className="text-fat">F</span>
-            <span className="text-white">{fmt(totals.fat)}</span>
+            <span className="text-white/70">{fmt(totals.fat)}</span>
           </span>
           <span className="shrink-0">
             <span className="text-carbs">C</span>
-            <span className="text-white">{fmt(totals.carbs)}</span>
+            <span className="text-white/70">{fmt(totals.carbs)}</span>
           </span>
         </div>
         <div className="flex-1" />

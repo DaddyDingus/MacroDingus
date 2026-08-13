@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { Pencil, Copy, Move, Clock, ChefHat, Trash2, ChevronLeft, X, type LucideIcon } from "lucide-react";
 import type { LogEntry } from "../api/types";
 import { useCopyLogEntries, useMoveLogEntries, useDeleteLogEntries } from "../api/logs";
@@ -146,10 +147,10 @@ export default function LogActionBar({
     );
   }
 
-  return (
+  return createPortal(
     <>
       <div
-        className={`fixed inset-x-0 z-30 transition-transform duration-200 ease-out ${
+        className={`fixed inset-x-0 z-[35] transition-transform duration-200 ease-out ${
           show ? "translate-y-0" : "translate-y-full pointer-events-none"
         }`}
         style={{ bottom: navHeight }}
@@ -298,6 +299,7 @@ export default function LogActionBar({
           isPending={deleteEntries.isPending}
         />
       )}
-    </>
+    </>,
+    document.body,
   );
 }

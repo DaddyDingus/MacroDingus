@@ -14,7 +14,7 @@
     <application
         android:allowBackup="false"
         android:icon="@drawable/macrotrack_icon"
-        android:label="MacroTrack"
+        android:label="MacroDaddy"
         android:roundIcon="@drawable/macrotrack_icon"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">

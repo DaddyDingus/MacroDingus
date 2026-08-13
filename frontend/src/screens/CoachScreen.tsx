@@ -12,6 +12,11 @@ import LogWeightFirstSheet from "../components/LogWeightFirstSheet";
 import WeeklyProgramGrid from "../components/WeeklyProgramGrid";
 import BasicProfileForm from "../components/BasicProfileForm";
 import ConfirmDeleteSheet from "../components/ConfirmDeleteSheet";
+import EventPlanSheet from "../components/EventPlanSheet";
+import EventPlanDetailSheet from "../components/EventPlanDetailSheet";
+import { useEventPlans, type EventPlan } from "../api/eventPlans";
+import { planTitle } from "../lib/eventPlanCopy";
+import { useEnergyUnit, formatEnergy } from "../lib/energyUnit";
 import { staggerStyle } from "../lib/stagger";
 
 function formatDate(dateStr: string): string {
@@ -114,6 +119,10 @@ export default function CoachScreen() {
   const [pendingDeleteGoalId, setPendingDeleteGoalId] = useState<string | null>(null);
   const [narrativeExpanded, setNarrativeExpanded] = useState(false);
   const [weightPromptOpen, setWeightPromptOpen] = useState(false);
+  const [eventPlanOpen, setEventPlanOpen] = useState(false);
+  const [openPlan, setOpenPlan] = useState<EventPlan | null>(null);
+  const eventPlans = useEventPlans();
+  const { unit: energyUnit } = useEnergyUnit();
 
   if (status.isLoading) return null;
 
@@ -310,6 +319,53 @@ export default function CoachScreen() {
           </div>
         ) : null}
 
+        {/* Big days. Deliberately below the program: a plan is a temporary
+            shuffle of the program's own targets, never a replacement for it,
+            and it only makes sense once one exists. */}
+        {activeProgram && (
+          <div className="tile-enter border border-line bg-surface rounded-2xl p-4 space-y-3" style={staggerStyle(block++, 60, 5)}>
+            <div>
+              <p className="text-sm font-semibold">Big Days</p>
+              <p className="text-xs text-muted mt-0.5">
+                Shift Calories around a heavy day so the week still lands on target.
+              </p>
+            </div>
+            {(eventPlans.data ?? []).length > 0 && (
+              <div className="rounded-xl bg-dashboardCard divide-y divide-line/60">
+                {(eventPlans.data ?? []).map((plan) => {
+                  const offset = plan.days
+                    .filter((d) => d.date !== plan.eventDate)
+                    .reduce((sum, d) => sum + Math.abs(d.kcalDelta), 0);
+                  return (
+                    <button
+                      key={plan.id}
+                      onClick={() => setOpenPlan(plan)}
+                      className="w-full flex items-center justify-between px-3.5 py-2.5 text-left active:opacity-80"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm text-white truncate">{planTitle(plan)}</p>
+                        <p className="text-[11px] text-muted mt-0.5">
+                          {formatDate(plan.eventDate)}
+                        </p>
+                      </div>
+                      <span className="tabular text-xs text-muted shrink-0 ml-3">
+                        {formatEnergy(offset, energyUnit)} spread
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <div className="flex gap-2 pt-1">
+              <Pill
+                icon={<Plus className="w-3.5 h-3.5" strokeWidth={2} />}
+                label="Plan a Big Day"
+                onClick={() => setEventPlanOpen(true)}
+              />
+            </div>
+          </div>
+        )}
+
         {activeGoal && (
           <div className="tile-enter border border-line bg-surface rounded-2xl p-4 space-y-3" style={staggerStyle(block++, 60, 5)}>
             <div>
@@ -390,6 +446,15 @@ export default function CoachScreen() {
       {/* Owns the whole check-in — running it, landing the headline number,
           and reporting what moved. This screen only decides when to open it. */}
       {checkInOpen && <CheckInFlow onClose={() => setCheckInOpen(false)} />}
+      {eventPlanOpen && <EventPlanSheet onClose={() => setEventPlanOpen(false)} />}
+      {openPlan && (
+        <EventPlanDetailSheet
+          // Re-read from the list so edits/settles re-render this sheet
+          // instead of showing the snapshot captured when it was tapped.
+          plan={(eventPlans.data ?? []).find((p) => p.id === openPlan.id) ?? openPlan}
+          onClose={() => setOpenPlan(null)}
+        />
+      )}
       {weightPromptOpen && (
         <LogWeightFirstSheet onClose={() => setWeightPromptOpen(false)} onContinue={() => navigate("/strategy/new-goal")} />
       )}

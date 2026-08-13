@@ -51,7 +51,7 @@ export default function AndroidUpdatePrompt() {
             setRelease(available);
           }
         } else if (manual) {
-          window.alert(`MacroTrack ${installed} is up to date.`);
+          window.alert(`MacroDaddy ${installed} is up to date.`);
         }
       } catch {
         if (manual) window.alert("Couldn't check for an app update.");
@@ -83,7 +83,7 @@ export default function AndroidUpdatePrompt() {
           <Download size={17} strokeWidth={2.4} />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold">MacroTrack {release.versionName} is available</p>
+          <p className="text-sm font-semibold">MacroDaddy {release.versionName} is available</p>
           <p className="mt-0.5 text-xs leading-relaxed text-muted">Download it here, then Android will ask you to confirm the update.</p>
           <button
             type="button"

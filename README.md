@@ -1,8 +1,21 @@
-# macrotrack
+# MacroDaddy
 
-macrotrack is a self-hosted nutrition, weight, coaching, recipe, measurement,
+MacroDaddy is a self-hosted nutrition, weight, coaching, recipe, measurement,
 and progress-photo PWA intended for a person or small household. The backend
 uses SQLite and serves the built React frontend from the same container.
+
+## Production deployment
+
+- Canonical app: `https://macrodaddy.tail984e80.ts.net/`
+- Shared Authentik: `https://auth.tail984e80.ts.net/`
+- Authentik application/client: `macrodaddy`
+- Current Android release: `1.9` (`versionCode` 10)
+- The old `macrotrack.tail984e80.ts.net` routes remain temporarily available for installed-client compatibility.
+
+The Android package ID, signing certificate, Java namespace, database filename,
+export format, storage keys, and Docker service retain their historical
+`macrotrack` identifiers. They are compatibility contracts, not visible
+branding, and must not be renamed during the user-facing MacroDaddy migration.
 
 This is personal software, not a hosted service. Review the security and
 privacy notes below before exposing an installation to anyone else.
@@ -37,7 +50,8 @@ docker network create proxy
    docker exec macrotrack node -e "fetch('http://127.0.0.1:3000/api/health').then(r => r.text()).then(console.log)"
    ```
 
-4. Open the Tailscale HTTPS address and create the first account.
+4. Configure an Authentik OIDC provider and open the Tailscale HTTPS address.
+   Authentik users receive an isolated MacroDaddy account on first sign-in.
 
 The compose file expects the included Tailscale sidecar. If you already use a
 different HTTPS reverse proxy, remove that service and point your proxy at the
@@ -71,16 +85,20 @@ fetches the supplied webpage, and food/barcode search contacts OpenFoodFacts.
 
 ## Access and account model
 
-Network access is the primary security boundary. Anyone who can reach the app
-can use the self-service signup screen; there is no administrator approval,
-email identity, public-internet hardening, or login rate limiting. Restrict the
-Tailscale node with appropriate sharing/ACL rules. Do not publish this app
-directly on the open internet as-is.
+Authentication uses Authentik through OIDC Authorization Code + PKCE. Each
+Authentik UUID is linked to exactly one internal user ID; a new Authentik user
+receives a new account on first sign-in. Local password signup/login is disabled
+whenever `OIDC_ISSUER` is configured. Keep Authentik registration closed and
+create or disable family identities centrally.
 
 Foods are shared between accounts on one installation. Logs, weights,
 profiles, goals, programs, check-ins, measurements, recipes, photos, settings,
 and AI keys are account-scoped except where the code explicitly documents a
 shared food-library relationship.
+
+The included server backup covers the whole SQLite database and the companion
+photo tree. This is a disaster-recovery snapshot for the installation, while
+the restored rows and photo paths remain isolated by internal user ID.
 
 ## Optional integrations
 
@@ -95,15 +113,17 @@ one kg value per household date, and passes them to the signed-in web layer.
 No Health Connect permission or health data leaves the phone until the user
 explicitly grants it and initiates sync.
 
-Weight relay syncing is disabled unless both of these values are configured:
+Weight relay syncing is disabled unless the URL, account name, and a readable
+relay key file are configured:
 
 ```env
 WEIGHT_SYNC_RELAY_URL=http://your-relay:3000/api/weight-sync
 WEIGHT_SYNC_USER_NAME=Account Name
+WEIGHT_SYNC_RELAY_KEY_FILE=/run/secrets/relay-key
 ```
 
 Every weight mutation for that exact account name sends a best-effort full
-snapshot to the relay. Leave both values blank for a normal installation.
+snapshot to the relay. Leave these values blank for a normal installation.
 
 The repository includes an AFCD import script but not its transformed source
 dataset. A fresh installation therefore begins without the original

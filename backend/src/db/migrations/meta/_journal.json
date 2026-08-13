@@ -218,6 +218,27 @@
       "when": 1786263085737,
       "tag": "0030_nutrition_day_statuses",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1786488930674,
+      "tag": "0031_mushy_mephisto",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1786512524466,
+      "tag": "0032_authentik_oidc",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1786517219388,
+      "tag": "0033_admin_role",
+      "breakpoints": true
     }
   ]
 }

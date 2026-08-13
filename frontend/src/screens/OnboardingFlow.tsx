@@ -62,7 +62,7 @@ export default function OnboardingFlow() {
           <WizardIllustration variant="goal" />
         </div>
         <div className="flex-1 px-4 pt-2">
-          <h1 className="text-2xl font-bold uppercase tracking-tight">Welcome to macrotrack</h1>
+          <h1 className="text-2xl font-bold uppercase tracking-tight">Welcome to MacroDaddy</h1>
           <p className="text-sm text-muted mt-3">
             A few quick steps to get your plan set up — a little about you, your current weight, then your goal.
             Takes about a minute.

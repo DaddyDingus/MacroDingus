@@ -20,6 +20,7 @@ import { registerAccountRoutes } from "./routes/account.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerCookwareRoutes } from "./routes/cookware.js";
 import { registerAdjustmentRoutes } from "./routes/adjustments.js";
+import { registerEventPlanRoutes } from "./routes/eventPlans.js";
 import { configureAiProviderStore } from "./engine/aiProvider.js";
 import { startAutomaticServerBackups } from "./lib/serverBackups.js";
 
@@ -28,9 +29,9 @@ const PORT = Number(process.env.PORT ?? 3000);
 const STATIC_DIR = path.join(__dirname, "..", "public");
 const DATA_DIR = process.env.DATA_DIR ?? path.join(__dirname, "..", "..", "data");
 const ANDROID_RELEASE = {
-  versionCode: 8,
-  versionName: "1.7",
-  downloadUrl: "/api/android/apk?v=1.7",
+  versionCode: 10,
+  versionName: "1.9",
+  downloadUrl: "/api/android/apk?v=1.9",
 };
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -61,6 +62,7 @@ registerAccountRoutes(app, DATA_DIR);
 registerSettingsRoutes(app);
 registerCookwareRoutes(app);
 registerAdjustmentRoutes(app);
+registerEventPlanRoutes(app);
 
 await app.register(fastifyStatic, {
   root: STATIC_DIR,
@@ -91,7 +93,7 @@ app.get("/api/android/version", async (_req, reply) => {
 });
 
 app.get("/api/android/apk", async (_req, reply) => {
-  reply.header("content-disposition", `attachment; filename="MacroTrack-v${ANDROID_RELEASE.versionName}.apk"`);
+  reply.header("content-disposition", `attachment; filename="MacroDaddy-v${ANDROID_RELEASE.versionName}.apk"`);
   reply.header("cache-control", "no-store, no-cache, must-revalidate, private");
   reply.header("pragma", "no-cache");
   reply.header("expires", "0");

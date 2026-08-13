@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MoreHorizontal, ChevronLeft, ChevronRight } from "lucide-react";
 import type { LogEntry } from "../api/types";
 import { useDayLog, useDeleteLog, useDeleteLogEntries, useMoveLogEntries, useLoggedDates, useSetDayIncomplete } from "../api/logs";
-import { usePrograms } from "../api/programs";
 import { useAdjustment, useRemoveAdjustment } from "../api/adjustments";
+import { useEventPlans } from "../api/eventPlans";
 import { addDays, formatDayLabel, localDateString } from "../lib/date";
-import { targetsForDate, applyAdjustment } from "../lib/programTargets";
+import { useResolvedTargets } from "../lib/useResolvedTargets";
+import { planNoteForDate } from "../lib/eventPlanCopy";
 import { useEnergyUnit, formatEnergy } from "../lib/energyUnit";
 import { groupLogEntriesByTime } from "../lib/logGrouping";
 import MacroSummaryBar from "../components/MacroSummaryBar";
@@ -50,9 +51,10 @@ export default function TodayScreen() {
   const deleteEntries = useDeleteLogEntries();
   const moveEntries = useMoveLogEntries();
   const setDayIncomplete = useSetDayIncomplete(date);
-  const programs = usePrograms();
   const adjustment = useAdjustment(date);
   const removeAdjustment = useRemoveAdjustment(date);
+  const resolved = useResolvedTargets(date);
+  const eventPlans = useEventPlans();
   const { unit: energyUnit } = useEnergyUnit();
 
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -167,11 +169,10 @@ export default function TodayScreen() {
   // day's macro bars fill against the target that was actually in effect
   // then, rather than going target-less (and therefore permanently 0% full)
   // for every day except today.
-  const dayTargets = targetsForDate(programs.data ?? [], date);
-  // Layers a "Carry Forward Shortfall" boost (see DayMenuSheet/
-  // CarryForwardSheet) on top of the base weekday target, if one's active
-  // for this exact date.
-  const adjustedTargets = dayTargets ? applyAdjustment(dayTargets, adjustment.data) : null;
+  // Base weekday target plus a "Carry Forward Shortfall" boost (see
+  // DayMenuSheet/CarryForwardSheet) plus any event-plan delta, assembled by
+  // the one shared hook so this screen and QuickActionFlow can't drift.
+  const adjustedTargets = resolved.targets;
   const targets = adjustedTargets
     ? {
         calories: adjustedTargets.calories,
@@ -294,6 +295,15 @@ export default function TodayScreen() {
         {adjustment.data && (
           <p className="text-[11px] text-muted text-center pb-3">
             +{formatEnergy(adjustment.data.kcal, energyUnit)} carried forward from {formatDayLabel(adjustment.data.sourceDate)}
+          </p>
+        )}
+        {/* Why this day's target isn't the usual one. Without this the number
+            just silently differs from the weekday template and reads as a bug. */}
+        {resolved.planDelta && resolved.planDelta.kcal !== 0 && (
+          <p className="text-[11px] text-muted text-center pb-3">
+            {resolved.planDelta.kcal > 0 ? "+" : "−"}
+            {formatEnergy(Math.abs(resolved.planDelta.kcal), energyUnit)}{" "}
+            {planNoteForDate(eventPlans.data, date)}
           </p>
         )}
         {groups.length === 0 ? (

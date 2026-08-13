@@ -9,8 +9,8 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["favicon.png", "icons/apple-touch-icon.png"],
       manifest: {
-        name: "macrotrack",
-        short_name: "macrotrack",
+        name: "MacroDaddy",
+        short_name: "MacroDaddy",
         description: "Personal nutrition and coaching tracker",
         // Static — the manifest can't follow the in-app theme picker, so
         // this matches "black" (the default theme in lib/theme.tsx). Only

@@ -71,3 +71,29 @@ export function applyAdjustment(
     fatG: targets.fatG + adjustment.fatG,
   };
 }
+
+// Layers every delta source onto a day's base targets: a Carry Forward
+// Shortfall boost and an event-plan delta both apply, and they SUM rather
+// than one winning — they answer different questions ("I under-ate yesterday"
+// vs "Saturday is a big dinner") and a user can legitimately have both on one
+// day. Event-plan deltas are signed; a plan's offset days are negative, which
+// is why this can't reuse applyAdjustment's positive-only shape.
+//
+// Prefer lib/useResolvedTargets.ts's hook over calling this directly — it
+// owns fetching the pieces as well as combining them.
+export function applyDayDeltas(
+  targets: DayTargets,
+  adjustment: { kcal: number; proteinG: number; carbsG: number; fatG: number } | null | undefined,
+  planDelta: { kcal: number; proteinG: number; carbsG: number; fatG: number } | null | undefined
+): DayTargets {
+  const withAdjustment = applyAdjustment(targets, adjustment);
+  if (!planDelta) return withAdjustment;
+  return {
+    // A plan can never drive a displayed target below zero, whatever the
+    // stored deltas say.
+    calories: Math.max(0, withAdjustment.calories + planDelta.kcal),
+    proteinG: Math.max(0, withAdjustment.proteinG + planDelta.proteinG),
+    carbsG: Math.max(0, withAdjustment.carbsG + planDelta.carbsG),
+    fatG: Math.max(0, withAdjustment.fatG + planDelta.fatG),
+  };
+}

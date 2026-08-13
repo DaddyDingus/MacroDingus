@@ -1,0 +1,19 @@
+{
+  "TCP": {
+    "443": {
+      "HTTPS": true
+    }
+  },
+  "Web": {
+    "macrodaddy.tail984e80.ts.net:443": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://macrotrack:3000"
+        }
+      }
+    }
+  },
+  "AllowFunnel": {
+    "macrodaddy.tail984e80.ts.net:443": true
+  }
+}

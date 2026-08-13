@@ -215,7 +215,7 @@ export default function FoodItemCard({
             {/* Macros before serving size (was serving size first) — the
                 three macros are what's actually being compared entry to
                 entry, so they lead; the gram weight is supporting detail. */}
-            <span className="block text-xs tabular leading-tight truncate -mt-0.5">
+            <span className="block text-xs tabular leading-tight truncate -mt-0.5 text-white/70">
               <span className="text-protein">P</span>{fmt(entry.nutrition.protein)}{" "}
               <span className="text-fat">F</span>{fmt(entry.nutrition.fat)}{" "}
               <span className="text-carbs">C</span>{fmt(entry.nutrition.carbs)} <span className="text-muted">·{" "}

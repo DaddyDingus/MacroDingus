@@ -36,6 +36,7 @@ import RecipeForm, { type RecipeFormInitial } from "./RecipeForm";
 import DraggableSnapSheet from "./DraggableSnapSheet";
 import FoodDetailScreen from "./FoodDetailScreen";
 import NutrientStatusBar, { LogTimePill } from "./NutrientStatusBar";
+import ModalMacroHeader from "./ModalMacroHeader";
 import DateTimePickerSheet from "./DateTimePickerSheet";
 import ConfirmDeleteSheet from "./ConfirmDeleteSheet";
 import PhotoSourceSheet from "./PhotoSourceSheet";
@@ -357,6 +358,13 @@ export default function AddFoodSheet({
   // here. This component used to get this for free from BottomSheet; now
   // that Layer 1/Layer 2 need their own geometry, it's read directly.
   const { height: viewportHeight, offsetTop: viewportOffsetTop } = useVisualViewportMetrics();
+  // The native shell already lays the WebView out inside Android's status-bar
+  // inset, and fixed elements are relative to that visible WebView. Chromium
+  // nevertheless reports the same inset again as visualViewport.offsetTop;
+  // applying it here double-counts the top inset (84 physical px on the S24+)
+  // and shifts BrowseHeader/FoodDetailScreen below TodayScreen's header. Web
+  // Safari still needs the real offset while its keyboard pans the viewport.
+  const modalViewportTop = window.MacroTrackAndroid?.isNativeApp?.() ? 0 : viewportOffsetTop;
   // The pinned header's real rendered height, measured rather than guessed —
   // it isn't a fixed single row (budget badges only show once targets have
   // loaded, the avatar stack only once something's staged), and Layer
@@ -1020,7 +1028,7 @@ export default function AddFoodSheet({
       className={`fixed inset-x-0 z-50 flex flex-col pb-[env(safe-area-inset-bottom)] page-enter ${
         step === "browse" && onPickItems ? "" : "bg-dashboardBg"
       }`}
-      style={{ top: viewportOffsetTop, height: viewportHeight }}
+      style={{ top: modalViewportTop, height: viewportHeight }}
     >
         {step === "browse" && (
           <>
@@ -2069,27 +2077,26 @@ function BrowseHeader({
     // affordance.
     // pt accounts for the status bar/notch now that this sits at the very
     // top of a genuinely full-screen modal, not a few percent down inside a
-    // rounded sheet. +9px — bisected (2026-08-06) between +6 (user reported
-    // this bar sitting visibly higher than MacroSummaryBar's on the Food
-    // Log) and +12 (the next attempt, which overshot the other way per a
-    // follow-up screenshot). Both data points came from live device
-    // screenshots, not a pixel probe, so treat +9 as the converging guess,
-    // not a final number — check a fresh screenshot before nudging again.
-    // Change both together — this and FoodDetailScreen's matching offset
-    // (see its own comment) are tuned against each other, not just against
-    // TodayScreen alone.
-    <div className="flex flex-col gap-3 px-4 pb-3 shrink-0" style={{ paddingTop: "calc(env(safe-area-inset-top) + 9px)" }}>
-      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+    // rounded sheet. The 2px gap below the controls is deliberately tighter
+    // than ordinary section spacing: together with this row's 20px height it
+    // puts NutrientStatusBar's macro tracks at the same viewport Y position
+    // as MacroSummaryBar on the Food Log. FoodDetailScreen uses the same 2px
+    // value so all three headers stay aligned.
+    <ModalMacroHeader
+      className="pb-3"
+      left={
         <button
           onClick={onClose}
           aria-label="Close"
-          className="justify-self-start shrink-0 h-5 flex items-center text-white/70 active:text-white"
+          className="shrink-0 h-5 flex items-center text-white/70 active:text-white"
         >
           <X className="w-5 h-5" strokeWidth={2} />
         </button>
-        <LogTimePill timeLabel={timeLabel} onTimeClick={onTimeClick} />
-        {stagedPlate.length > 0 ? (
-          <div className="justify-self-end shrink-0 h-5 flex items-center -space-x-1.5">
+      }
+      center={<LogTimePill timeLabel={timeLabel} onTimeClick={onTimeClick} />}
+      right={
+        stagedPlate.length > 0 ? (
+          <div className="shrink-0 h-5 flex items-center -space-x-1.5">
             {visibleAvatars.map((item) => (
               <FoodIconAvatar
                 key={item.key}
@@ -2106,12 +2113,13 @@ function BrowseHeader({
               </span>
             )}
           </div>
-        ) : (
-          <div />
-        )}
-      </div>
-      <NutrientStatusBar totals={totals} plateTotals={plateTotals} targets={targets} />
-    </div>
+        ) : undefined
+      }
+      statusClassName="px-4"
+      status={
+        <NutrientStatusBar totals={totals} plateTotals={plateTotals} targets={targets} />
+      }
+    />
   );
 }
 

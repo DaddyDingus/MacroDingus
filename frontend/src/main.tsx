@@ -19,6 +19,20 @@ if ("scrollRestoration" in history) {
   history.scrollRestoration = "manual";
 }
 
+// autoUpdate installs and activates a new service worker in the background,
+// but an already-open WebView keeps executing the old document's JavaScript
+// until it navigates. Reload once when an update takes control so live web
+// deploys become visible in the APK without requiring a manual cache clear.
+// Skip the first-ever registration, when there was no controller at load.
+if ("serviceWorker" in navigator && navigator.serviceWorker.controller) {
+  let reloadingForUpdate = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (reloadingForUpdate) return;
+    reloadingForUpdate = true;
+    window.location.reload();
+  });
+}
+
 const persister = createAsyncStoragePersister({
   storage: {
     getItem: async (key) => (await get(key)) ?? null,
@@ -41,7 +55,17 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <PersistQueryClientProvider
       client={queryClient}
-      persistOptions={{ persister, maxAge: 1000 * 60 * 60 * 24 * 7 }}
+      persistOptions={{
+        persister,
+        maxAge: 1000 * 60 * 60 * 24 * 7,
+        dehydrateOptions: {
+          // Cached nutrition data makes reopen instant; cached auth state is
+          // actively harmful. In particular, logout stores false and an OIDC
+          // callback then reloads into that stale value despite having just
+          // received a valid session cookie.
+          shouldDehydrateQuery: (query) => query.queryKey[0] !== "auth",
+        },
+      }}
     >
       <App />
     </PersistQueryClientProvider>

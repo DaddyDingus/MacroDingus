@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { eq, and, gte } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { db } from "../db/index.js";
 import { weights, users } from "../db/schema.js";
 import { computeDenseTrend, addDaysToDateString } from "../engine/trendWeight.js";
@@ -12,9 +13,18 @@ import { householdDateString } from "../lib/householdDate.js";
 // values are required so a fresh fork never sends weight data anywhere.
 const WEIGHT_SYNC_RELAY_URL = process.env.WEIGHT_SYNC_RELAY_URL?.trim() || null;
 const WEIGHT_SYNC_USER_NAME = process.env.WEIGHT_SYNC_USER_NAME?.trim() || null;
+const WEIGHT_SYNC_RELAY_KEY = (() => {
+  const keyFile = process.env.WEIGHT_SYNC_RELAY_KEY_FILE?.trim();
+  if (!keyFile) return null;
+  try {
+    return readFileSync(keyFile, "utf8").trim() || null;
+  } catch {
+    return null;
+  }
+})();
 
 async function pushWeightSync(userId: string) {
-  if (!WEIGHT_SYNC_RELAY_URL || !WEIGHT_SYNC_USER_NAME) return;
+  if (!WEIGHT_SYNC_RELAY_URL || !WEIGHT_SYNC_USER_NAME || !WEIGHT_SYNC_RELAY_KEY) return;
   try {
     const [user] = await db.select().from(users).where(eq(users.id, userId));
     if (!user || user.name !== WEIGHT_SYNC_USER_NAME) return;
@@ -22,7 +32,10 @@ async function pushWeightSync(userId: string) {
     const rows = await db.select().from(weights).where(eq(weights.userId, userId)).orderBy(weights.date);
     await fetch(WEIGHT_SYNC_RELAY_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-GymDaddy-Sync-Key": WEIGHT_SYNC_RELAY_KEY,
+      },
       body: JSON.stringify({ weights: rows.map((r) => ({ date: r.date, weightKg: r.weightKg })) }),
       signal: AbortSignal.timeout(5000),
     });

@@ -3,13 +3,14 @@ import { useWeightTrend, useWeights } from "../api/weights";
 import { formatDayLabel, dayIndex, addDays, localDateString } from "../lib/date";
 import { useWeightUnit, kgToUnit } from "../lib/weightUnit";
 import { trendChangeOverDays, weeklyTrendRateKgPerWeek, projectTrendKg, KCAL_PER_KG } from "../lib/weightInsights";
-import { changeDirection, changeDirectionLabel } from "../lib/changeIndicator";
+import { changeDirection, changeDirectionLabel, roundToDisplay, DISPLAY_EPSILON } from "../lib/changeIndicator";
 import { useChartGesture } from "../hooks/useChartGesture";
 import { RANGE_PRESETS } from "../lib/chartLayout";
 import WeightChart, { WeightChartLegend } from "../components/WeightChart";
 import ChartCard from "../components/ChartCard";
 import MiniLineSpark from "../components/MiniLineSpark";
 import ChangeDirectionIcon from "../components/ChangeDirectionIcon";
+import MonthSection from "../components/MonthSection";
 import StatTile from "../components/StatTile";
 import { staggerStyle } from "../lib/stagger";
 
@@ -39,7 +40,6 @@ function formatRangeLabel(startDate: string, endDate: string): string {
 function signed(n: number): string {
   return n >= 0 ? `+${n.toFixed(1)}` : n.toFixed(1);
 }
-
 
 export default function WeightDetailScreen() {
   const { unit } = useWeightUnit();
@@ -103,17 +103,26 @@ export default function WeightDetailScreen() {
   // Scale Weight inside a screen whose headline and insights all describe the
   // smoothed trend. Make both the displayed value and direction come from
   // the dense trend series; raw readings already have their own screen.
-  const sortedAsc = [...(allWeighIns.data ?? [])].sort((a, b) => a.date.localeCompare(b.date));
-  const trendByDate = new Map(allTrendPoints.map((point, index) => [
-    point.date,
-    {
-      trendKg: point.trendKg,
-      deltaKg: index > 0 ? Math.round((point.trendKg - allTrendPoints[index - 1].trendKg) * 100) / 100 : null,
-    },
-  ]));
-  const monthGroups = new Map<string, { label: string; entries: { id: string; date: string; trendKg: number | null; bodyFatPercent: number | null; deltaKg: number | null }[] }>();
-  sortedAsc.forEach((w) => {
-    const key = w.date.slice(0, 7);
+  // The direction must be derived from the *displayed* (rounded, unit-converted)
+  // numbers, not the raw trend. The EWMA moves in hundredths, so comparing raw
+  // values put an "Increase" beside a row reading 79.3 whose predecessor also
+  // read 79.3 and said "Decrease" (a real +0.01 kg step). Carry the previous
+  // point's raw value through and round both at render, where `unit` is known —
+  // a fixed kg epsilon would also be the wrong scale once converted to lb.
+  //
+  // Rows are one per calendar *day* of the dense trend, not one per weigh-in.
+  // The EWMA is defined on every day between two readings (the raw weight is
+  // interpolated across a gap and the trend stepped once per implied day — see
+  // backend engine/trendWeight.ts) and the chart already draws them, so listing
+  // only weigh-in days both hid days the trend genuinely has and left the row
+  // after a gap comparing itself against an invisible filled day: its number
+  // jumped several tenths while its label described only the final day's step.
+  // A filled day still renders no scale-derived data — no BF%, and it says
+  // "No weigh-in" — so an invented reading is never implied.
+  const bodyFatByDate = new Map((allWeighIns.data ?? []).map((w) => [w.date, w.bodyFatPercent] as const));
+  const monthGroups = new Map<string, { label: string; entries: { date: string; trendKg: number; prevTrendKg: number | null; bodyFatPercent: number | null; filled: boolean }[] }>();
+  allTrendPoints.forEach((point, index) => {
+    const key = point.date.slice(0, 7);
     if (!monthGroups.has(key)) {
       const [y, m] = key.split("-").map(Number);
       monthGroups.set(key, {
@@ -121,13 +130,12 @@ export default function WeightDetailScreen() {
         entries: [],
       });
     }
-    const trendPoint = trendByDate.get(w.date);
     monthGroups.get(key)!.entries.push({
-      id: w.id,
-      date: w.date,
-      trendKg: trendPoint?.trendKg ?? null,
-      bodyFatPercent: w.bodyFatPercent,
-      deltaKg: trendPoint?.deltaKg ?? null,
+      date: point.date,
+      trendKg: point.trendKg,
+      prevTrendKg: index > 0 ? allTrendPoints[index - 1].trendKg : null,
+      bodyFatPercent: bodyFatByDate.get(point.date) ?? null,
+      filled: point.weightKg === null,
     });
   });
   const monthGroupsDesc = [...monthGroups.entries()]
@@ -215,7 +223,8 @@ export default function WeightDetailScreen() {
                 </div>
               );
             }
-            const dir = changeDirection(stat.deltaKg, 0.05);
+            const deltaInUnit = kgToUnit(stat.deltaKg, unit);
+            const dir = changeDirection(roundToDisplay(deltaInUnit), DISPLAY_EPSILON);
             const seriesInUnit = stat.series.map((kg) => kgToUnit(kg, unit));
             return (
               <div key={w} className="flex items-center gap-3 px-4 py-2.5 border-b border-line/60 last:border-b-0">
@@ -224,7 +233,7 @@ export default function WeightDetailScreen() {
                   <MiniLineSpark values={seriesInUnit} color={WEIGHT_CHANGE_COLOR} />
                 </div>
                 <span className="tabular text-sm w-20 text-right shrink-0 whitespace-nowrap">
-                  {signed(kgToUnit(stat.deltaKg, unit))} {unit}
+                  {signed(deltaInUnit)} {unit}
                 </span>
                 <span className="flex items-center gap-1 text-xs text-muted w-[86px] justify-end shrink-0">
                   <ChangeDirectionIcon direction={dir} colorClassName="text-weight" />
@@ -287,26 +296,37 @@ export default function WeightDetailScreen() {
               <span className="text-xs text-accent">{showHistory ? "Hide" : "Show"}</span>
             </button>
             {showHistory &&
-              monthGroupsDesc.map((g) => (
-                <div key={g.key}>
-                  <div className="px-4 py-2 border-t border-line bg-surface-raised">
-                    <span className="text-xs text-muted">{g.label}</span>
-                  </div>
+              monthGroupsDesc.map((g, gi) => (
+                <MonthSection
+                  key={g.key}
+                  label={g.label}
+                  summary={`${g.entries.length} ${g.entries.length === 1 ? "day" : "days"}`}
+                  defaultOpen={gi === 0}
+                >
                   {g.entries.map((w) => {
-                    const dir = changeDirection(w.deltaKg, 0.01);
+                    const shown = roundToDisplay(kgToUnit(w.trendKg, unit));
+                    const shownPrev =
+                      w.prevTrendKg !== null ? roundToDisplay(kgToUnit(w.prevTrendKg, unit)) : null;
+                    const dir = changeDirection(
+                      shownPrev !== null ? shown - shownPrev : null,
+                      DISPLAY_EPSILON
+                    );
                     return (
                       <div
-                        key={w.id}
+                        key={w.date}
                         className="flex items-center justify-between px-4 py-2.5 border-t border-line/60"
                       >
                         <div>
-                          <p className="tabular text-sm">
-                            {w.trendKg !== null ? kgToUnit(w.trendKg, unit).toFixed(1) : "—"} {unit}
+                          <p className={`tabular text-sm ${w.filled ? "text-muted" : ""}`}>
+                            {shown.toFixed(1)} {unit}
                             {w.bodyFatPercent !== null && (
                               <span className="text-muted"> · {w.bodyFatPercent.toFixed(1)}% BF</span>
                             )}
                           </p>
-                          <p className="text-xs text-muted">{formatDayLabel(w.date)}</p>
+                          <p className="text-xs text-muted">
+                            {formatDayLabel(w.date)}
+                            {w.filled && <span className="text-muted/60"> · No weigh-in</span>}
+                          </p>
                         </div>
                         <div className="flex items-center">
                           <span className="flex items-center gap-1 text-xs text-muted">
@@ -317,7 +337,7 @@ export default function WeightDetailScreen() {
                       </div>
                     );
                   })}
-                </div>
+                </MonthSection>
               ))}
           </div>
         )}

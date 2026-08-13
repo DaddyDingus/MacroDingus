@@ -67,7 +67,10 @@ export default function App() {
   // (or the restored cache) arrived. isError still falls through to
   // LoginScreen rather than hanging on a blank screen forever if the check
   // genuinely fails offline with nothing cached.
-  if (status.isPending && !status.isError) return null;
+  // Persisted caches created by older builds may still contain an auth row.
+  // Do not render either the private app or LoginScreen until this mounted
+  // runtime has verified the current httpOnly session cookie with the server.
+  if (!status.isFetchedAfterMount && !status.isError) return null;
   if (!status.data?.authenticated) {
     return (
       <ThemeProvider>

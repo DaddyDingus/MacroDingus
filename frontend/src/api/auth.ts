@@ -4,6 +4,7 @@ import { apiFetch } from "./client";
 export interface AuthUser {
   id: string;
   name: string;
+  role: "admin" | "member";
 }
 
 export interface AuthStatus {
@@ -15,6 +16,13 @@ export function useAuthStatus() {
   return useQuery({
     queryKey: ["auth", "status"],
     queryFn: () => apiFetch<AuthStatus>("/auth/status"),
+    // Authentication must never inherit the app-wide one-minute freshness
+    // window. After an OIDC callback the browser returns to a brand-new app
+    // runtime, but the persisted query cache can still contain the explicit
+    // `authenticated: false` written by logout. Always confirm the cookie
+    // with the server before deciding which screen to render.
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 }
 

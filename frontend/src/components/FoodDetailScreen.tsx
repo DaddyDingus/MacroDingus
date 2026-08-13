@@ -8,6 +8,7 @@ import { useBackDismiss } from "../lib/useBackDismiss";
 import { useEnergyUnit, kcalToUnit, energyUnitLabel } from "../lib/energyUnit";
 import { useLastLoggedQuantity } from "../api/foods";
 import NutrientStatusBar, { LogTimePill } from "./NutrientStatusBar";
+import ModalMacroHeader from "./ModalMacroHeader";
 import { foodMeasures } from "../lib/foodMeasures";
 import DecimalKeypad from "./DecimalKeypad";
 
@@ -734,38 +735,33 @@ export default function FoodDetailScreen({
           fresh screenshot before ever touching this again — a phone with a
           real display cutout will add its own inset on top of this, which
           nothing here has been checked against. */}
-      <div className="shrink-0" style={{ paddingTop: "calc(env(safe-area-inset-top) + 9px)" }}>
-        {/* pb-1.5 (6px) — matches BrowseHeader's flex-col gap-3 between its
-            own top row and NutrientStatusBar exactly, so the "Remaining
-            Today" block lands at the same vertical offset on both screens. */}
-        <div className="px-4 pb-1.5 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-          {/* h-5 flex items-center matches BrowseHeader's X button box exactly
-              (w-5 h-5 icon) — this glyph alone at text-lg/leading-none rendered
-              a couple px shorter, which was enough to shift NutrientStatusBar
-              a hair between the two screens despite both sitting the same
-              gap below this row. */}
+      {/* The shared header owns the 2px gap below its 20px control row, so
+          Plate Preview and Food Detail cannot drift independently again. */}
+      <ModalMacroHeader
+        left={
           <button
             onClick={onBack}
             aria-label={backLabel}
-            className="justify-self-start shrink-0 h-5 flex items-center text-muted active:text-white px-1 -mx-1"
+            className="shrink-0 h-5 flex items-center text-muted active:text-white px-1 -mx-1"
           >
             <ChevronLeft size={20} strokeWidth={2.2} />
           </button>
-          <LogTimePill timeLabel={timeLabel} onTimeClick={onTimeClick} />
-          <div />
-        </div>
-        {!hideTargetsUi && (
-          <div className="px-4 pb-1.5">
+        }
+        center={<LogTimePill timeLabel={timeLabel} onTimeClick={onTimeClick} />}
+        statusClassName="px-4 pb-1.5"
+        status={
+          !hideTargetsUi ? (
             <NutrientStatusBar totals={totals} plateTotals={plateTotals} extra={n} targets={targets} />
-          </div>
-        )}
+          ) : null
+        }
+      >
         <div className="px-6 py-1.5 min-h-[42px] flex flex-col items-center justify-center text-center">
           <span className="min-w-0 max-w-full">
             <span className="block text-base font-semibold leading-tight text-white line-clamp-2">{food.name}</span>
             {food.brand && <span className="block mt-0.5 text-[11px] leading-tight text-muted truncate">{food.brand}</span>}
           </span>
         </div>
-      </div>
+      </ModalMacroHeader>
 
       <div ref={paneRef} className="flex-1 overflow-y-auto pb-4">
         <div ref={aboveFoldRef}>

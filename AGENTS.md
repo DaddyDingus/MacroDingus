@@ -4,7 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-macrotrack is a personal nutrition/macro tracking PWA (MacroFactor-style), built for a single household on their own homelab server. Backend and frontend are separate npm packages in one repo; there is no root `package.json`.
+MacroDaddy is a personal nutrition/macro tracking PWA (MacroFactor-style), built for a single household on their own homelab server. Backend and frontend are separate npm packages in one repo; there is no root `package.json`.
+
+Production uses `https://macrodaddy.tail984e80.ts.net/`, shared Authentik at
+`https://auth.tail984e80.ts.net/`, and OIDC application/client `macrodaddy`.
+Android 1.9 (`versionCode` 10) keeps both hosts in one WebView. Legacy
+`macrotrack.tail984e80.ts.net` routes remain for migration. Keep historical
+internal `macrotrack` package, signing, database, export, storage, and Docker
+identifiers unchanged so existing installs and data upgrade in place.
 
 When the user asks to check the latest screenshot without giving another location, inspect the newest file in `/home/daddydingus/screenshots`.
 
@@ -32,8 +39,8 @@ No lint script or test suite — don't invent one. Type-check with each package'
 
 ## Web and Android workflow
 
-MacroTrack now has a signed Android WebView shell in `android/` that loads the
-same live app from `https://macrotrack.tail984e80.ts.net`. Ordinary frontend
+MacroDaddy now has a signed Android WebView shell in `android/` that loads the
+same live app from `https://macrodaddy.tail984e80.ts.net`. Ordinary frontend
 and backend work still ships through Docker and appears in the APK
 automatically; do not rebuild or ask the user to reinstall for web-only work.
 The existing refresh-app flow remains the stale-service-worker escape hatch.
@@ -48,7 +55,7 @@ Any change under `android/` or to native capabilities requires all of these:
 3. Rebuild/restart Docker, which publishes that artifact at
    `/api/android/apk`, and verify `/api/android/version` plus its signature.
 4. End the user handoff with a clickable cache-busted link such as
-   `[Download MacroTrack vX.Y](https://macrotrack.tail984e80.ts.net/api/android/apk?v=X.Y)`.
+   `[Download MacroDaddy vX.Y](https://macrodaddy.tail984e80.ts.net/api/android/apk?v=X.Y)`.
 
 Also provide the current clickable link whenever the user asks for the APK,
 install/update link, or says they need to reinstall. State whether installing
@@ -67,7 +74,11 @@ key.
 - **Logs have no `meal` concept** — removed in migration `0006`. `date` and `loggedAt` are the only temporal fields. Copy-a-day always copies the whole day.
 - **Goals and Programs are separate tables.** A Goal (`goals`) is WHAT the user wants; a Program (`programs`) is HOW. `program_days` holds per-weekday calorie/macro targets — always exactly 7 rows (uniform, not sparse). `checkins` is a pure TDEE snapshot — neither table carries target calories.
 
-**Auth** (`backend/src/auth.ts`): password-only login — `/api/auth/login` iterates every user with `bcrypt.compare` until one matches. Session is a signed httpOnly cookie (30-day expiry). Access control is at the network layer (Tailscale), not the app layer.
+**Auth** (`backend/src/auth.ts`): Authentik OIDC Authorization Code + PKCE maps the immutable `sub` claim to `users.oidcSub`, then issues the existing signed httpOnly 30-day app session. The configured bootstrap Authentik username links once to the existing named account; all other first logins provision a new isolated user. Local signup/password login remains a fallback only when `OIDC_ISSUER` is unset. Redirect origins are an explicit allowlist. The Android WebView must keep both the MacroDaddy and Authentik hosts in-app so the callback returns to the same cookie jar.
+
+Auth status is never persisted with the seven-day TanStack query cache and is always revalidated on mount. Persisting the explicit `authenticated: false` written by logout made a successful OIDC callback return to the same login screen until the global stale window elapsed, even though the new session cookie was already valid.
+
+Cookie deletion must repeat the same path, `Secure`, `HttpOnly`, and `SameSite` attributes used when setting both `mt_session` and `mt_oidc`. Android WebView was also observed replaying an app session after a correct clearing response, so logout persists a SHA-256 fingerprint of that exact signed session in `.revoked-sessions.json`. Every authenticated request rejects revoked fingerprints; a fresh OIDC login issues a different session, and other devices remain signed in.
 
 **Onboarding gate** (`App.tsx`'s `needsOnboarding`): gated on persisted `profiles.onboardingCompletedAt`, not derived live from weights/goal state — deleting your only weigh-in or ending a goal no longer bounces an onboarded user back into `OnboardingFlow`. Stamped by whichever fires first: first `POST /api/goals`, or OnboardingFlow's weight-step "Skip for now". Consequence: **"no active goal" is a real, possibly long-lived Dashboard state**, not transient — `DashboardScreen.tsx`'s "Set a goal" card is the permanent reminder, and every "New Goal" entry routes through `goToNewGoal()`, which opens `LogWeightFirstSheet` first when `trendWeightKg` is null (a soft nudge with a "Continue without weighing in" escape hatch, not a hard block).
 
@@ -100,7 +111,7 @@ Standalone Quick Add embeds `DecimalKeypad` in its own sheet instead of opening 
 
 **Weight cache invalidation**: any weight mutation must invalidate both `["weights"]` AND `["coach"]` — `/coach/status` recomputes trend weight live. Miss this and Dashboard tiles (Goal Progress, Expenditure) show stale data.
 
-**Optional weight sync** (`routes/weights.ts`: `pushWeightSync`): when both `WEIGHT_SYNC_RELAY_URL` and `WEIGHT_SYNC_USER_NAME` are set, every POST/DELETE on `/api/weights` for that exact account name best-effort pushes the full history to the relay — never blocks the request and swallows failures. It is disabled by default so forks cannot send weights to an unrelated relay.
+**Optional weight sync** (`routes/weights.ts`: `pushWeightSync`): when `WEIGHT_SYNC_RELAY_URL`, `WEIGHT_SYNC_USER_NAME`, and `WEIGHT_SYNC_RELAY_KEY_FILE` are set, every POST/DELETE on `/api/weights` for that exact account name best-effort pushes the full history to the relay with the shared key — never blocks the request and swallows failures. It is disabled by default so forks cannot send weights to an unrelated relay.
 
 **Dashboard tiles** (`lib/dashboardLayout.tsx`): `load()` trusts the stored array as-is — does NOT auto-append missing catalog tiles (an earlier version did, silently reversing every toggle-off on reload); a tile added to the catalog later won't appear until the "+ Add" sheet is opened. Also, a tile's headline must match its own subtitle's window — Energy Balance's said "Last 7 days" but its headline was just the latest single day, disagreeing with its own sparkline (`avgBalance7` fixed it by averaging the same window shown).
 

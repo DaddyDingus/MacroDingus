@@ -3,12 +3,13 @@ import { Pencil } from "lucide-react";
 import { useWeights, useLogWeight, useDeleteWeight } from "../api/weights";
 import { formatDayLabel, dayIndex, localDateString } from "../lib/date";
 import { useWeightUnit, kgToUnit, unitToKg } from "../lib/weightUnit";
-import { changeDirection, changeDirectionLabel } from "../lib/changeIndicator";
+import { changeDirection, changeDirectionLabel, roundToDisplay, DISPLAY_EPSILON } from "../lib/changeIndicator";
 import { useChartGesture } from "../hooks/useChartGesture";
 import { RANGE_PRESETS } from "../lib/chartLayout";
 import ScaleWeightChart from "../components/ScaleWeightChart";
 import ChartCard from "../components/ChartCard";
 import ChangeDirectionIcon from "../components/ChangeDirectionIcon";
+import MonthSection from "../components/MonthSection";
 import ConfirmDeleteSheet from "../components/ConfirmDeleteSheet";
 import { staggerStyle } from "../lib/stagger";
 import DecimalInput from "../components/DecimalInput";
@@ -61,9 +62,14 @@ export default function ScaleWeightDetailScreen() {
     rangePoints.length >= 2 ? rangePoints[rangePoints.length - 1].weightKg - rangePoints[0].weightKg : null;
   const rangeLabel = rangePoints.length ? formatRangeLabel(rangePoints[0].date, rangePoints[rangePoints.length - 1].date) : null;
 
+  // prevWeightKg rather than a precomputed delta: the direction has to be
+  // decided on the rounded, unit-converted numbers actually printed, not the
+  // raw ones (see lib/changeIndicator.ts — Weight Trend's History showed two
+  // identical values labelled Decrease then Increase off a hundredths-scale
+  // difference). `unit` is only known at render, so round there.
   const withDelta = allAsc.map((w, i) => ({
     ...w,
-    deltaKg: i > 0 ? Math.round((w.weightKg - allAsc[i - 1].weightKg) * 100) / 100 : null,
+    prevWeightKg: i > 0 ? allAsc[i - 1].weightKg : null,
   }));
   const monthGroups = new Map<string, { label: string; entries: typeof withDelta }>();
   withDelta.forEach((w) => {
@@ -147,13 +153,21 @@ export default function ScaleWeightDetailScreen() {
               <span className="text-xs text-accent">{showHistory ? "Hide" : "Show"}</span>
             </button>
             {showHistory &&
-              monthGroupsDesc.map((g) => (
-                <div key={g.key}>
-                  <div className="px-4 py-2 border-t border-line bg-surface-raised">
-                    <span className="text-xs text-muted">{g.label}</span>
-                  </div>
+              monthGroupsDesc.map((g, gi) => (
+                <MonthSection
+                  key={g.key}
+                  label={g.label}
+                  summary={`${g.entries.length} ${g.entries.length === 1 ? "day" : "days"}`}
+                  defaultOpen={gi === 0}
+                >
                   {g.entries.map((w) => {
-                    const dir = changeDirection(w.deltaKg, 0.01);
+                    const shown = roundToDisplay(kgToUnit(w.weightKg, unit));
+                    const shownPrev =
+                      w.prevWeightKg !== null ? roundToDisplay(kgToUnit(w.prevWeightKg, unit)) : null;
+                    const dir = changeDirection(
+                      shownPrev !== null ? shown - shownPrev : null,
+                      DISPLAY_EPSILON
+                    );
                     const isEditing = editingId === w.id;
                     return (
                       <div key={w.id} className="flex items-center justify-between px-4 py-2.5 border-t border-line/60 gap-2">
@@ -172,7 +186,7 @@ export default function ScaleWeightDetailScreen() {
                         ) : (
                           <div>
                             <p className="tabular text-sm">
-                              {kgToUnit(w.weightKg, unit).toFixed(1)} {unit}
+                              {shown.toFixed(1)} {unit}
                               {w.bodyFatPercent !== null && (
                                 <span className="text-muted"> · {w.bodyFatPercent.toFixed(1)}% BF</span>
                               )}
@@ -216,7 +230,7 @@ export default function ScaleWeightDetailScreen() {
                       </div>
                     );
                   })}
-                </div>
+                </MonthSection>
               ))}
           </div>
         )}

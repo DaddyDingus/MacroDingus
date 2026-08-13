@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
-import type { AuthStatus } from "./auth";
+import type { AuthStatus, AuthUser } from "./auth";
 
 export function useRenameAccount() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (name: string) =>
-      apiFetch<{ ok: true; user: { id: string; name: string } }>("/account/name", {
+      apiFetch<{ ok: true; user: AuthUser }>("/account/name", {
         method: "PATCH",
         body: JSON.stringify({ name }),
       }),

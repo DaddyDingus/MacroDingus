@@ -11,6 +11,7 @@ import { useChartGesture } from "../hooks/useChartGesture";
 import { RANGE_PRESETS } from "../lib/chartLayout";
 import ChartCard from "../components/ChartCard";
 import NutrientHistoryChart, { NutrientHistoryChartLegend, type NutrientChartPoint } from "../components/NutrientHistoryChart";
+import MonthSection from "../components/MonthSection";
 import { staggerStyle } from "../lib/stagger";
 
 // Exported so NutrientDayDetailScreen (the per-day drill-in reached by
@@ -248,11 +249,13 @@ export default function NutrientDetailScreen() {
 
         {monthGroupsDesc.length > 0 && (
           <div className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
-            {monthGroupsDesc.map((g) => (
-              <div key={g.key}>
-                <div className="px-4 py-2 border-t border-line bg-surface-raised first:border-t-0">
-                  <span className="text-xs text-muted">{g.label}</span>
-                </div>
+            {monthGroupsDesc.map((g, gi) => (
+              <MonthSection
+                key={g.key}
+                label={g.label}
+                summary={`${g.entries.length} ${g.entries.length === 1 ? "day" : "days"}`}
+                defaultOpen={gi === 0}
+              >
                 {g.entries.map((d) => (
                   <button
                     key={d.date}
@@ -275,7 +278,7 @@ export default function NutrientDetailScreen() {
                     </div>
                   </button>
                 ))}
-              </div>
+              </MonthSection>
             ))}
           </div>
         )}

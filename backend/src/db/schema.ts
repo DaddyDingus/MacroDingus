@@ -7,6 +7,8 @@ export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
   name: text("name").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
+  oidcSub: text("oidc_sub").unique(),
+  role: text("role").notNull().default("member"),
   createdAt: text("created_at").notNull(),
 });
 
@@ -447,3 +449,68 @@ export const userSettings = sqliteTable("user_settings", {
   settingsJson: text("settings_json").notNull().default("{}"),
   updatedAt: text("updated_at").notNull(),
 });
+
+// A planned high-Calorie day (a dinner out, a birthday) whose surplus is
+// recovered from the days around it, so the *week* still lands on target.
+// Deliberately its own object rather than more `daily_adjustments` rows:
+// that table is uniquely indexed one-row-per-date with a `min(0)` amount and
+// a carry-forward-specific `sourceDate`, and — more importantly — a plan has
+// to be reviewable and cancellable as a unit. Scattered per-date rows can't
+// tell you which days belonged to which plan.
+//
+// Plan deltas SUM with a carry-forward adjustment on the same date rather
+// than replacing it; the two mechanisms answer different questions and a
+// user can legitimately have both.
+export const eventPlans = sqliteTable("event_plans", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id),
+  eventDate: text("event_date").notNull(),
+  label: text("label"),
+  // 'planned'  — a future day you expect to go over. The event day's own
+  //              target is raised to eventKcal so the rings read normally on
+  //              the night, and the surplus is recovered around it.
+  // 'recovery' — a day already logged over target. The event day gets NO
+  //              delta: rewriting a logged day's target after the fact would
+  //              retroactively make it look "on target", which is a lie the
+  //              diary shouldn't tell. Compensation is trailing-only.
+  kind: text("kind").notNull(),
+  // The event day's intended total intake. An estimate for 'planned'; for
+  // 'recovery' (and for a settled 'planned' plan) it's what was actually
+  // logged, which is why settling can change it.
+  eventKcal: real("event_kcal").notNull(),
+  // 'spread' — leadDays either side of the event.
+  // 'week'   — the rest of the event's own Sun–Sat week. leadDays/trailDays
+  //            still store the resolved counts so the generated window is
+  //            reproducible without re-deriving the calendar.
+  windowMode: text("window_mode").notNull(),
+  leadDays: integer("lead_days").notNull(),
+  trailDays: integer("trail_days").notNull(),
+  // 'even' | 'custom' — same contract as programs.distributionMode: 'custom'
+  // means at least one day was hand-edited, and regeneration (including
+  // settle-up) must not silently overwrite it.
+  distributionMode: text("distribution_mode").notNull(),
+  // Set when the trailing days have been recomputed from the event day's
+  // real logged intake instead of the estimate. Never automatic — the app
+  // does not move targets behind the user's back.
+  settledAt: text("settled_at"),
+  createdAt: text("created_at").notNull(),
+}, (table) => ({
+  userDateIdx: index("event_plans_user_date_idx").on(table.userId, table.eventDate),
+}));
+
+// One row per affected calendar day, including the event day itself on a
+// 'planned' plan (positive kcalDelta). Uniform per-day storage, same reasoning
+// as program_days — a sparse "unlisted days are zero" encoding would make
+// hand-editing a day to exactly zero indistinguishable from removing it.
+export const eventPlanDays = sqliteTable("event_plan_days", {
+  id: text("id").primaryKey(),
+  planId: text("plan_id").notNull().references(() => eventPlans.id),
+  date: text("date").notNull(),
+  // Signed: positive on the event day, negative on the days paying for it.
+  kcalDelta: real("kcal_delta").notNull(),
+  proteinDelta: real("protein_delta").notNull(),
+  carbsDelta: real("carbs_delta").notNull(),
+  fatDelta: real("fat_delta").notNull(),
+}, (table) => ({
+  planDateIdx: uniqueIndex("event_plan_days_plan_date_idx").on(table.planId, table.date),
+}));

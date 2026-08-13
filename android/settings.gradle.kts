@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "MacroTrack"
+rootProject.name = "MacroDaddy"
 include(":app")

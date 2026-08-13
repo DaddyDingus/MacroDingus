@@ -10,6 +10,45 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer components {
+  /* Shared top geometry for Plate Preview and Food Detail. The native WebView
+     is already inset by Android system chrome, so it gets the field-tuned
+     placement that previously lived as three unrelated Tailwind offsets in
+     both components. Browser/PWA rendering stays in normal safe-area flow. */
+  .modal-macro-header {
+    position: relative;
+    flex-shrink: 0;
+    padding-top: calc(env(safe-area-inset-top) + 9px);
+  }
+
+  .modal-macro-header__controls {
+    position: relative;
+    z-index: 20;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 20px;
+    margin-bottom: 2px;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .modal-macro-header--android {
+    top: -15px;
+    margin-bottom: -34px;
+  }
+
+  .modal-macro-header--android .modal-macro-header__controls {
+    top: -19px;
+  }
+
+  .modal-macro-header--android .modal-macro-header__status {
+    position: relative;
+    top: -15px;
+  }
+}
+
 @layer base {
   /* Theme palettes share one design language (page bg < card < raised card
      < divider, each a step lighter) — only how dark "dark" is, and the hue,
