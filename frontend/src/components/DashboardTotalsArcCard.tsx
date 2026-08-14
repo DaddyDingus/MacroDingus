@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useEnergyUnit, kcalToUnit, energyUnitLabel } from "../lib/energyUnit";
+import { useMacroView } from "../lib/macroView";
 
 export interface DashboardTotals {
   calories: number;
@@ -221,8 +222,10 @@ function ArcPage({
 // Two swipeable pages (Remaining / Total) rather than the tap toggle this
 // used to have — same reasoning and same native-scroll-snap technique as
 // MacroSummaryBar.tsx's own Consumed/Remaining pages, so the Home Dashboard
-// and Food Log headers page the same way. Remaining is first so it is the
-// default view. Paging state lives entirely in
+// and Food Log headers page the same way. Which mode lands on the left (page
+// 0, i.e. the default view) is the account-level "Default macro view"
+// setting (More → Units, see lib/macroView.tsx) — swiping right always still
+// reaches the other one. Paging state lives entirely in
 // here now (previously lifted to DashboardScreen as mode/onModeChange, back
 // when ModeToggle needed it there) since nothing else on the screen reads it.
 export default function DashboardTotalsArcCard({
@@ -233,6 +236,9 @@ export default function DashboardTotalsArcCard({
   targets: DashboardTotals | null;
 }) {
   const { unit: energyUnit } = useEnergyUnit();
+  const { view: defaultView } = useMacroView();
+  const firstMode: ArcMode = defaultView === "consumed" ? "total" : "remaining";
+  const secondMode: ArcMode = defaultView === "consumed" ? "remaining" : "total";
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState<0 | 1>(0);
 
@@ -272,12 +278,17 @@ export default function DashboardTotalsArcCard({
           className="flex overflow-x-auto no-scrollbar overscroll-x-contain select-none"
           style={{ scrollSnapType: "x mandatory", touchAction: "pan-x" }}
         >
-          <ArcPage mode="remaining" active={page === 0} totals={totals} targets={targets} energyUnit={energyUnit} />
-          <ArcPage mode="total" active={page === 1} totals={totals} targets={targets} energyUnit={energyUnit} />
+          <ArcPage mode={firstMode} active={page === 0} totals={totals} targets={targets} energyUnit={energyUnit} />
+          <ArcPage mode={secondMode} active={page === 1} totals={totals} targets={targets} energyUnit={energyUnit} />
         </div>
         <div className="flex justify-center gap-1.5 mt-4">
           {([0, 1] as const).map((p) => (
-            <button key={p} onClick={() => goTo(p)} aria-label={p === 0 ? "Show remaining" : "Show consumed"} className="p-1 -m-1">
+            <button
+              key={p}
+              onClick={() => goTo(p)}
+              aria-label={(p === 0 ? firstMode : secondMode) === "remaining" ? "Show remaining" : "Show consumed"}
+              className="p-1 -m-1"
+            >
               <span
                 className={`block h-1.5 rounded-full transition-all duration-300 ${page === p ? "w-4 bg-accent" : "w-1.5 bg-dashboardTrack"}`}
               />

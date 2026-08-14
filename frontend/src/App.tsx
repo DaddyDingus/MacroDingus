@@ -9,6 +9,7 @@ import BottomNav from "./components/BottomNav";
 import ShortcutsBar from "./components/ShortcutsBar";
 import { WeightUnitProvider } from "./lib/weightUnit";
 import { EnergyUnitProvider } from "./lib/energyUnit";
+import { MacroViewProvider } from "./lib/macroView";
 import { ShortcutsProvider } from "./lib/shortcuts";
 import { DashboardLayoutProvider } from "./lib/dashboardLayout";
 import { ThemeProvider } from "./lib/theme";
@@ -84,18 +85,20 @@ export default function App() {
     <ThemeProvider>
       <WeightUnitProvider>
         <EnergyUnitProvider>
-          <ShortcutsProvider>
-            <DashboardLayoutProvider>
-              <ViewedDateProvider>
-                <BrowserRouter>
-                  <NavVisibilityProvider>
-                    <AppRoutes />
-                  </NavVisibilityProvider>
-                </BrowserRouter>
-                <AndroidUpdatePrompt />
-              </ViewedDateProvider>
-            </DashboardLayoutProvider>
-          </ShortcutsProvider>
+          <MacroViewProvider>
+            <ShortcutsProvider>
+              <DashboardLayoutProvider>
+                <ViewedDateProvider>
+                  <BrowserRouter>
+                    <NavVisibilityProvider>
+                      <AppRoutes />
+                    </NavVisibilityProvider>
+                  </BrowserRouter>
+                  <AndroidUpdatePrompt />
+                </ViewedDateProvider>
+              </DashboardLayoutProvider>
+            </ShortcutsProvider>
+          </MacroViewProvider>
         </EnergyUnitProvider>
       </WeightUnitProvider>
     </ThemeProvider>

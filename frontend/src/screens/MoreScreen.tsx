@@ -1,14 +1,12 @@
 import { useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Check, Palette, Ruler, CalendarDays, UtensilsCrossed, CookingPot, Camera, ChevronDown, ChevronRight, AlertTriangle, LogOut, User, KeyRound, Activity, Sparkles, Download, Upload, Database, RefreshCw, ShieldCheck, Share2, Globe2, Smartphone } from "lucide-react";
-import { useRecipes } from "../api/recipes";
+import { Check, Palette, Ruler, CalendarDays, CookingPot, ChevronDown, ChevronRight, AlertTriangle, LogOut, User, KeyRound, Activity, Sparkles, Download, Upload, Database, RefreshCw, ShieldCheck, Share2, Globe2, Smartphone } from "lucide-react";
 import { useAuthStatus, useLogout } from "../api/auth";
 import { useCoachStatus, useSaveProfile } from "../api/coach";
 import { useTheme, THEME_CATALOG } from "../lib/theme";
-import { useEnergyUnit, kcalToUnit, energyUnitLabel, type EnergyUnit } from "../lib/energyUnit";
+import { useEnergyUnit, energyUnitLabel, type EnergyUnit } from "../lib/energyUnit";
 import { useWeightUnit, type WeightUnit } from "../lib/weightUnit";
+import { useMacroView, type MacroView } from "../lib/macroView";
 import { staggerStyle } from "../lib/stagger";
-import RecipeEditSheet from "../components/RecipeEditSheet";
 import ClearAccountDataSheet from "../components/ClearAccountDataSheet";
 import ChangeCheckInDaySheet from "../components/ChangeCheckInDaySheet";
 import RenameAccountSheet from "../components/RenameAccountSheet";
@@ -23,6 +21,8 @@ import { ANDROID_UPDATE_CHECK_EVENT } from "../components/AndroidUpdatePrompt";
 
 const ENERGY_UNITS: EnergyUnit[] = ["kcal", "kj"];
 const WEIGHT_UNITS: WeightUnit[] = ["kg", "lb"];
+const MACRO_VIEWS: MacroView[] = ["remaining", "consumed"];
+const MACRO_VIEW_LABELS: Record<MacroView, string> = { remaining: "Remaining", consumed: "Consumed" };
 const DAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 function SectionHeader({ icon, label }: { icon: React.ReactNode; label: string }) {
@@ -35,8 +35,6 @@ function SectionHeader({ icon, label }: { icon: React.ReactNode; label: string }
 }
 
 export default function MoreScreen() {
-  const navigate = useNavigate();
-  const recipes = useRecipes();
   const authStatus = useAuthStatus();
   const logout = useLogout();
   const coachStatus = useCoachStatus();
@@ -47,7 +45,7 @@ export default function MoreScreen() {
   const { theme, setTheme } = useTheme();
   const { unit: energyUnit, setUnit: setEnergyUnit } = useEnergyUnit();
   const { unit: weightUnit, setUnit: setWeightUnit } = useWeightUnit();
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const { view: macroView, setView: setMacroView } = useMacroView();
   const [showClearData, setShowClearData] = useState(false);
   const [showCheckInDaySheet, setShowCheckInDaySheet] = useState(false);
   const [showRenameSheet, setShowRenameSheet] = useState(false);
@@ -202,7 +200,7 @@ export default function MoreScreen() {
               ))}
             </div>
           </div>
-          <div className="px-4 py-2.5 flex items-center justify-between">
+          <div className="px-4 py-2.5 flex items-center justify-between border-b border-line/60">
             <span className="text-sm">Weight unit</span>
             <div className="flex rounded-full border border-line overflow-hidden text-xs">
               {WEIGHT_UNITS.map((u) => (
@@ -213,6 +211,24 @@ export default function MoreScreen() {
                   style={weightUnit === u ? { color: "#0B1210" } : undefined}
                 >
                   {u}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="px-4 py-2.5 flex items-center justify-between">
+            <span className="min-w-0 flex-1 pr-3">
+              <span className="block text-sm">Default macro view</span>
+              <span className="block text-xs text-muted">Left page of every swipeable macro bar</span>
+            </span>
+            <div className="flex rounded-full border border-line overflow-hidden text-xs shrink-0">
+              {MACRO_VIEWS.map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setMacroView(v)}
+                  className={`px-2.5 py-1 ${macroView === v ? "bg-accent" : "text-muted"}`}
+                  style={macroView === v ? { color: "#0B1210" } : undefined}
+                >
+                  {MACRO_VIEW_LABELS[v]}
                 </button>
               ))}
             </div>
@@ -317,47 +333,12 @@ export default function MoreScreen() {
         </section>
 
         <section className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
-          <SectionHeader icon={<UtensilsCrossed size={15} strokeWidth={2} className="text-muted" />} label="My Recipes" />
-          {recipes.data?.length === 0 && (
-            <p className="px-4 py-4 text-sm text-muted">
-              No recipes yet — create one from the "Add food" sheet on any meal.
-            </p>
-          )}
-          {recipes.data?.map((r) => (
-            <button
-              key={r.id}
-              onClick={() => setEditingId(r.id)}
-              className="w-full flex items-center justify-between px-4 py-2.5 border-b border-line/60 last:border-b-0 text-left active:bg-surface-raised"
-            >
-              <span className="min-w-0">
-                <span className="block text-sm truncate">{r.name}</span>
-                <span className="block text-xs text-muted tabular">
-                  {r.servings} serving{r.servings === 1 ? "" : "s"} ·{" "}
-                  {Math.round(kcalToUnit(r.food.caloriesPer100g, energyUnit))} {energyUnitLabel(energyUnit)}/100g
-                </span>
-              </span>
-            </button>
-          ))}
-        </section>
-
-        <section className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
           <button
             onClick={() => setShowAiSettingsSheet(true)}
             className="w-full flex items-center gap-3 px-4 py-2.5 text-left active:bg-surface-raised"
           >
             <Sparkles size={15} strokeWidth={2} className="text-muted shrink-0" />
             <span className="text-sm font-medium flex-1 min-w-0">AI features</span>
-            <ChevronRight size={16} strokeWidth={2.5} className="text-muted shrink-0" />
-          </button>
-        </section>
-
-        <section className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
-          <button
-            onClick={() => navigate("/photos")}
-            className="w-full flex items-center gap-3 px-4 py-2.5 text-left active:bg-surface-raised"
-          >
-            <Camera size={15} strokeWidth={2} className="text-muted shrink-0" />
-            <span className="text-sm font-medium flex-1 min-w-0">Progress photos</span>
             <ChevronRight size={16} strokeWidth={2.5} className="text-muted shrink-0" />
           </button>
         </section>
@@ -458,7 +439,6 @@ export default function MoreScreen() {
         </section>
       </main>
 
-      {editingId && <RecipeEditSheet id={editingId} onClose={() => setEditingId(null)} />}
       {showClearData && <ClearAccountDataSheet onClose={() => setShowClearData(false)} />}
       {showCheckInDaySheet && profile && (
         <ChangeCheckInDaySheet

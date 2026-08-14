@@ -60,6 +60,12 @@ export interface LogEntry {
   loggedAt: string;
   food: Food;
   nutrition: Nutrition;
+  // Display-only record of what unit this entry was typed in — see
+  // backend/src/db/schema.ts's note on logs.unitType. Null on entries logged
+  // before this existed, or written through a path that doesn't track a unit
+  // (bulk copy/move, quick add).
+  unitType?: string | null;
+  unitMeasureName?: string | null;
 }
 
 export interface DayLog {

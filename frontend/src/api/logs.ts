@@ -78,7 +78,13 @@ export function useAddLog(date: string) {
     // of "now" — used by the Food Log's per-group "+" button so an item
     // added there joins that group's own time instead of always landing at
     // the moment the sheet happened to be opened.
-    mutationFn: (input: { food: Food; quantityGrams: number; loggedAt?: string }) =>
+    mutationFn: (input: {
+      food: Food;
+      quantityGrams: number;
+      loggedAt?: string;
+      unitType?: string;
+      unitMeasureName?: string;
+    }) =>
       apiFetch<LogEntry>("/logs", {
         method: "POST",
         body: JSON.stringify({
@@ -86,6 +92,8 @@ export function useAddLog(date: string) {
           foodId: input.food.id,
           quantityGrams: input.quantityGrams,
           loggedAt: input.loggedAt ?? localIsoNoTz(),
+          unitType: input.unitType,
+          unitMeasureName: input.unitMeasureName,
         }),
       }),
     onMutate: async (input) => {
@@ -129,10 +137,14 @@ export function useAddLog(date: string) {
 export function useUpdateLogQuantity(date: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { id: string; quantityGrams: number }) =>
+    mutationFn: (input: { id: string; quantityGrams: number; unitType?: string; unitMeasureName?: string }) =>
       apiFetch<LogEntry>(`/logs/${input.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ quantityGrams: input.quantityGrams }),
+        body: JSON.stringify({
+          quantityGrams: input.quantityGrams,
+          unitType: input.unitType,
+          unitMeasureName: input.unitMeasureName,
+        }),
       }),
     onMutate: async (input) => {
       await qc.cancelQueries({ queryKey: ["logs", date] });
@@ -168,7 +180,10 @@ export function useBulkAddLog(date: string) {
     // the batch — the Food Log's "+" button stages/commits through this
     // path (the plate's normal multi-item commit), so it needs the override
     // too, not just the single-item useAddLog.
-    mutationFn: (input: { entries: { food: Food; quantityGrams: number }[]; loggedAt?: string }) =>
+    mutationFn: (input: {
+      entries: { food: Food; quantityGrams: number; unitType?: string; unitMeasureName?: string }[];
+      loggedAt?: string;
+    }) =>
       apiFetch<{ entries: LogEntry[] }>("/logs/bulk", {
         method: "POST",
         body: JSON.stringify({
@@ -177,6 +192,8 @@ export function useBulkAddLog(date: string) {
           entries: input.entries.map((e) => ({
             foodId: e.food.id,
             quantityGrams: e.quantityGrams,
+            unitType: e.unitType,
+            unitMeasureName: e.unitMeasureName,
           })),
         }),
       }),

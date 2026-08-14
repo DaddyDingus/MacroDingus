@@ -239,6 +239,13 @@
       "when": 1786517219388,
       "tag": "0033_admin_role",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1786683877182,
+      "tag": "0034_logs_unit_type",
+      "breakpoints": true
     }
   ]
 }

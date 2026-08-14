@@ -10,6 +10,11 @@ export interface PlateItem {
   key: string;
   food: Food;
   quantityGrams: number;
+  // Display-only, mirrors LogEntry.unitType/unitMeasureName — carried
+  // through to the eventual POST /logs/bulk write so a plate item staged as
+  // "2 servings" from FoodDetailScreen is remembered as such.
+  unitType?: string;
+  unitMeasureName?: string;
 }
 
 export interface PlateState {
@@ -17,8 +22,8 @@ export interface PlateState {
   // quantityGrams is optional — the quick "+" add and Quick Add tab both
   // still just want the food's own default (serving size, or 100g), while
   // FoodDetailScreen's "Add to Plate" passes the specific amount the user
-  // dialed in there.
-  addToPlate: (food: Food, quantityGrams?: number) => void;
+  // dialed in there (and the unit it was dialed in with).
+  addToPlate: (food: Food, quantityGrams?: number, unit?: { unitType: string; unitMeasureName?: string }) => void;
   removeFromPlate: (key: string) => void;
   updatePlateItemQuantity: (key: string, quantityGrams: number) => void;
   clearPlate: () => void;
@@ -42,10 +47,16 @@ export function usePlateState(): PlateState {
   const [editingPlateKey, setEditingPlateKey] = useState<string | null>(null);
   const [nutritionView, setNutritionView] = useState<"plate" | "day">("plate");
 
-  function addToPlate(food: Food, quantityGrams?: number) {
+  function addToPlate(food: Food, quantityGrams?: number, unit?: { unitType: string; unitMeasureName?: string }) {
     setStagedPlate((prev) => [
       ...prev,
-      { key: crypto.randomUUID(), food, quantityGrams: quantityGrams ?? food.servingSizeGrams ?? 100 },
+      {
+        key: crypto.randomUUID(),
+        food,
+        quantityGrams: quantityGrams ?? food.servingSizeGrams ?? 100,
+        unitType: unit?.unitType,
+        unitMeasureName: unit?.unitMeasureName,
+      },
     ]);
   }
 

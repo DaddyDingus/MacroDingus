@@ -44,11 +44,16 @@ async function attachIngredientPreviews(entries: { food: typeof foods.$inferSele
   }
 }
 
+// unitType/unitMeasureName are display-only (see schema.ts) — echoed back so
+// a client editing this exact entry can reopen it in the same unit it was
+// entered in, but never consulted for nutrition math.
 const logInput = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   foodId: z.string(),
   quantityGrams: z.number().positive(),
   loggedAt: z.string().optional(),
+  unitType: z.string().optional(),
+  unitMeasureName: z.string().optional(),
 });
 
 async function entryWithNutrition(logId: string, userId: string) {
@@ -65,6 +70,8 @@ async function entryWithNutrition(logId: string, userId: string) {
     loggedAt: row.log.loggedAt,
     food: row.food,
     nutrition: scaleNutrition(row.food, row.log.quantityGrams),
+    unitType: row.log.unitType,
+    unitMeasureName: row.log.unitMeasureName,
   };
 }
 
@@ -85,6 +92,8 @@ export function registerLogRoutes(app: FastifyInstance) {
       loggedAt: log.loggedAt,
       food,
       nutrition: scaleNutrition(food, log.quantityGrams),
+      unitType: log.unitType,
+      unitMeasureName: log.unitMeasureName,
     }));
     await attachIngredientPreviews(entries);
 
@@ -136,6 +145,8 @@ export function registerLogRoutes(app: FastifyInstance) {
       quantityGrams: parsed.data.quantityGrams,
       loggedAt: parsed.data.loggedAt ?? now,
       createdAt: now,
+      unitType: parsed.data.unitType ?? null,
+      unitMeasureName: parsed.data.unitMeasureName ?? null,
     });
 
     reply.code(201);
@@ -158,6 +169,8 @@ export function registerLogRoutes(app: FastifyInstance) {
           z.object({
             foodId: z.string(),
             quantityGrams: z.number().positive(),
+            unitType: z.string().optional(),
+            unitMeasureName: z.string().optional(),
           })
         )
         .min(1)
@@ -181,6 +194,8 @@ export function registerLogRoutes(app: FastifyInstance) {
       quantityGrams: e.quantityGrams,
       loggedAt,
       createdAt: now,
+      unitType: e.unitType ?? null,
+      unitMeasureName: e.unitMeasureName ?? null,
     }));
     await db.insert(logs).values(rows);
 
@@ -194,6 +209,8 @@ export function registerLogRoutes(app: FastifyInstance) {
           loggedAt: row.loggedAt,
           food,
           nutrition: scaleNutrition(food, row.quantityGrams),
+          unitType: row.unitType,
+          unitMeasureName: row.unitMeasureName,
         };
       }),
     };
@@ -325,6 +342,8 @@ export function registerLogRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const patchSchema = z.object({
       quantityGrams: z.number().positive().optional(),
+      unitType: z.string().optional(),
+      unitMeasureName: z.string().optional(),
     });
     const parsed = patchSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });

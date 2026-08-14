@@ -44,6 +44,39 @@ function targetFor(targets: MacroTargets | null | undefined, key: "calories" | "
 const GRAMS_PER_OZ = 28.3495;
 const GRAMS_PER_LB = 453.592;
 
+type UnitOption = { key: string; label: string; grams: number };
+
+function buildUnitOptions(food: Food): UnitOption[] {
+  return [
+    { key: "g", label: "g", grams: 1 },
+    { key: "oz", label: "oz", grams: GRAMS_PER_OZ },
+    { key: "lb", label: "lb", grams: GRAMS_PER_LB },
+    ...foodMeasures(food).map((measure, index) => ({ key: `measure:${index}`, label: measure.name, grams: measure.grams })),
+  ];
+}
+
+// Resolves a previously-logged unit choice (see logs.unitType/unitMeasureName)
+// back into one of this food's *current* unit options — measures are matched
+// by name rather than a stored index, since a food's measuresJson can change
+// shape between logs. Falls back to grams (this food's always-present base
+// unit) when there's no stored preference or the named measure no longer
+// exists, and always re-derives the displayed quantity from live quantityGrams
+// rather than trusting a stored count, so it can't drift from the real value.
+function resolveUnitSelection(
+  units: UnitOption[],
+  quantityGrams: number,
+  unitType?: string | null,
+  unitMeasureName?: string | null
+): { unitKey: string; quantityInputValue: string } {
+  let matched = units[0];
+  if (unitType === "oz" || unitType === "lb") {
+    matched = units.find((u) => u.key === unitType) ?? matched;
+  } else if (unitType === "measure" && unitMeasureName) {
+    matched = units.find((u) => u.key.startsWith("measure:") && u.label === unitMeasureName) ?? matched;
+  }
+  return { unitKey: matched.key, quantityInputValue: String(Number((quantityGrams / matched.grams).toFixed(3))) };
+}
+
 // Same FDA %DV reference amounts as the MicroMeta dailyValue fields below,
 // just for the four nutrients that get their own dedicated Nutrition field
 // instead of living in the microsJson bag. Used only to size each row's bar
@@ -366,6 +399,8 @@ export default function FoodDetailScreen({
   targets,
   stagedCount = 0,
   initialQuantityGrams,
+  initialUnitType,
+  initialUnitMeasureName,
   backLabel = "Back to search results",
   onBack,
   onAdd,
@@ -398,10 +433,15 @@ export default function FoodDetailScreen({
   // instead of the browse-and-stage flow's flat 100 — set alongside
   // `editing` below when opened to edit rather than add.
   initialQuantityGrams?: number;
+  // The unit that entry was originally logged in (see logs.unitType/
+  // unitMeasureName) — set alongside `editing`/`initialQuantityGrams` so
+  // reopening a "2 servings" entry shows 2 servings, not its gram equivalent.
+  initialUnitType?: string;
+  initialUnitMeasureName?: string;
   backLabel?: string;
   onBack: () => void;
-  onAdd: (food: Food, quantityGrams: number) => void;
-  onLogFoods: (food: Food, quantityGrams: number) => void;
+  onAdd: (food: Food, quantityGrams: number, unit?: { unitType: string; unitMeasureName?: string }) => void;
+  onLogFoods: (food: Food, quantityGrams: number, unit?: { unitType: string; unitMeasureName?: string }) => void;
   // Opens the custom food creator prefilled with this food's own data (see
   // CreateFoodForm's prefillFood) — lets a tweaked copy get saved as a
   // separate new food rather than editing this one.
@@ -415,7 +455,7 @@ export default function FoodDetailScreen({
   // since AddFoodSheet always has a real plate (empty or not) to pass them
   // from regardless of which mode this screen is in.
   editing?: {
-    onSave: (quantityGrams: number) => void;
+    onSave: (quantityGrams: number, unit?: { unitType: string; unitMeasureName?: string }) => void;
     onDelete: () => void;
   };
   onDeleteFood?: () => void;
@@ -461,10 +501,23 @@ export default function FoodDetailScreen({
   // be misread as a raw gram amount.
   const [entryMode, setEntryMode] = useState<"unit" | "macro">("unit");
   const [macroKey, setMacroKey] = useState<"calories" | "protein" | "fat" | "carbs">("calories");
+  // Editing an already-logged entry seeds both quantity and unit from that
+  // entry's own values (initialQuantityGrams/initialUnitType/
+  // initialUnitMeasureName) synchronously — no history fetch needed, unlike
+  // the fresh-log prefill effect below. A fresh log defaults to grams here;
+  // the lastQuantity effect below corrects it once that async fetch resolves.
   useEffect(() => {
-    setUnit("g");
     setEntryMode("unit");
     setMacroKey("calories");
+    if (editing) {
+      const grams = initialQuantityGrams ?? 100;
+      const resolved = resolveUnitSelection(buildUnitOptions(food), grams, initialUnitType, initialUnitMeasureName);
+      setUnit(resolved.unitKey);
+      setQuantityInput(resolved.quantityInputValue);
+    } else {
+      setUnit("g");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [food.id]);
   // Quantity entry is a custom keypad, not a real <input> — a real one was
   // tried here before and reverted specifically because a back press had
@@ -541,19 +594,32 @@ export default function FoodDetailScreen({
   // is current, falling back to the flat 100 default once resolved if this
   // food has never been logged before.
   const lastQuantity = useLastLoggedQuantity(food.id, !editing);
+  const units = buildUnitOptions(food);
   useEffect(() => {
     if (editing) return;
-    setQuantityInput(String(lastQuantity.data?.quantityGrams ?? initialQuantityGrams ?? 100));
+    const grams = lastQuantity.data?.quantityGrams ?? initialQuantityGrams ?? 100;
+    if (lastQuantity.data?.quantityGrams != null) {
+      const resolved = resolveUnitSelection(units, grams, lastQuantity.data.unitType, lastQuantity.data.unitMeasureName);
+      setUnit(resolved.unitKey);
+      setQuantityInput(resolved.quantityInputValue);
+    } else {
+      setQuantityInput(String(grams));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [food.id, lastQuantity.data, editing, initialQuantityGrams]);
 
-  const units = [
-    { key: "g", label: "g", grams: 1 },
-    { key: "oz", label: "oz", grams: GRAMS_PER_OZ },
-    { key: "lb", label: "lb", grams: GRAMS_PER_LB },
-    ...foodMeasures(food).map((measure, index) => ({ key: `measure:${index}`, label: measure.name, grams: measure.grams })),
-  ];
   const activeUnit = units.find((candidate) => candidate.key === unit) ?? units[0];
   const gramsPerUnit = activeUnit.grams;
+  // What to persist alongside this commit's quantityGrams (see logs.unitType/
+  // unitMeasureName) — undefined in macro-entry mode, since "150 calories"
+  // isn't a unit choice the way "2 servings" is, and undefined means the
+  // write path leaves the columns null rather than recording something
+  // misleading.
+  function currentUnitMeta(): { unitType: string; unitMeasureName?: string } | undefined {
+    if (entryMode !== "unit") return undefined;
+    if (unit === "g" || unit === "oz" || unit === "lb") return { unitType: unit };
+    return activeUnit.key.startsWith("measure:") ? { unitType: "measure", unitMeasureName: activeUnit.label } : undefined;
+  }
   // Grams-per-unit for each macro, used to solve grams from an entered macro
   // amount (grams = entered * 100 / per100g) — the inverse of scaleNutrition.
   const macroPer100g: Record<"calories" | "protein" | "fat" | "carbs", number> = {
@@ -771,7 +837,7 @@ export default function FoodDetailScreen({
             lg). items-end bottom-aligns the four columns so calories'
             missing badge (there's nothing to take a caloric-ratio "% of
             itself") doesn't throw off the row. */}
-        <div className="px-4 pt-1 pb-1.5 grid grid-cols-4 gap-2 items-end">
+        <div className="px-4 pt-4 pb-1.5 grid grid-cols-4 gap-2 items-end">
           <div className="col-span-1">
             <p className="tabular text-2xl font-bold text-calories leading-none">{fmt(kcalToUnit(n.calories, energyUnit))}</p>
             <p className="text-[10px] text-white/60 mt-0.5">{energyUnitLabel(energyUnit)}</p>
@@ -1131,7 +1197,7 @@ export default function FoodDetailScreen({
             onLeft={editing.onDelete}
             leftDisabled={false}
             rightLabel="Save"
-            onRight={() => editing.onSave(quantityGrams)}
+            onRight={() => editing.onSave(quantityGrams, currentUnitMeta())}
             rightDisabled={quantityGrams <= 0}
           />
         ) : (
@@ -1141,10 +1207,10 @@ export default function FoodDetailScreen({
                 ? `${commitLabel} (${stagedCount + (quantityGrams > 0 ? 1 : 0)})`
                 : commitLabel
             }
-            onLeft={() => onLogFoods(food, quantityGrams)}
+            onLeft={() => onLogFoods(food, quantityGrams, currentUnitMeta())}
             leftDisabled={quantityGrams <= 0 && stagedCount === 0}
             rightLabel="Add"
-            onRight={() => onAdd(food, quantityGrams)}
+            onRight={() => onAdd(food, quantityGrams, currentUnitMeta())}
             rightDisabled={quantityGrams <= 0}
           />
         )}

@@ -798,9 +798,9 @@ export default function AddFoodSheet({
     }
   }
 
-  function saveEditedQuantity(quantityGrams: number) {
+  function saveEditedQuantity(quantityGrams: number, unit?: { unitType: string; unitMeasureName?: string }) {
     if (!editingEntry) return;
-    updateLog.mutate({ id: editingEntry.id, quantityGrams });
+    updateLog.mutate({ id: editingEntry.id, quantityGrams, unitType: unit?.unitType, unitMeasureName: unit?.unitMeasureName });
     closeSheet();
   }
 
@@ -870,7 +870,12 @@ export default function AddFoodSheet({
   // a checked-rows Set.
   function confirmPlate() {
     if (stagedPlate.length === 0 || bulkAddLog.isPending) return;
-    const entries = stagedPlate.map((item) => ({ food: item.food, quantityGrams: item.quantityGrams }));
+    const entries = stagedPlate.map((item) => ({
+      food: item.food,
+      quantityGrams: item.quantityGrams,
+      unitType: item.unitType,
+      unitMeasureName: item.unitMeasureName,
+    }));
     if (onPickItems) {
       onPickItems(entries);
       clearPlate();
@@ -896,11 +901,22 @@ export default function AddFoodSheet({
   // reading `stagedPlate` immediately after an addToPlate() call in the same
   // handler would still see the pre-update array (state hasn't re-rendered
   // yet), silently dropping the just-added item from the log.
-  function confirmPlateWithExtra(food: Food, quantityGrams: number) {
+  function confirmPlateWithExtra(
+    food: Food,
+    quantityGrams: number,
+    unit?: { unitType: string; unitMeasureName?: string }
+  ) {
     if ((stagedPlate.length === 0 && quantityGrams <= 0) || bulkAddLog.isPending) return;
     const entries = [
-      ...stagedPlate.map((item) => ({ food: item.food, quantityGrams: item.quantityGrams })),
-      ...(quantityGrams > 0 ? [{ food, quantityGrams }] : []),
+      ...stagedPlate.map((item) => ({
+        food: item.food,
+        quantityGrams: item.quantityGrams,
+        unitType: item.unitType,
+        unitMeasureName: item.unitMeasureName,
+      })),
+      ...(quantityGrams > 0
+        ? [{ food, quantityGrams, unitType: unit?.unitType, unitMeasureName: unit?.unitMeasureName }]
+        : []),
     ];
     if (onPickItems) {
       onPickItems(entries);
@@ -1374,7 +1390,7 @@ export default function AddFoodSheet({
             initialQuantityGrams={editingEntry?.quantityGrams}
             backLabel={editingEntry ? "Close" : "Back to search results"}
             onBack={() => (editingEntry ? closeSheet() : changeStep("browse"))}
-            onAdd={(food, quantityGrams) => {
+            onAdd={(food, quantityGrams, unit) => {
               if (!editingEntry && activeTab === "search") recordFoodSearchSelection(query, food);
               // Quick-log mode (QuickActionFlow's recipe picker): "Add"
               // commits immediately and closes, same as "Log Foods" — this
@@ -1383,7 +1399,7 @@ export default function AddFoodSheet({
               // losing the pick if the sheet gets closed before a second,
               // separate "Log Foods" tap (see quickAddPlate.tsx).
               if (quickLogInitialFood) {
-                confirmPlateWithExtra(food, quantityGrams);
+                confirmPlateWithExtra(food, quantityGrams, unit);
                 return;
               }
               // Recipe-picker mode: Food Detail's "Add" commits straight to
@@ -1397,18 +1413,20 @@ export default function AddFoodSheet({
               if (onPickItems) {
                 onPickItems([{ food, quantityGrams }]);
               } else {
-                addToPlate(food, quantityGrams);
+                addToPlate(food, quantityGrams, unit);
               }
               changeStep("browse");
             }}
-            onLogFoods={(food, quantityGrams) => {
+            onLogFoods={(food, quantityGrams, unit) => {
               if (!editingEntry && activeTab === "search") recordFoodSearchSelection(query, food);
-              confirmPlateWithExtra(food, quantityGrams);
+              confirmPlateWithExtra(food, quantityGrams, unit);
             }}
             hideTargetsUi={!!onPickItems}
             onSaveAsCustom={openCreateFromFood}
             isFavorite={favoriteFoodIds.has(selectedFood.id)}
             onToggleFavorite={toggleFavorite}
+            initialUnitType={editingEntry?.unitType ?? undefined}
+            initialUnitMeasureName={editingEntry?.unitMeasureName ?? undefined}
             editing={editingEntry ? { onSave: saveEditedQuantity, onDelete: () => setShowDeleteConfirm(true) } : undefined}
             // Not shown while editing an already-logged entry: Edit/Duplicate
             // land on the "recipe" step and Explode lands on "browse", and

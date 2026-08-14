@@ -382,12 +382,16 @@ export function registerFoodRoutes(app: FastifyInstance) {
   app.get("/api/foods/:id/last-quantity", async (req) => {
     const { id } = req.params as { id: string };
     const [row] = await db
-      .select({ quantityGrams: logs.quantityGrams })
+      .select({ quantityGrams: logs.quantityGrams, unitType: logs.unitType, unitMeasureName: logs.unitMeasureName })
       .from(logs)
       .where(and(eq(logs.foodId, id), eq(logs.userId, req.userId!)))
       .orderBy(desc(logs.loggedAt))
       .limit(1);
-    return { quantityGrams: row?.quantityGrams ?? null };
+    return {
+      quantityGrams: row?.quantityGrams ?? null,
+      unitType: row?.unitType ?? null,
+      unitMeasureName: row?.unitMeasureName ?? null,
+    };
   });
 
   app.post("/api/foods", async (req, reply) => {

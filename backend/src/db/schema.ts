@@ -116,6 +116,14 @@ export const logs = sqliteTable("logs", {
   quantityGrams: real("quantity_grams").notNull(),
   loggedAt: text("logged_at").notNull(), // ISO timestamp — drives smart-history time-of-day ranking
   createdAt: text("created_at").notNull(),
+  // Display-only: what unit the entry was actually typed in ("g" | "oz" |
+  // "lb" | "measure"), and the measure's name when unitType is "measure" —
+  // nutrition is always computed from quantityGrams, never these. Nullable
+  // because most write paths (bulk copy, move, quick add) don't know a unit
+  // and leave both null; that's a real "unknown", not "grams" — the
+  // last-quantity prefill treats it as no preference and falls back to g.
+  unitType: text("unit_type"),
+  unitMeasureName: text("unit_measure_name"),
 }, (table) => ({
   dateIdx: index("logs_date_idx").on(table.date),
   foodIdx: index("logs_food_idx").on(table.foodId),

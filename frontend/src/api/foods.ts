@@ -60,7 +60,10 @@ export function useFoodSearch(query: string, debouncedRemoteQuery: string) {
 export function useLastLoggedQuantity(foodId: string, enabled: boolean) {
   return useQuery({
     queryKey: ["foods", foodId, "last-quantity"],
-    queryFn: () => apiFetch<{ quantityGrams: number | null }>(`/foods/${foodId}/last-quantity`),
+    queryFn: () =>
+      apiFetch<{ quantityGrams: number | null; unitType: string | null; unitMeasureName: string | null }>(
+        `/foods/${foodId}/last-quantity`
+      ),
     enabled,
   });
 }

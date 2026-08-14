@@ -11,6 +11,10 @@ const MIN_WINDOW_DAYS = 7;
 // only has a few days of data, instead of collapsing every preset to the
 // tiny data span (and, for one day of data, a zero-width window).
 const MAX_WINDOW_DAYS = 3650;
+// Same axis-lock distance as useRubberBandScroll's own AXIS_LOCK_THRESHOLD_PX
+// — below this, a real finger's initial jitter commits to neither a chart
+// pan nor a page scroll.
+const AXIS_LOCK_THRESHOLD_PX = 6;
 
 export interface WindowRange {
   start: number; // day-index, see lib/date.ts's dayIndex
@@ -74,8 +78,15 @@ export function useChartGesture({
 
   const overlayRef = useRef<HTMLDivElement>(null);
   const pointers = useRef<Map<number, { x: number; y: number }>>(new Map());
-  const panGesture = useRef<{ startClientX: number; startWindow: WindowRange } | null>(null);
+  const panGesture = useRef<{ startClientX: number; startClientY: number; startWindow: WindowRange } | null>(null);
   const pinchGesture = useRef<{ startDistance: number; startWindow: WindowRange; anchorTs: number } | null>(null);
+  // Single-finger gestures start "pending" — undecided whether the finger
+  // means to pan the chart or scroll the page — and lock to one or the
+  // other once movement clears AXIS_LOCK_THRESHOLD_PX (see handlePointerMove
+  // and the touchmove listener below). A pinch (always 2 fingers) is
+  // unambiguous and locks to "horizontal" immediately, same as a pan
+  // resuming after one finger of a pinch lifts.
+  const axisIntent = useRef<"none" | "pending" | "horizontal" | "vertical">("none");
   const rafId = useRef<number | null>(null);
   const pendingView = useRef<WindowRange | null>(null);
   // A separate rAF handle from the gesture-coalescing one above — a preset
@@ -155,6 +166,27 @@ export function useChartGesture({
     };
   }, []);
 
+  // `touch-action: pan-y` on the overlay (below) is what lets a vertical
+  // finger keep scrolling the page at all, but per this codebase's own
+  // established gotcha (see useRubberBandScroll.ts and CLAUDE.md's
+  // pointerdown/touch-action note) neither `touch-action` changed mid-
+  // gesture nor a Pointer Event's own preventDefault() can reliably stop a
+  // scroll already recognized as vertical — only a non-passive touchmove's
+  // preventDefault() can. The axis-lock decision itself still lives in
+  // handlePointerMove above (so the pan math and the lock share one source
+  // of truth); this listener's only job is enforcing that decision against
+  // native scrolling once it lands on "horizontal", so a diagonal finger
+  // can't pan the chart and scroll the page at the same time.
+  useEffect(() => {
+    const el = overlayRef.current;
+    if (!el) return;
+    function onTouchMove(e: TouchEvent) {
+      if (axisIntent.current === "horizontal" && e.cancelable) e.preventDefault();
+    }
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    return () => el.removeEventListener("touchmove", onTouchMove);
+  }, []);
+
   function selectPreset(days: number) {
     const end = todayTs;
     const target = clampWindow(end - (days - 1), end);
@@ -197,8 +229,9 @@ export function useChartGesture({
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     if (pointers.current.size === 1) {
-      panGesture.current = { startClientX: e.clientX, startWindow: viewRef.current };
+      panGesture.current = { startClientX: e.clientX, startClientY: e.clientY, startWindow: viewRef.current };
       pinchGesture.current = null;
+      axisIntent.current = "pending";
     } else if (pointers.current.size === 2) {
       panGesture.current = null;
       const [a, b] = [...pointers.current.values()];
@@ -207,6 +240,9 @@ export function useChartGesture({
       const { start, end } = viewRef.current;
       const anchorTs = start + overlayFraction(midX) * (end - start);
       pinchGesture.current = { startDistance, startWindow: viewRef.current, anchorTs };
+      // A pinch is an unambiguous 2-finger chart gesture — no need to wait
+      // and see like a single-finger touch does.
+      axisIntent.current = "horizontal";
     }
   }
 
@@ -228,6 +264,23 @@ export function useChartGesture({
     }
 
     if (pointers.current.size === 1 && panGesture.current) {
+      if (axisIntent.current === "pending") {
+        const dx = Math.abs(e.clientX - panGesture.current.startClientX);
+        const dy = Math.abs(e.clientY - panGesture.current.startClientY);
+        if (Math.max(dx, dy) < AXIS_LOCK_THRESHOLD_PX) return;
+        axisIntent.current = dx > dy ? "horizontal" : "vertical";
+        if (axisIntent.current === "vertical") {
+          // The finger means to scroll the page, not pan the chart —
+          // release this gesture entirely so native vertical scrolling (see
+          // the touchmove listener below, which stops preventDefault-ing
+          // once this ref reads "vertical") takes over cleanly with no
+          // partial pan left applied.
+          pointers.current.clear();
+          panGesture.current = null;
+          return;
+        }
+      }
+      if (axisIntent.current === "vertical") return;
       const rect = overlayRef.current?.getBoundingClientRect();
       const plotWidth = Math.max(rect?.width ?? 1, 1);
       const { start, end } = panGesture.current.startWindow;
@@ -250,11 +303,16 @@ export function useChartGesture({
     pinchGesture.current = null;
     if (pointers.current.size === 1) {
       // Downgraded from a pinch to a single finger — resume as a pan from
-      // wherever the view (and the remaining finger) currently are.
+      // wherever the view (and the remaining finger) currently are. Already
+      // mid-gesture (the pinch itself locked axisIntent to "horizontal" on
+      // pointerdown), so this resumes panning immediately rather than
+      // re-arming the pending threshold a second finger already cleared.
       const [remaining] = [...pointers.current.values()];
-      panGesture.current = { startClientX: remaining.x, startWindow: viewRef.current };
+      panGesture.current = { startClientX: remaining.x, startClientY: remaining.y, startWindow: viewRef.current };
+      axisIntent.current = "horizontal";
     } else {
       panGesture.current = null;
+      axisIntent.current = "none";
     }
   }
 
