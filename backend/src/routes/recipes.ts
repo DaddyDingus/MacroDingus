@@ -25,6 +25,12 @@ const recipeInput = z.object({
   // total weight (water loss/gain) without changing total calories, so
   // nutrition-per-gram of the finished product stays accurate.
   totalWeightGrams: z.number().positive().optional(),
+  cookwareCalculation: z.object({
+    cookwareId: z.string().nullable(),
+    cookwareName: z.string().min(1),
+    tareWeightGrams: z.number().positive(),
+    scaleWeightGrams: z.number().positive(),
+  }).nullable().optional(),
   ingredients: z
     .array(
       z.object({
@@ -76,6 +82,15 @@ async function recipeDetail(recipeId: string, userId: string) {
     name: recipe.name,
     servings: recipe.servings,
     totalWeightGrams: recipe.totalWeightGrams,
+    cookwareCalculation:
+      recipe.cookwareName && recipe.cookwareTareWeightGrams != null && recipe.scaleWeightGrams != null
+        ? {
+            cookwareId: recipe.cookwareId,
+            cookwareName: recipe.cookwareName,
+            tareWeightGrams: recipe.cookwareTareWeightGrams,
+            scaleWeightGrams: recipe.scaleWeightGrams,
+          }
+        : null,
     food,
     ingredients: ingredientRows.map(({ ingredient, food: ingredientFood }) => ({
       foodId: ingredientFood.id,
@@ -175,7 +190,12 @@ export function registerRecipeRoutes(app: FastifyInstance) {
 
     const { name, icon, servings, ingredients } = parsed.data;
     const ingredientSumGrams = ingredients.reduce((sum, i) => sum + i.quantityGrams, 0);
-    const totalWeightGrams = parsed.data.totalWeightGrams ?? ingredientSumGrams;
+    const calculation = parsed.data.cookwareCalculation ?? null;
+    const calculatedFoodWeight = calculation ? calculation.scaleWeightGrams - calculation.tareWeightGrams : null;
+    if (calculatedFoodWeight != null && calculatedFoodWeight <= 0) {
+      return reply.code(400).send({ error: "scale weight must exceed cookware weight" });
+    }
+    const totalWeightGrams = calculatedFoodWeight ?? parsed.data.totalWeightGrams ?? ingredientSumGrams;
 
     const nutrition = await computeNutritionPer100g(ingredients, totalWeightGrams);
     if (!nutrition) return reply.code(400).send({ error: "unknown foodId" });
@@ -200,6 +220,10 @@ export function registerRecipeRoutes(app: FastifyInstance) {
       foodId,
       name,
       totalWeightGrams,
+      cookwareId: calculation?.cookwareId ?? null,
+      cookwareName: calculation?.cookwareName ?? null,
+      cookwareTareWeightGrams: calculation?.tareWeightGrams ?? null,
+      scaleWeightGrams: calculation?.scaleWeightGrams ?? null,
       servings,
       createdAt: now,
     });
@@ -235,7 +259,12 @@ export function registerRecipeRoutes(app: FastifyInstance) {
 
     const { name, icon, servings, ingredients } = parsed.data;
     const ingredientSumGrams = ingredients.reduce((sum, i) => sum + i.quantityGrams, 0);
-    const totalWeightGrams = parsed.data.totalWeightGrams ?? ingredientSumGrams;
+    const calculation = parsed.data.cookwareCalculation ?? null;
+    const calculatedFoodWeight = calculation ? calculation.scaleWeightGrams - calculation.tareWeightGrams : null;
+    if (calculatedFoodWeight != null && calculatedFoodWeight <= 0) {
+      return reply.code(400).send({ error: "scale weight must exceed cookware weight" });
+    }
+    const totalWeightGrams = calculatedFoodWeight ?? parsed.data.totalWeightGrams ?? ingredientSumGrams;
 
     const nutrition = await computeNutritionPer100g(ingredients, totalWeightGrams);
     if (!nutrition) return reply.code(400).send({ error: "unknown foodId" });
@@ -250,7 +279,15 @@ export function registerRecipeRoutes(app: FastifyInstance) {
       })
       .where(eq(foods.id, recipe.foodId));
 
-    await db.update(recipes).set({ name, servings, totalWeightGrams }).where(eq(recipes.id, id));
+    await db.update(recipes).set({
+      name,
+      servings,
+      totalWeightGrams,
+      cookwareId: calculation?.cookwareId ?? null,
+      cookwareName: calculation?.cookwareName ?? null,
+      cookwareTareWeightGrams: calculation?.tareWeightGrams ?? null,
+      scaleWeightGrams: calculation?.scaleWeightGrams ?? null,
+    }).where(eq(recipes.id, id));
 
     await db.delete(recipeIngredients).where(eq(recipeIngredients.recipeId, id));
     await db.insert(recipeIngredients).values(

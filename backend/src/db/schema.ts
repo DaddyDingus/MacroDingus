@@ -97,6 +97,14 @@ export const recipes = sqliteTable("recipes", {
   foodId: text("food_id").notNull().references(() => foods.id),
   name: text("name").notNull(),
   totalWeightGrams: real("total_weight_grams").notNull(),
+  // Display-only snapshot of the optional cookware calculation used to
+  // arrive at totalWeightGrams. It deliberately does not reference the
+  // cookware table: renaming, re-weighing, or deleting a pot must not change
+  // an already-saved recipe or make its original calculation disappear.
+  cookwareId: text("cookware_id"),
+  cookwareName: text("cookware_name"),
+  cookwareTareWeightGrams: real("cookware_tare_weight_grams"),
+  scaleWeightGrams: real("scale_weight_grams"),
   servings: real("servings").notNull(),
   createdAt: text("created_at").notNull(),
 });

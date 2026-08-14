@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, CookingPot, Pencil, Plus, Flame } from "lucide-react";
 import type { Food } from "../api/types";
 import { scaleNutrition, sumNutrition } from "../lib/nutrition";
@@ -25,11 +25,36 @@ interface Ingredient {
   quantityGrams: number;
 }
 
+type CookwareSelection = Pick<CookwareItem, "id" | "name" | "weightGrams">;
+
+function cookwareSelectionFromInitial(initial?: RecipeFormInitial): CookwareSelection | null {
+  const calculation = initial?.cookwareCalculation;
+  if (!calculation) return null;
+  return {
+    id: calculation.cookwareId ?? `recipe-snapshot-${calculation.cookwareName}`,
+    name: calculation.cookwareName,
+    weightGrams: calculation.tareWeightGrams,
+  };
+}
+
+function cookwareCalculationSignature(initial?: RecipeFormInitial): string {
+  const calculation = initial?.cookwareCalculation;
+  return calculation
+    ? `${calculation.cookwareId ?? ""}\u0000${calculation.cookwareName}\u0000${calculation.tareWeightGrams}\u0000${calculation.scaleWeightGrams}`
+    : "none";
+}
+
 export interface RecipeFormInitial {
   name: string;
   icon?: string | null;
   servings: number;
   totalWeightGrams: number;
+  cookwareCalculation?: {
+    cookwareId: string | null;
+    cookwareName: string;
+    tareWeightGrams: number;
+    scaleWeightGrams: number;
+  } | null;
   ingredients: Ingredient[];
 }
 
@@ -50,7 +75,19 @@ export default function RecipeForm({
   // edit-in-place sets it true.
   editingExisting?: boolean;
   onCancel: () => void;
-  onCreated: (input: { name: string; icon: string | null; servings: number; totalWeightGrams?: number; ingredients: Ingredient[] }) => void;
+  onCreated: (input: {
+    name: string;
+    icon: string | null;
+    servings: number;
+    totalWeightGrams?: number;
+    cookwareCalculation?: {
+      cookwareId: string | null;
+      cookwareName: string;
+      tareWeightGrams: number;
+      scaleWeightGrams: number;
+    } | null;
+    ingredients: Ingredient[];
+  }) => void;
   // Spread onto this form's own header (below) when it's rendered directly
   // as a BottomSheet's child (RecipeEditSheet, CreateRecipeFromGroupSheet) —
   // lets that header double as the sheet's drag-to-dismiss surface, same as
@@ -67,8 +104,20 @@ export default function RecipeForm({
       ? String(initial.totalWeightGrams)
       : ""
   );
-  const [selectedCookware, setSelectedCookware] = useState<CookwareItem | null>(null);
-  const [scaleWeight, setScaleWeight] = useState("");
+  const [selectedCookware, setSelectedCookware] = useState<CookwareSelection | null>(() =>
+    cookwareSelectionFromInitial(initial)
+  );
+  const [scaleWeight, setScaleWeight] = useState(
+    initial?.cookwareCalculation ? String(initial.cookwareCalculation.scaleWeightGrams) : ""
+  );
+  const initialCookwareSignature = cookwareCalculationSignature(initial);
+  const appliedCookwareSignature = useRef(initialCookwareSignature);
+  useEffect(() => {
+    if (appliedCookwareSignature.current === initialCookwareSignature) return;
+    appliedCookwareSignature.current = initialCookwareSignature;
+    setSelectedCookware(cookwareSelectionFromInitial(initial));
+    setScaleWeight(initial?.cookwareCalculation ? String(initial.cookwareCalculation.scaleWeightGrams) : "");
+  }, [initial, initialCookwareSignature]);
   const [cookwarePickerOpen, setCookwarePickerOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   // Which totals the nutrition card at the bottom shows — same Plate/Day
@@ -178,6 +227,14 @@ export default function RecipeForm({
         : weightOverride.trim()
           ? Number(weightOverride)
           : undefined,
+      cookwareCalculation: selectedCookware
+        ? {
+            cookwareId: selectedCookware.id.startsWith("recipe-snapshot-") ? null : selectedCookware.id,
+            cookwareName: selectedCookware.name,
+            tareWeightGrams: selectedCookware.weightGrams,
+            scaleWeightGrams,
+          }
+        : null,
       ingredients,
     });
   }
@@ -498,8 +555,22 @@ export default function RecipeForm({
         <CookwareSheet
           selectedId={selectedCookware?.id}
           onSelect={(item) => {
-            setSelectedCookware(item);
-            setScaleWeight("");
+            if (item) {
+              // A number entered before choosing a pot is the combined scale
+              // reading the user wants the tare subtracted from. Keep an
+              // existing scale reading when merely switching pots, too.
+              if (!selectedCookware && !scaleWeight.trim() && weightOverride.trim()) {
+                setScaleWeight(weightOverride);
+              }
+              setSelectedCookware(item);
+            } else {
+              // Leaving cookware mode keeps the already-calculated prepared
+              // food weight instead of replacing it with the gross reading.
+              if (selectedCookware && totalWeightGrams > 0) {
+                setWeightOverride(String(totalWeightGrams));
+              }
+              setSelectedCookware(null);
+            }
           }}
           onClose={() => setCookwarePickerOpen(false)}
         />

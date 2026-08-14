@@ -29,6 +29,7 @@ export default function RecipeEditSheet({ id, onClose }: { id: string; onClose: 
                   icon: detail.data.food.icon,
                   servings: detail.data.servings,
                   totalWeightGrams: detail.data.totalWeightGrams,
+                  cookwareCalculation: detail.data.cookwareCalculation,
                   ingredients: detail.data.ingredients.map((i) => ({ food: i.food, quantityGrams: i.quantityGrams })),
                 }}
                 onCancel={close}
@@ -40,6 +41,7 @@ export default function RecipeEditSheet({ id, onClose }: { id: string; onClose: 
                       icon: input.icon,
                       servings: input.servings,
                       totalWeightGrams: input.totalWeightGrams,
+                      cookwareCalculation: input.cookwareCalculation,
                       ingredients: input.ingredients.map((i) => ({ foodId: i.food.id, quantityGrams: i.quantityGrams })),
                     },
                     { onSuccess: onClose }

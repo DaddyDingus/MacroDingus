@@ -45,6 +45,7 @@ export default function CreateRecipeFromGroupSheet({
                 icon: input.icon,
                 servings: input.servings,
                 totalWeightGrams: input.totalWeightGrams,
+                cookwareCalculation: input.cookwareCalculation,
                 ingredients: input.ingredients.map((i) => ({ foodId: i.food.id, quantityGrams: i.quantityGrams })),
               },
               { onSuccess: onCreated }

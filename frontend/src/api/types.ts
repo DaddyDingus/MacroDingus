@@ -148,5 +148,11 @@ export interface CreateRecipeInput {
   icon?: string | null;
   servings: number;
   totalWeightGrams?: number;
+  cookwareCalculation?: {
+    cookwareId: string | null;
+    cookwareName: string;
+    tareWeightGrams: number;
+    scaleWeightGrams: number;
+  } | null;
   ingredients: { foodId: string; quantityGrams: number }[];
 }

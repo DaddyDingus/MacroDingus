@@ -651,6 +651,7 @@ export default function AddFoodSheet({
         icon: detail.food.icon,
         servings: detail.servings,
         totalWeightGrams: detail.totalWeightGrams,
+        cookwareCalculation: detail.cookwareCalculation,
         ingredients: detail.ingredients.map((i) => ({ food: i.food, quantityGrams: i.quantityGrams })),
       });
       changeStep("recipe");
@@ -1724,6 +1725,7 @@ export default function AddFoodSheet({
                       icon: input.icon,
                       servings: input.servings,
                       totalWeightGrams: input.totalWeightGrams,
+                      cookwareCalculation: input.cookwareCalculation,
                       ingredients: input.ingredients.map((i) => ({
                         foodId: i.food.id,
                         quantityGrams: i.quantityGrams,
@@ -1739,6 +1741,7 @@ export default function AddFoodSheet({
                     icon: input.icon,
                     servings: input.servings,
                     totalWeightGrams: input.totalWeightGrams,
+                    cookwareCalculation: input.cookwareCalculation,
                     ingredients: input.ingredients.map((i) => ({
                       foodId: i.food.id,
                       quantityGrams: i.quantityGrams,

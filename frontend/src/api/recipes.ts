@@ -15,6 +15,12 @@ export interface RecipeDetail {
   name: string;
   servings: number;
   totalWeightGrams: number;
+  cookwareCalculation: {
+    cookwareId: string | null;
+    cookwareName: string;
+    tareWeightGrams: number;
+    scaleWeightGrams: number;
+  } | null;
   food: Food;
   ingredients: { foodId: string; food: Food; quantityGrams: number }[];
 }
@@ -51,7 +57,12 @@ export function useUpdateRecipe(id: string) {
   return useMutation({
     mutationFn: (input: CreateRecipeInput) =>
       apiFetch<RecipeDetail>(`/recipes/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
-    onSuccess: () => {
+    onSuccess: (updated) => {
+      // The edit form owns local state initialized from this detail query.
+      // Put the PATCH response into the cache immediately so reopening it
+      // cannot initialize from the pre-edit persisted response while the
+      // invalidation refetch is still in flight.
+      qc.setQueryData(["recipes", id], updated);
       qc.invalidateQueries({ queryKey: ["recipes"] });
       qc.invalidateQueries({ queryKey: ["foods"] });
       // Recipe foods are materialized rows whose nutrition is read live by
