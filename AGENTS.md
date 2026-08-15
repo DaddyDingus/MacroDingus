@@ -8,10 +8,11 @@ MacroDaddy is a personal nutrition/macro tracking PWA (MacroFactor-style), built
 
 Production uses `https://macrodaddy.tail984e80.ts.net/`, shared Authentik at
 `https://auth.tail984e80.ts.net/`, and OIDC application/client `macrodaddy`.
-Android 1.9 (`versionCode` 10) keeps both hosts in one WebView. Legacy
-`macrotrack.tail984e80.ts.net` routes remain for migration. Keep historical
-internal `macrotrack` package, signing, database, export, storage, and Docker
-identifiers unchanged so existing installs and data upgrade in place.
+Android 1.9 (`versionCode` 10) uses the canonical MacroDaddy host. The legacy
+`macrotrack.tail984e80.ts.net` endpoint was retired after its sole user migrated.
+Keep historical internal `macrotrack` package, signing, database, export,
+storage, and Docker identifiers unchanged so existing installs and data upgrade
+in place. The repository directory itself is `stacks/macrodaddy`.
 
 When the user asks to check the latest screenshot without giving another location, inspect the newest file in `/home/daddydingus/screenshots`.
 

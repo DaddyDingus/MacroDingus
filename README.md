@@ -10,7 +10,7 @@ uses SQLite and serves the built React frontend from the same container.
 - Shared Authentik: `https://auth.tail984e80.ts.net/`
 - Authentik application/client: `macrodaddy`
 - Current Android release: `1.9` (`versionCode` 10)
-- The old `macrotrack.tail984e80.ts.net` routes remain temporarily available for installed-client compatibility.
+- The retired `macrotrack.tail984e80.ts.net` endpoint is no longer served.
 
 The Android package ID, signing certificate, Java namespace, database filename,
 export format, storage keys, and Docker service retain their historical

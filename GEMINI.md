@@ -6,9 +6,9 @@ See: `./CLAUDE.md`
 
 The production brand and canonical URL are MacroDaddy at
 `https://macrodaddy.tail984e80.ts.net/`, using shared Authentik at
-`https://auth.tail984e80.ts.net/`. Android 1.9 keeps both hosts in one WebView.
-Historical internal `macrotrack` identifiers remain compatibility contracts;
-do not rename them. The old MacroTrack URLs are migration fallbacks only.
+`https://auth.tail984e80.ts.net/`. Android 1.9 uses the canonical MacroDaddy
+host. Historical internal `macrotrack` identifiers remain compatibility
+contracts; do not rename them. The old MacroTrack endpoint is retired.
 
 The single most important rule in it, repeated here since it's the one most likely to get missed: **editing source is not enough.** This app runs as a single Docker container the user checks on their phone. After any change:
 

@@ -25,7 +25,7 @@ services:
       - WEIGHT_SYNC_RELAY_KEY_FILE=/run/secrets/gymdaddy-weight-sync-key
       - OIDC_ISSUER=https://auth.tail984e80.ts.net/application/o/macrodaddy/
       - OIDC_CLIENT_ID=macrodaddy
-      - OIDC_REDIRECT_ORIGINS=https://macrodaddy.tail984e80.ts.net,https://macrotrack.tail984e80.ts.net,https://macrotrack.tail984e80.ts.net:8443
+      - OIDC_REDIRECT_ORIGINS=https://macrodaddy.tail984e80.ts.net
       - OIDC_BOOTSTRAP_USERNAME=daddydingus
       - OIDC_BOOTSTRAP_ACCOUNT=Tristan
     extra_hosts:
@@ -35,36 +35,7 @@ services:
     networks:
       - proxy
 
-  # Optional Tailscale sidecar: gives the PWA its own HTTPS hostname and
-  # reverse-proxies to the app over the shared Docker network. Configure a
-  # fresh auth key in .env; Tailscale fills in its own certificate domain.
-  macrotrack-tailscale:
-    image: tailscale/tailscale:stable
-    container_name: macrotrack-tailscale
-    restart: unless-stopped
-    # TS_HOSTNAME is the Tailscale node name; do not set Docker's `hostname`
-    # to the same value as the app service or Docker DNS becomes ambiguous.
-    environment:
-      - TS_AUTHKEY=${TS_AUTHKEY}
-      - TS_HOSTNAME=${TS_HOSTNAME:-macrotrack}
-      - TS_STATE_DIR=/var/lib/tailscale
-      - TS_SERVE_CONFIG=/config/serve.json
-      - TS_USERSPACE=false
-    volumes:
-      - ./tailscale-state:/var/lib/tailscale
-      # Tailscale requires the containing directory (not one file) to be
-      # mounted so containerboot can reconcile Serve config on startup.
-      - ./tailscale-config:/config:ro
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    devices:
-      - /dev/net/tun:/dev/net/tun
-    networks:
-      - proxy
-
-  # Canonical MacroDaddy identity. Keep the legacy macrotrack sidecar online
-  # during migration so existing PWA/APK installs retain a working route.
+  # Dedicated Tailscale identity for MacroDaddy's canonical HTTPS endpoint.
   macrodaddy-tailscale:
     image: tailscale/tailscale:stable
     container_name: macrodaddy-tailscale
