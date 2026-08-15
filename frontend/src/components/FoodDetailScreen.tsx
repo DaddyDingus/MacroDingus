@@ -413,6 +413,7 @@ export default function FoodDetailScreen({
   recipeActions,
   timeLabel,
   onTimeClick,
+  dayLabel,
   commitLabel = "Log Foods",
   hideTargetsUi = false,
 }: {
@@ -475,6 +476,10 @@ export default function FoodDetailScreen({
   // "log time" being staged.
   timeLabel?: string;
   onTimeClick?: () => void;
+  // See NutrientStatusBar's own comment — whichever day this plate/entry is
+  // actually staged to log under. Undefined defaults to NutrientStatusBar's
+  // own "Today" fallback.
+  dayLabel?: string;
   // Overrides the numpad's left-key copy — factually wrong as "Log Foods"
   // once the caller isn't actually logging anything (e.g. RecipeForm's
   // ingredient picker).
@@ -817,7 +822,7 @@ export default function FoodDetailScreen({
         statusClassName="px-4 pb-1.5"
         status={
           !hideTargetsUi ? (
-            <NutrientStatusBar totals={totals} plateTotals={plateTotals} extra={n} targets={targets} />
+            <NutrientStatusBar totals={totals} plateTotals={plateTotals} extra={n} targets={targets} dayLabel={dayLabel} />
           ) : null
         }
       >

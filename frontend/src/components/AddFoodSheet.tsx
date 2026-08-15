@@ -24,7 +24,7 @@ import { useFavorites, useAddFavorite, useRemoveFavorite } from "../api/favorite
 import { useRecipes, useRecipeDetail, useCreateRecipe, useUpdateRecipe, useDeleteRecipe, useImportRecipeUrl, useImportRecipePhoto, type RecipeSummary } from "../api/recipes";
 import { useAddLog, useBulkAddLog, useUpdateLogQuantity, useDeleteLog, useSmartHistory } from "../api/logs";
 import { scaleNutrition, sumNutrition, subtractNutrition } from "../lib/nutrition";
-import { localTimeString, localIsoNoTz, formatLogTime, loggedAtTimeString, buildLoggedAt } from "../lib/date";
+import { localTimeString, localIsoNoTz, formatLogTime, loggedAtTimeString, buildLoggedAt, formatDayLabel } from "../lib/date";
 import { usePlateState, type PlateItem } from "../lib/quickAddPlate";
 import { useEnergyUnit, kcalToUnit, unitToKcal, energyUnitLabel, formatEnergy, type EnergyUnit } from "../lib/energyUnit";
 import { useVisualViewportMetrics } from "../lib/useVisualViewportMetrics";
@@ -319,6 +319,12 @@ export default function AddFoodSheet({
   // reset effect below) so a stale override from a previous session can't
   // leak into a fresh one.
   const [loggedAtOverride, setLoggedAtOverride] = useState<string>(() => forcedLoggedAt ?? localIsoNoTz());
+  // Which day new entries actually post under — starts at the `date` prop
+  // (the Food Log's own ‹/› day, or today from anywhere else — see
+  // lib/viewedDate.tsx) and only ever changes via the time picker's own date
+  // field below, so logging still defaults to whatever day the caller opened
+  // this sheet for. Reset alongside loggedAtOverride on every open.
+  const [logDate, setLogDate] = useState<string>(date);
   const [showTimePicker, setShowTimePicker] = useState(false);
   // Always locally owned now — every open clears it (see the reset effect
   // below), so there's no cross-unmount persistence left to worry about:
@@ -490,6 +496,7 @@ export default function AddFoodSheet({
     setSheetExpanded(true);
     setCloseWarningSource(null);
     setLoggedAtOverride(forcedLoggedAt ?? localIsoNoTz());
+    setLogDate(date);
     setShowTimePicker(false);
     // Every open starts from a clean plate — staging within one open session
     // still survives collapsing/expanding the sheet or editing a quantity,
@@ -501,7 +508,7 @@ export default function AddFoodSheet({
     // reference every render (not memoized), so depending on it would refire
     // this effect (and re-clear the plate) on every render instead of only
     // on an actual open/step transition.
-  }, [open, editingEntry, initialFood, initialStep]);
+  }, [open, editingEntry, initialFood, initialStep, date]);
 
   // One history entry per back press this sheet can absorb: one for the sheet
   // itself, one for the expanded Search layer above Plate View, plus one for
@@ -556,7 +563,11 @@ export default function AddFoodSheet({
   const search = useFoodSearch(query, debouncedQuery);
   const smartHistory = useSmartHistory(localTimeString());
   const addLog = useAddLog(date);
-  const bulkAddLog = useBulkAddLog(date);
+  // Bound to logDate, not the raw `date` prop — the time picker's date field
+  // (below) can point new entries at a different day than the one this sheet
+  // was opened for; editingEntry never touches logDate, so updateLog/deleteLog
+  // below stay bound to the entry's own original day.
+  const bulkAddLog = useBulkAddLog(logDate);
   const updateLog = useUpdateLogQuantity(date);
   const deleteLog = useDeleteLog(date);
   const createFood = useCreateFood();
@@ -865,6 +876,14 @@ export default function AddFoodSheet({
     });
   }
 
+  // Header pill text for the time picker: bare time normally, prefixed with
+  // the day when the picker moved logDate off the sheet's own day, so it's
+  // never silent about an entry heading somewhere other than the viewed day.
+  function logTimeLabel(): string {
+    const time = formatLogTime(loggedAtOverride);
+    return logDate === date ? time : `${formatDayLabel(logDate)} · ${time}`;
+  }
+
   // The batch commit — this project's equivalent of a single bulkAdd write,
   // via the same POST /api/logs/bulk endpoint the old multi-select flow
   // used (backend/src/routes/logs.ts), just fed from stagedPlate instead of
@@ -1056,8 +1075,9 @@ export default function AddFoodSheet({
                 plateTotals={plateTotals}
                 targets={targets}
                 stagedPlate={stagedPlate}
-                timeLabel={formatLogTime(loggedAtOverride)}
+                timeLabel={logTimeLabel()}
                 onTimeClick={() => setShowTimePicker(true)}
+                dayLabel={formatDayLabel(logDate)}
                 pickedFoods={onPickItems ? stagedPlate.map((i) => i.food) : undefined}
               />
             </div>
@@ -1453,8 +1473,9 @@ export default function AddFoodSheet({
                     : undefined
                 : undefined
             }
-            timeLabel={editingEntry ? undefined : formatLogTime(loggedAtOverride)}
+            timeLabel={editingEntry ? undefined : logTimeLabel()}
             onTimeClick={editingEntry ? undefined : () => setShowTimePicker(true)}
+            dayLabel={formatDayLabel(logDate)}
             commitLabel={commitLabel}
           />
         )}
@@ -1823,13 +1844,14 @@ export default function AddFoodSheet({
 
       {showTimePicker && (
         <DateTimePickerSheet
-          mode="time"
+          mode="datetime"
           title="Log time"
           confirmLabel="Set"
-          initialDate={date}
+          initialDate={logDate}
           initialTime={loggedAtTimeString(loggedAtOverride)}
-          onConfirm={(_date, time) => {
-            setLoggedAtOverride(buildLoggedAt(date, time));
+          onConfirm={(pickedDate, time) => {
+            setLogDate(pickedDate);
+            setLoggedAtOverride(buildLoggedAt(pickedDate, time));
             setShowTimePicker(false);
           }}
           onClose={() => setShowTimePicker(false)}
@@ -2035,6 +2057,7 @@ function BrowseHeader({
   stagedPlate,
   timeLabel,
   onTimeClick,
+  dayLabel,
   pickedFoods,
 }: {
   onClose: () => void;
@@ -2048,6 +2071,9 @@ function BrowseHeader({
   stagedPlate: PlateItem[];
   timeLabel: string;
   onTimeClick: () => void;
+  // See NutrientStatusBar's own comment — whichever day this plate is
+  // actually staged to log under.
+  dayLabel: string;
   // Recipe-picker mode only (see AddFoodSheet's onPickItems) — when set,
   // this replaces the whole time-pill + macro-bars row below with a plain
   // icon row of the staged plate instead (same items as stagedPlate, just
@@ -2138,7 +2164,7 @@ function BrowseHeader({
       }
       statusClassName="px-4"
       status={
-        <NutrientStatusBar totals={totals} plateTotals={plateTotals} targets={targets} />
+        <NutrientStatusBar totals={totals} plateTotals={plateTotals} targets={targets} dayLabel={dayLabel} />
       }
     />
   );

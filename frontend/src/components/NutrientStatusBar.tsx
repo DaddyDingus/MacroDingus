@@ -67,6 +67,7 @@ export default function NutrientStatusBar({
   plateTotals,
   extra,
   targets,
+  dayLabel = "Today",
 }: {
   totals?: Nutrition;
   // Folded in so "N left" ticks down live as items are staged, not just once
@@ -81,6 +82,12 @@ export default function NutrientStatusBar({
   // logged totals nor the staged plate actually include this food yet.
   extra?: Nutrition;
   targets?: MacroTargets | null;
+  // "Today"/"Yesterday"/"Wed, Aug 12" — whichever day these totals/targets
+  // and the pending plate actually belong to (AddFoodSheet's logDate, via
+  // lib/date.ts's formatDayLabel). This used to be hardcoded "Today", which
+  // silently lied whenever the sheet was opened for a different Food Log day
+  // or the picker moved a new entry's own day (see the time picker below).
+  dayLabel?: string;
 }) {
   const { unit: energyUnit } = useEnergyUnit();
   const consumedCal = (totals?.calories ?? 0) + (plateTotals?.calories ?? 0) + (extra?.calories ?? 0);
@@ -109,7 +116,7 @@ export default function NutrientStatusBar({
       {/* One "Remaining today" label for the whole row instead of repeating
           "left" on every pill — same information, said once. The modal's
           X/back/time row occupies its own slot above this one. */}
-      <p className="h-[11px] text-[9px] leading-[11px] tracking-widest uppercase text-white/40">Remaining Today</p>
+      <p className="h-[11px] text-[9px] leading-[11px] tracking-widest uppercase text-white/40">Remaining {dayLabel}</p>
       {/* grid grid-cols-4, not the flex+gap row this used to be — flex sized
           each column to its own label's rendered width, so protein/fat/carbs
           (short labels like "44P") ended up with visibly stubby bars next to
