@@ -324,7 +324,10 @@ export default function DashboardTileSections() {
             title="Steps"
             subtitle={subtitle}
             value={today?.steps != null ? fmt(today.steps) : "—"}
-            unit={today?.steps != null ? `${Math.min(Math.round(today.steps / stepGoal * 100), 999)}% of goal` : undefined}
+            // Just the percentage: "84% of goal" spelled out wrapped the footer
+            // to two lines on a narrow phone, and that line came straight out
+            // of the sparkline's height.
+            unit={today?.steps != null ? `${Math.min(Math.round(today.steps / stepGoal * 100), 999)}%` : undefined}
             onClick={() => navigate("/steps")}
           >
             {bars.some((bar) => !bar.missing) ? (
@@ -346,7 +349,11 @@ export default function DashboardTileSections() {
             key={id}
             staggerIndex={staggerIndex}
             title="Macros"
-            subtitle={loggedHistory.length > 0 ? `avg ${energyUnitLabel(energyUnit)}/logged day, 7d` : "No logs yet"}
+            // Drops the unit (the footer already carries it) to fit one line
+            // on a narrow phone — a second subtitle line is taken out of the
+            // sparkline. Keeps both "7d" and "logged day", which the number
+            // genuinely depends on.
+            subtitle={loggedHistory.length > 0 ? "7d avg/logged day" : "No logs yet"}
             value={loggedHistory.length > 0 ? fmt(kcalToUnit(avgCalories, energyUnit)) : "—"}
             unit={loggedHistory.length > 0 ? energyUnitLabel(energyUnit) : undefined}
             onClick={() => navigate("/macros")}
