@@ -9,6 +9,7 @@ import { db, sqlite } from "../db/index.js";
 import {
   logs, favorites, cookware, foodSearchStats, programDays, programs, checkins, goals, weights, photos, profiles, users,
   nutritionDayStatuses, dailyAdjustments, measurements, userSettings, recipes, recipeIngredients, foods,
+  stepRecords, stepDailyTotals, stepSyncState, stepsWebhookTokens,
 } from "../db/schema.js";
 import { createServerBackup, serverBackupStatus } from "../lib/serverBackups.js";
 
@@ -37,6 +38,9 @@ const accountImportSchema = z.object({
   foodSearchStats: z.array(exportRowSchema).optional().default([]),
   recipes: z.array(exportRowSchema),
   recipeIngredients: z.array(exportRowSchema),
+  stepRecords: z.array(exportRowSchema).optional().default([]),
+  stepDailyTotals: z.array(exportRowSchema).optional().default([]),
+  stepSyncState: exportRowSchema.nullable().optional().default(null),
   settings: exportRowSchema.nullable(),
 }).passthrough();
 
@@ -75,7 +79,8 @@ function restoreAccountExport(userId: string, input: z.infer<typeof accountImpor
     for (const row of currentRecipes) sqlite.prepare("DELETE FROM recipe_ingredients WHERE recipe_id = ?").run(row.id);
     for (const table of [
       "logs", "nutrition_day_statuses", "daily_adjustments", "measurements", "favorites", "cookware",
-      "food_search_stats", "user_settings", "recipes", "programs", "checkins", "goals", "weights", "profiles",
+      "food_search_stats", "step_records", "step_daily_totals", "step_sync_state", "steps_webhook_tokens",
+      "user_settings", "recipes", "programs", "checkins", "goals", "weights", "profiles",
     ]) {
       sqlite.prepare(`DELETE FROM "${table}" WHERE user_id = ?`).run(userId);
     }
@@ -102,6 +107,9 @@ function restoreAccountExport(userId: string, input: z.infer<typeof accountImpor
     for (const row of remapSimple(input.favorites)) insertExportRow(favorites, row);
     for (const row of remapSimple(input.cookware)) insertExportRow(cookware, row);
     for (const row of remapSimple(input.foodSearchStats)) insertExportRow(foodSearchStats, row);
+    for (const row of remapSimple(input.stepRecords)) insertExportRow(stepRecords, row);
+    for (const row of remapSimple(input.stepDailyTotals)) insertExportRow(stepDailyTotals, row);
+    if (input.stepSyncState) insertExportRow(stepSyncState, { ...input.stepSyncState, userId });
     for (const row of recipesImport.rows) insertExportRow(recipes, { ...row, userId });
     for (const row of remapIds(input.recipeIngredients).rows) {
       const recipeId = recipesImport.ids.get(String(row.recipeId));
@@ -137,7 +145,7 @@ export function registerAccountRoutes(app: FastifyInstance, dataDir: string) {
   app.get("/api/account/export", async (req) => {
     const userId = req.userId!;
     const [user] = await db.select({ id: users.id, name: users.name, createdAt: users.createdAt }).from(users).where(eq(users.id, userId));
-    const [profileRows, weightRows, logRows, goalRows, programRows, checkinRows, photoRows, measurementRows, favoriteRows, cookwareRows, adjustmentRows, statusRows, settingsRows, recipeRows, searchStatRows] = await Promise.all([
+    const [profileRows, weightRows, logRows, goalRows, programRows, checkinRows, photoRows, measurementRows, favoriteRows, cookwareRows, adjustmentRows, statusRows, settingsRows, recipeRows, searchStatRows, stepRecordRows, stepDailyRows, stepSyncRows] = await Promise.all([
       db.select().from(profiles).where(eq(profiles.userId, userId)),
       db.select().from(weights).where(eq(weights.userId, userId)),
       db.select().from(logs).where(eq(logs.userId, userId)),
@@ -153,6 +161,9 @@ export function registerAccountRoutes(app: FastifyInstance, dataDir: string) {
       db.select().from(userSettings).where(eq(userSettings.userId, userId)),
       db.select().from(recipes).where(eq(recipes.userId, userId)),
       db.select().from(foodSearchStats).where(eq(foodSearchStats.userId, userId)),
+      db.select().from(stepRecords).where(eq(stepRecords.userId, userId)),
+      db.select().from(stepDailyTotals).where(eq(stepDailyTotals.userId, userId)),
+      db.select().from(stepSyncState).where(eq(stepSyncState.userId, userId)),
     ]);
     const programIds = programRows.map((row) => row.id);
     const recipeIds = recipeRows.map((row) => row.id);
@@ -189,6 +200,9 @@ export function registerAccountRoutes(app: FastifyInstance, dataDir: string) {
       foodSearchStats: searchStatRows,
       recipes: recipeRows,
       recipeIngredients: ingredientRows,
+      stepRecords: stepRecordRows,
+      stepDailyTotals: stepDailyRows,
+      stepSyncState: stepSyncRows[0] ?? null,
       photos: photoRows,
       settings: settingsRows[0] ?? null,
     };
@@ -264,6 +278,10 @@ export function registerAccountRoutes(app: FastifyInstance, dataDir: string) {
     await db.delete(favorites).where(eq(favorites.userId, userId));
     await db.delete(cookware).where(eq(cookware.userId, userId));
     await db.delete(foodSearchStats).where(eq(foodSearchStats.userId, userId));
+    await db.delete(stepRecords).where(eq(stepRecords.userId, userId));
+    await db.delete(stepDailyTotals).where(eq(stepDailyTotals.userId, userId));
+    await db.delete(stepSyncState).where(eq(stepSyncState.userId, userId));
+    await db.delete(stepsWebhookTokens).where(eq(stepsWebhookTokens.userId, userId));
     await db.delete(userSettings).where(eq(userSettings.userId, userId));
     for (const recipe of userRecipes) {
       await db.delete(recipeIngredients).where(eq(recipeIngredients.recipeId, recipe.id));

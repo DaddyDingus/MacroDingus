@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { Camera } from "lucide-react";
+import { Bar, BarChart, Cell, ResponsiveContainer } from "recharts";
 import { useLogsHistory, useLoggedDates } from "../api/logs";
 import { useCoachStatus, useCheckinHistory, useExpenditureDailySeries } from "../api/coach";
 import { usePrograms } from "../api/programs";
@@ -17,6 +18,7 @@ import MiniLineSpark from "./MiniLineSpark";
 import MiniBarSpark from "./MiniBarSpark";
 import TargetProgressBar from "./TargetProgressBar";
 import HabitStrip from "./HabitStrip";
+import { useStepGoal, useSteps, useStepsStatus } from "../api/steps";
 
 function fmt(n: number, decimals = 0): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: decimals, minimumFractionDigits: decimals });
@@ -67,6 +69,9 @@ export default function DashboardTileSections() {
   const programs = usePrograms();
   const history7 = useLogsHistory(7);
   const loggedDates = useLoggedDates();
+  const steps7 = useSteps(7);
+  const stepsStatus = useStepsStatus();
+  const { goal: stepGoal } = useStepGoal();
 
   const checkin = coachStatus.data?.latestCheckin ?? null;
   const trendWeightKg = coachStatus.data?.trendWeightKg ?? null;
@@ -303,6 +308,37 @@ export default function DashboardTileSections() {
             <HabitStrip activeDates={loggedDateSet} />
           </DashboardCard>
         );
+
+      case "steps": {
+        const days = steps7.data?.days ?? [];
+        const today = days[days.length - 1];
+        const lastSync = stepsStatus.data?.sync?.lastSuccessfulSyncAt;
+        const subtitle = today?.state === "partial"
+          ? "Today · partial"
+          : lastSync ? `Synced ${new Date(lastSync).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Not connected";
+        const bars = days.map((day) => ({ value: day.steps ?? 0, missing: day.state === "missing" }));
+        return (
+          <DashboardCard
+            key={id}
+            staggerIndex={staggerIndex}
+            title="Steps"
+            subtitle={subtitle}
+            value={today?.steps != null ? fmt(today.steps) : "—"}
+            unit={today?.steps != null ? `${Math.min(Math.round(today.steps / stepGoal * 100), 999)}% of goal` : undefined}
+            onClick={() => navigate("/steps")}
+          >
+            {bars.some((bar) => !bar.missing) ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={bars} margin={{ top: 2, right: 2, bottom: 2, left: 2 }} accessibilityLayer={false}>
+                  <Bar dataKey="value" radius={[2, 2, 0, 0]} isAnimationActive={false}>
+                    {bars.map((bar, index) => <Cell key={index} fill={bar.missing ? "transparent" : "#5ABC80"} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ) : <div className="h-full flex items-center text-[11px] text-muted">Connect Health Connect to begin</div>}
+          </DashboardCard>
+        );
+      }
 
       case "macros":
         return (

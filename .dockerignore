@@ -9,4 +9,5 @@ backend/public/
 android/.gradle/
 android/.signing-password
 android/*.jks
+health-connect-bridge/.build/
 .git/

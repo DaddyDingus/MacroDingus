@@ -11,6 +11,7 @@ export type TileId =
   | "coachNarrative"
   | "weighInConsistency"
   | "loggingConsistency"
+  | "steps"
   | "macros"
   | "calories"
   | "protein"
@@ -35,6 +36,7 @@ export const TILE_CATALOG: { id: TileId; category: Category; label: string }[] =
   { id: "coachNarrative", category: "insights", label: "Weekly update" },
   { id: "weighInConsistency", category: "habits", label: "Weigh-ins" },
   { id: "loggingConsistency", category: "habits", label: "Food logging" },
+  { id: "steps", category: "habits", label: "Steps" },
   { id: "macros", category: "nutrition", label: "Macros" },
   { id: "calories", category: "nutrition", label: "Calories" },
   { id: "protein", category: "nutrition", label: "Protein" },

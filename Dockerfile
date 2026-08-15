@@ -25,6 +25,7 @@ COPY --from=backend-build /app/backend/node_modules ./node_modules
 COPY --from=backend-build /app/backend/dist ./dist
 COPY --from=frontend-build /app/frontend/dist ./public
 COPY android/app/build/outputs/apk/release/app-release.apk ./public/macrotrack.apk
+COPY health-connect-bridge/health-connect-webhook.apk ./public/health-connect-webhook.apk
 
 EXPOSE 3000
 CMD ["node", "dist/index.js"]

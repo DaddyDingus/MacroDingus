@@ -466,6 +466,68 @@ export const userSettings = sqliteTable("user_settings", {
   updatedAt: text("updated_at").notNull(),
 });
 
+// Health Connect steps are deliberately isolated from nutrition/coaching.
+// Tokens are revocable per-user credentials and only their SHA-256 hashes are
+// retained. Raw interval rows are the source of truth: daily totals can be
+// rebuilt after a retry, a corrected Health Connect record, or a manual
+// backfill without ever applying an additive "delta" twice.
+export const stepsWebhookTokens = sqliteTable("steps_webhook_tokens", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id),
+  name: text("name").notNull(),
+  tokenHash: text("token_hash").notNull().unique(),
+  tokenPrefix: text("token_prefix").notNull(),
+  createdAt: text("created_at").notNull(),
+  lastUsedAt: text("last_used_at"),
+  revokedAt: text("revoked_at"),
+}, (table) => ({
+  userCreatedIdx: index("steps_webhook_tokens_user_created_idx").on(table.userId, table.createdAt),
+}));
+
+export const stepRecords = sqliteTable("step_records", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id),
+  // Stable receiver-derived identity. Daily-resolution records key by their
+  // Brisbane date so today's changing end time replaces its previous partial
+  // value; raw records key by source + exact interval.
+  sourceKey: text("source_key").notNull(),
+  sourceApp: text("source_app"),
+  count: integer("count").notNull(),
+  startTime: text("start_time").notNull(),
+  endTime: text("end_time").notNull(),
+  payloadTimestamp: text("payload_timestamp").notNull(),
+  appVersion: text("app_version").notNull(),
+  receivedAt: text("received_at").notNull(),
+}, (table) => ({
+  userSourceIdx: uniqueIndex("step_records_user_source_idx").on(table.userId, table.sourceKey),
+  userStartIdx: index("step_records_user_start_idx").on(table.userId, table.startTime),
+  userEndIdx: index("step_records_user_end_idx").on(table.userId, table.endTime),
+}));
+
+// Dense history is produced at the API boundary. A row here means Health
+// Connect supplied an interval for that day; no row remains genuinely
+// unavailable. A stored zero is therefore distinct from a missing day.
+export const stepDailyTotals = sqliteTable("step_daily_totals", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id),
+  date: text("date").notNull(),
+  steps: integer("steps").notNull(),
+  complete: integer("complete", { mode: "boolean" }).notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => ({
+  userDateIdx: uniqueIndex("step_daily_totals_user_date_idx").on(table.userId, table.date),
+}));
+
+export const stepSyncState = sqliteTable("step_sync_state", {
+  userId: text("user_id").primaryKey().references(() => users.id),
+  lastSuccessfulSyncAt: text("last_successful_sync_at").notNull(),
+  lastPayloadTimestamp: text("last_payload_timestamp").notNull(),
+  lastAppVersion: text("last_app_version").notNull(),
+  lastRecordEndAt: text("last_record_end_at"),
+  lastRecordCount: integer("last_record_count").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 // A planned high-Calorie day (a dinner out, a birthday) whose surplus is
 // recovered from the days around it, so the *week* still lands on target.
 // Deliberately its own object rather than more `daily_adjustments` rows:

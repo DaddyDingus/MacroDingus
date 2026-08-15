@@ -21,6 +21,7 @@ import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerCookwareRoutes } from "./routes/cookware.js";
 import { registerAdjustmentRoutes } from "./routes/adjustments.js";
 import { registerEventPlanRoutes } from "./routes/eventPlans.js";
+import { registerStepRoutes } from "./routes/steps.js";
 import { configureAiProviderStore } from "./engine/aiProvider.js";
 import { startAutomaticServerBackups } from "./lib/serverBackups.js";
 
@@ -32,6 +33,11 @@ const ANDROID_RELEASE = {
   versionCode: 10,
   versionName: "1.9",
   downloadUrl: "/api/android/apk?v=1.9",
+};
+const HEALTH_CONNECT_RELEASE = {
+  versionCode: 10915,
+  versionName: "1.9.14-md2",
+  downloadUrl: "/api/android/health-connect-apk?v=1.9.14-md2",
 };
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -63,6 +69,7 @@ registerSettingsRoutes(app);
 registerCookwareRoutes(app);
 registerAdjustmentRoutes(app);
 registerEventPlanRoutes(app);
+registerStepRoutes(app);
 
 await app.register(fastifyStatic, {
   root: STATIC_DIR,
@@ -98,6 +105,17 @@ app.get("/api/android/apk", async (_req, reply) => {
   reply.header("pragma", "no-cache");
   reply.header("expires", "0");
   return reply.sendFile("macrotrack.apk");
+});
+
+app.get("/api/android/health-connect-version", async (_req, reply) => {
+  reply.header("cache-control", "no-store");
+  return HEALTH_CONNECT_RELEASE;
+});
+
+app.get("/api/android/health-connect-apk", async (_req, reply) => {
+  reply.header("content-disposition", `attachment; filename="MacroDaddy-Health-Connect-v${HEALTH_CONNECT_RELEASE.versionName}.apk"`);
+  reply.header("cache-control", "no-store, no-cache, must-revalidate, private");
+  return reply.sendFile("health-connect-webhook.apk");
 });
 
 app.get("/api/health", async () => ({ ok: true, time: new Date().toISOString() }));

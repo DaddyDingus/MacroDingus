@@ -1,0 +1,52 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 4373823..d9c5ec7 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -10,2 +10,2 @@ val appVersionPatch = 14
+-val appVersionCode = (appVersionMajor * 10000) + (appVersionMinor * 100) + appVersionPatch
+-val appVersionName = "$appVersionMajor.$appVersionMinor.$appVersionPatch"
++val appVersionCode = (appVersionMajor * 10000) + (appVersionMinor * 100) + appVersionPatch + 1
++val appVersionName = "$appVersionMajor.$appVersionMinor.$appVersionPatch-md2"
+@@ -18 +18 @@ android {
+-        applicationId = "com.hcwebhook.app"
++        applicationId = "com.macrodaddy.healthconnectwebhook"
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 57cd74d..ed909c1 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -67 +67 @@
+-        android:allowBackup="true"
++        android:allowBackup="false"
+diff --git a/app/src/main/java/com/hcwebhook/app/HealthConnectManager.kt b/app/src/main/java/com/hcwebhook/app/HealthConnectManager.kt
+index c9aaed3..55c9f2d 100644
+--- a/app/src/main/java/com/hcwebhook/app/HealthConnectManager.kt
++++ b/app/src/main/java/com/hcwebhook/app/HealthConnectManager.kt
+@@ -944,0 +945,5 @@ class HealthConnectManager(private val context: Context) {
++            // Samsung Health writes today's cumulative count as a full-day
++            // 00:00-23:59 record. Aggregating only through Instant.now()
++            // proportionally clips that record. Query the complete calendar
++            // day to match Health Connect's displayed total; queryEnd remains
++            // the emitted interval end so receivers still know today is partial.
+@@ -947 +952 @@ class HealthConnectManager(private val context: Context) {
+-                timeRangeFilter = TimeRangeFilter.between(queryStart, queryEnd)
++                timeRangeFilter = TimeRangeFilter.between(dayStart, dayEnd)
+@@ -958 +963 @@ class HealthConnectManager(private val context: Context) {
+-                    timeRangeFilter = TimeRangeFilter.between(queryStart, queryEnd)
++                    timeRangeFilter = TimeRangeFilter.between(dayStart, dayEnd)
+@@ -963,7 +968,9 @@ class HealthConnectManager(private val context: Context) {
+-            if (daySteps > 0) {
+-                result.add(StepsData(
+-                    count = daySteps,
+-                    startTime = dayStart,
+-                    endTime = queryEnd
+-                ))
+-            }
++            // MacroDaddy requires an explicit zero to distinguish a completed
++            // zero-step day from unavailable Health Connect coverage. The
++            // upstream app omits zero aggregates, making that distinction
++            // impossible at the webhook receiver.
++            result.add(StepsData(
++                count = daySteps,
++                startTime = dayStart,
++                endTime = queryEnd
++            ))

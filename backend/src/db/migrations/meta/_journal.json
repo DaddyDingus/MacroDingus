@@ -253,6 +253,13 @@
       "when": 1786694400000,
       "tag": "0035_recipe_cookware_calculation",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1786752000000,
+      "tag": "0036_health_connect_steps",
+      "breakpoints": true
     }
   ]
 }

@@ -33,6 +33,8 @@ const CoachScreen = lazy(() => import("./screens/CoachScreen"));
 const PhotosScreen = lazy(() => import("./screens/PhotosScreen"));
 const PhotoCompareScreen = lazy(() => import("./screens/PhotoCompareScreen"));
 const MoreScreen = lazy(() => import("./screens/MoreScreen"));
+const HealthConnectScreen = lazy(() => import("./screens/HealthConnectScreen"));
+const StepsDetailScreen = lazy(() => import("./screens/StepsDetailScreen"));
 const WeightDetailScreen = lazy(() => import("./screens/WeightDetailScreen"));
 const ScaleWeightDetailScreen = lazy(() => import("./screens/ScaleWeightDetailScreen"));
 const MacrosDetailScreen = lazy(() => import("./screens/MacrosDetailScreen"));
@@ -278,6 +280,8 @@ function AppRoutes() {
                 competing with drag/tap targets pinned near the bottom edge. */}
             <Route path="/photos/compare" element={<PhotoCompareScreen />} />
             <Route path="/more" element={<MoreScreen />} />
+            <Route path="/more/health-connect" element={<HealthConnectScreen />} />
+            <Route path="/steps" element={<StepsDetailScreen />} />
           </Routes>
         </div>
       </Suspense>

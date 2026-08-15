@@ -12,6 +12,7 @@ import {
   Droplet,
   Scale,
   Camera,
+  Footprints,
   type LucideIcon,
 } from "lucide-react";
 import type { TileId } from "./dashboardLayout";
@@ -26,6 +27,7 @@ export const TILE_ICONS: Record<TileId, LucideIcon> = {
   coachNarrative: Sparkles,
   weighInConsistency: CalendarCheck,
   loggingConsistency: UtensilsCrossed,
+  steps: Footprints,
   macros: PieChart,
   calories: Flame,
   protein: Beef,
