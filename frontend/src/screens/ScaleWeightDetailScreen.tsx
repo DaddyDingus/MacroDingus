@@ -10,6 +10,7 @@ import ScaleWeightChart from "../components/ScaleWeightChart";
 import ChartCard from "../components/ChartCard";
 import ChangeDirectionIcon from "../components/ChangeDirectionIcon";
 import MonthSection from "../components/MonthSection";
+import CollapsibleCard from "../components/CollapsibleCard";
 import ConfirmDeleteSheet from "../components/ConfirmDeleteSheet";
 import { staggerStyle } from "../lib/stagger";
 import DecimalInput from "../components/DecimalInput";
@@ -34,7 +35,6 @@ function signed(n: number): string {
 
 export default function ScaleWeightDetailScreen() {
   const { unit } = useWeightUnit();
-  const [showHistory, setShowHistory] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [pendingDeleteWeightId, setPendingDeleteWeightId] = useState<string | null>(null);
@@ -144,21 +144,13 @@ export default function ScaleWeightDetailScreen() {
         </div>
 
         {monthGroupsDesc.length > 0 && (
-          <div className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(2, 60, 5)}>
-            <button
-              onClick={() => setShowHistory((v) => !v)}
-              className="w-full px-4 py-2.5 flex items-center justify-between text-left"
-            >
-              <span className="text-[11px] tracking-widest uppercase text-muted">History</span>
-              <span className="text-xs text-accent">{showHistory ? "Hide" : "Show"}</span>
-            </button>
-            {showHistory &&
-              monthGroupsDesc.map((g, gi) => (
+          <div className="tile-enter" style={staggerStyle(2, 60, 5)}>
+            <CollapsibleCard label="History">
+              {monthGroupsDesc.map((g) => (
                 <MonthSection
                   key={g.key}
                   label={g.label}
                   summary={`${g.entries.length} ${g.entries.length === 1 ? "day" : "days"}`}
-                  defaultOpen={gi === 0}
                 >
                   {g.entries.map((w) => {
                     const shown = roundToDisplay(kgToUnit(w.weightKg, unit));
@@ -232,6 +224,7 @@ export default function ScaleWeightDetailScreen() {
                   })}
                 </MonthSection>
               ))}
+            </CollapsibleCard>
           </div>
         )}
       </main>

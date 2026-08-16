@@ -6,6 +6,7 @@ import { RANGE_PRESETS } from "../lib/chartLayout";
 import { useChartGesture } from "../hooks/useChartGesture";
 import ChartCard from "../components/ChartCard";
 import StepsChart, { StepsChartLegend } from "../components/StepsChart";
+import CollapsibleCard from "../components/CollapsibleCard";
 import DecimalInput from "../components/DecimalInput";
 import StatTile from "../components/StatTile";
 import { staggerStyle } from "../lib/stagger";
@@ -90,19 +91,20 @@ export default function StepsDetailScreen() {
         <StatTile value={number(best?.steps ?? null)} unit={best ? formatDayLabel(best.date) : undefined} label="Best day" description="Highest completed day in synced history." />
         <StatTile value={String(reached)} unit="days" label="Goal reached" description={`Completed days at or above ${goal.toLocaleString()} steps.`} />
 
-        <section className="border border-line bg-surface rounded-2xl overflow-hidden mt-2">
-          <div className="px-4 py-2.5 border-b border-line"><p className="text-[11px] tracking-widest uppercase text-muted">Recent days</p></div>
-          {[...days].slice(-30).reverse().map((day) => (
-            <div key={day.date} className="px-4 py-2.5 border-b border-line/60 last:border-b-0 flex items-center justify-between gap-3">
-              <span className="text-sm">{formatDayLabel(day.date)}</span>
-              <span className="text-right">
-                <span className={`block tabular text-sm ${day.state === "missing" ? "text-muted" : ""}`}>{day.steps == null ? "Unavailable" : day.steps.toLocaleString()}</span>
-                {day.state === "partial" && <span className="block text-[10px] text-calories">Partial</span>}
-                {day.state === "complete" && day.steps === 0 && <span className="block text-[10px] text-muted">Recorded zero</span>}
-              </span>
-            </div>
-          ))}
-        </section>
+        <div className="mt-2">
+          <CollapsibleCard label="Recent days">
+            {[...days].slice(-30).reverse().map((day) => (
+              <div key={day.date} className="px-4 py-2.5 border-b border-line/60 last:border-b-0 flex items-center justify-between gap-3">
+                <span className="text-sm">{formatDayLabel(day.date)}</span>
+                <span className="text-right">
+                  <span className={`block tabular text-sm ${day.state === "missing" ? "text-muted" : ""}`}>{day.steps == null ? "Unavailable" : day.steps.toLocaleString()}</span>
+                  {day.state === "partial" && <span className="block text-[10px] text-calories">Partial</span>}
+                  {day.state === "complete" && day.steps === 0 && <span className="block text-[10px] text-muted">Recorded zero</span>}
+                </span>
+              </div>
+            ))}
+          </CollapsibleCard>
+        </div>
       </main>
     </div>
   );

@@ -15,3 +15,6 @@ android/.gradle/
 android/app/build/
 android/.signing-password
 android/*.jks
+
+# Ad-hoc pre-surgery SQLite snapshots (see data/) - never version these
+data/*.backup

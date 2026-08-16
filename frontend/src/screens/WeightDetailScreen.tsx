@@ -11,6 +11,7 @@ import ChartCard from "../components/ChartCard";
 import MiniLineSpark from "../components/MiniLineSpark";
 import ChangeDirectionIcon from "../components/ChangeDirectionIcon";
 import MonthSection from "../components/MonthSection";
+import CollapsibleCard from "../components/CollapsibleCard";
 import StatTile from "../components/StatTile";
 import { staggerStyle } from "../lib/stagger";
 
@@ -45,7 +46,6 @@ export default function WeightDetailScreen() {
   const { unit } = useWeightUnit();
   const [showScale, setShowScale] = useState(true);
   const [showTrend, setShowTrend] = useState(true);
-  const [showHistory, setShowHistory] = useState(false);
 
   // One dense fetch covers both the gesture-driven chart and the fixed
   // Insights window — the backend already computes the EWMA over full
@@ -287,21 +287,13 @@ export default function WeightDetailScreen() {
         </div>
 
         {monthGroupsDesc.length > 0 && (
-          <div className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
-            <button
-              onClick={() => setShowHistory((v) => !v)}
-              className="w-full px-4 py-2.5 flex items-center justify-between text-left"
-            >
-              <span className="text-[11px] tracking-widest uppercase text-muted">History</span>
-              <span className="text-xs text-accent">{showHistory ? "Hide" : "Show"}</span>
-            </button>
-            {showHistory &&
-              monthGroupsDesc.map((g, gi) => (
+          <div className="tile-enter" style={staggerStyle(block++, 60, 5)}>
+            <CollapsibleCard label="History">
+              {monthGroupsDesc.map((g) => (
                 <MonthSection
                   key={g.key}
                   label={g.label}
                   summary={`${g.entries.length} ${g.entries.length === 1 ? "day" : "days"}`}
-                  defaultOpen={gi === 0}
                 >
                   {g.entries.map((w) => {
                     const shown = roundToDisplay(kgToUnit(w.trendKg, unit));
@@ -339,6 +331,7 @@ export default function WeightDetailScreen() {
                   })}
                 </MonthSection>
               ))}
+            </CollapsibleCard>
           </div>
         )}
       </main>

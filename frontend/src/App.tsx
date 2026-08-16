@@ -34,6 +34,7 @@ const PhotosScreen = lazy(() => import("./screens/PhotosScreen"));
 const PhotoCompareScreen = lazy(() => import("./screens/PhotoCompareScreen"));
 const MoreScreen = lazy(() => import("./screens/MoreScreen"));
 const HealthConnectScreen = lazy(() => import("./screens/HealthConnectScreen"));
+const AdminUsersScreen = lazy(() => import("./screens/AdminUsersScreen"));
 const StepsDetailScreen = lazy(() => import("./screens/StepsDetailScreen"));
 const WeightDetailScreen = lazy(() => import("./screens/WeightDetailScreen"));
 const ScaleWeightDetailScreen = lazy(() => import("./screens/ScaleWeightDetailScreen"));
@@ -281,6 +282,7 @@ function AppRoutes() {
             <Route path="/photos/compare" element={<PhotoCompareScreen />} />
             <Route path="/more" element={<MoreScreen />} />
             <Route path="/more/health-connect" element={<HealthConnectScreen />} />
+            <Route path="/more/accounts" element={<AdminUsersScreen />} />
             <Route path="/steps" element={<StepsDetailScreen />} />
           </Routes>
         </div>

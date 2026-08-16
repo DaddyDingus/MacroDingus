@@ -146,12 +146,11 @@ export default function MacrosDetailScreen() {
 
         {monthGroupsDesc.length > 0 && (
           <div className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(2, 60, 5)}>
-            {monthGroupsDesc.map((g, gi) => (
+            {monthGroupsDesc.map((g) => (
               <MonthSection
                 key={g.key}
                 label={g.label}
                 summary={`${g.entries.length} ${g.entries.length === 1 ? "day" : "days"}`}
-                defaultOpen={gi === 0}
               >
                 {g.entries.map((d) => (
                   <button

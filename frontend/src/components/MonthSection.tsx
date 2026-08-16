@@ -1,5 +1,6 @@
-import { useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
+import { useExpandable } from "../hooks/useExpandable";
 
 // One collapsible month inside a History card. Every detail screen's history
 // list is grouped by month and had a single all-or-nothing toggle above the
@@ -27,11 +28,12 @@ export default function MonthSection({
   defaultOpen?: boolean;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const { open, toggle, ref } = useExpandable(defaultOpen);
+
   return (
-    <div className="border-t border-line first:border-t-0">
+    <div ref={ref} className="border-t border-line first:border-t-0">
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggle}
         aria-expanded={open}
         className="w-full px-4 py-2 bg-surface-raised flex items-center justify-between gap-3 text-left"
       >
@@ -39,12 +41,24 @@ export default function MonthSection({
         <span className="flex items-center gap-2 shrink-0">
           {summary && <span className="tabular text-xs text-muted/70">{summary}</span>}
           <ChevronDown
-            className={`w-3.5 h-3.5 text-muted transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+            className={`w-3.5 h-3.5 text-muted transition-transform duration-150 ${open ? "rotate-180" : ""}`}
             strokeWidth={2}
           />
         </span>
       </button>
-      {open && children}
+      {/* Grid-rows animation (0fr -> 1fr), matching the pattern used for
+          PhotosScreen's Measurements section and AddFoodSheet's ActionBar —
+          a plain conditional render pops content in/out instantly instead of
+          animating like every other expand/collapse in the app. 150ms rather
+          than the 300ms most other transitions in the app use — this one
+          fires constantly while browsing history and reads as sluggish at
+          the slower speed. */}
+      <div
+        className="grid transition-[grid-template-rows] duration-150 ease-out"
+        style={{ gridTemplateRows: open ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">{children}</div>
+      </div>
     </div>
   );
 }

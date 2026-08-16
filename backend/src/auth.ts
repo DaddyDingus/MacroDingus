@@ -18,7 +18,13 @@ declare module "fastify" {
 
 const COOKIE_NAME = "mt_session";
 const OIDC_COOKIE_NAME = "mt_oidc";
-const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+// Rolling, and long enough to be "permanent" in practice: any request more
+// than SESSION_REFRESH_AFTER_MS past issue re-signs the cookie with a fresh
+// year, so a device that gets used is never signed out — only logging out or
+// reinstalling ends a session. The 1-year ceiling is deliberate rather than an
+// infinite cookie: a device left untouched still ages out on its own.
+const SESSION_MS = 365 * 24 * 60 * 60 * 1000;
+const SESSION_REFRESH_AFTER_MS = 24 * 60 * 60 * 1000;
 const OIDC_ISSUER = process.env.OIDC_ISSUER?.trim() ?? "";
 const OIDC_CLIENT_ID = process.env.OIDC_CLIENT_ID?.trim() || "macrodaddy";
 const OIDC_REDIRECT_ORIGINS = new Set((process.env.OIDC_REDIRECT_ORIGINS ?? "")
@@ -26,9 +32,18 @@ const OIDC_REDIRECT_ORIGINS = new Set((process.env.OIDC_REDIRECT_ORIGINS ?? "")
 const OIDC_BOOTSTRAP_USERNAME = process.env.OIDC_BOOTSTRAP_USERNAME?.trim().toLowerCase() ?? "";
 const OIDC_BOOTSTRAP_ACCOUNT = process.env.OIDC_BOOTSTRAP_ACCOUNT?.trim().toLowerCase() ?? "";
 const secureCookies = process.env.NODE_ENV === "production";
+// users.lastSeenAt only has to be accurate enough to answer "is anyone still
+// opening this account?", so it is written at most once an hour rather than on
+// every authenticated request.
+const LAST_SEEN_THROTTLE_MS = 60 * 60 * 1000;
 let oidcClientPromise: Promise<Client> | null = null;
 let revokedSessionsPath = "";
 const revokedSessions = new Map<string, number>();
+
+// Distinguished from a generic sign-in failure so the callback can say what
+// actually happened. A blocked person retrying forever because the app told
+// them "sign-in failed" is the same outage as being locked out by accident.
+class AccountBlockedError extends Error {}
 
 function publicUser(user: Pick<typeof users.$inferSelect, "id" | "name" | "role">) {
   return { id: user.id, name: user.name, role: user.role === "admin" ? "admin" as const : "member" as const };
@@ -123,9 +138,30 @@ function decodeSession(req: FastifyRequest): SessionPayload | null {
 }
 
 function parseSession(req: FastifyRequest): string | null {
+  return liveSession(req)?.userId ?? null;
+}
+
+/** The decoded session, or null if it is expired, revoked, or superseded. */
+function liveSession(req: FastifyRequest): SessionPayload | null {
   const session = decodeSession(req);
   if (!session || revokedSessions.has(session.fingerprint)) return null;
-  return session.userId;
+  return session;
+}
+
+/**
+ * A session issued before the account's `sessionsValidAfter` mark is dead
+ * regardless of how valid its signature is. Issue time is derived, not stored
+ * — the cookie only carries its expiry — so the cookie format is unchanged.
+ *
+ * This is what makes logout real now that sessions renew indefinitely:
+ * clearing a cookie asks the browser to cooperate, and WebViews have been
+ * observed restoring one afterwards. Rejecting by issue time needs no
+ * cooperation at all.
+ */
+function sessionSuperseded(session: SessionPayload, validAfter: string | null | undefined): boolean {
+  if (!validAfter) return false;
+  const cutoff = Date.parse(validAfter);
+  return Number.isFinite(cutoff) && session.expiry - SESSION_MS < cutoff;
 }
 
 function revokeSession(req: FastifyRequest) {
@@ -193,6 +229,7 @@ async function userForOidcClaims(claims: Record<string, unknown>) {
   const [linked] = await db.select().from(users).where(eq(users.oidcSub, subject));
   const claimedUsername = String(claims.preferred_username || "").trim().toLowerCase();
   if (linked) {
+    if (linked.disabledAt) throw new AccountBlockedError();
     if (claimedUsername === OIDC_BOOTSTRAP_USERNAME && linked.role !== "admin") {
       await db.update(users).set({ role: "admin" }).where(eq(users.id, linked.id));
       return { ...linked, role: "admin" };
@@ -217,6 +254,10 @@ async function userForOidcClaims(claims: Record<string, unknown>) {
   }
 
   if (account) {
+    // Blocks the name-adoption path too, not just re-linking: an unlinked
+    // account is claimable by whoever signs in with a matching name, so a
+    // blocked one must not become a way back in under a new `sub`.
+    if (account.disabledAt) throw new AccountBlockedError();
     if (account.oidcSub && account.oidcSub !== subject) throw new Error("That account is already linked to another Authentik user");
     const role = claimedUsername === OIDC_BOOTSTRAP_USERNAME ? "admin" : account.role;
     await db.update(users).set({ oidcSub: subject, role }).where(eq(users.id, account.id));
@@ -295,6 +336,10 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
       signSession(reply, user.id);
       return reply.redirect("/");
     } catch (error) {
+      if (error instanceof AccountBlockedError) {
+        req.log.warn("blocked account attempted Authentik sign-in");
+        return reply.code(403).send("This MacroDaddy account has been blocked. Ask the account administrator to restore it.");
+      }
       req.log.error({ err: error }, "Authentik callback failed");
       return reply.code(401).send("Authentik sign-in failed. Return to MacroDaddy and try again.");
     }
@@ -330,19 +375,32 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
   });
 
   app.post("/api/auth/logout", async (req, reply) => {
-    // WebViews have been observed restoring a cookie after honoring the logout
-    // response. Revoke this exact signed session as well, so replaying that
-    // stale cookie cannot restore access. Other devices remain signed in.
+    // Sessions renew indefinitely now, so a logout the browser can quietly
+    // undo is not a logout. Revoking this exact cookie still happens, but the
+    // account is also stamped, which kills every session it ever issued and
+    // needs no cooperation from the client.
+    //
+    // Deliberate change of behaviour (2026-08-16): this signs the account out
+    // on ALL devices, where it previously left others alone. Consistent with
+    // every other app here, and it is the lever you want for a lost phone.
+    const session = liveSession(req);
     revokeSession(req);
+    if (session) {
+      await db.update(users).set({ sessionsValidAfter: new Date().toISOString() }).where(eq(users.id, session.userId));
+    }
     clearSession(reply);
     return { ok: true };
   });
 
   app.get("/api/auth/status", async (req) => {
-    const userId = parseSession(req);
-    if (!userId) return { authenticated: false };
-    const [user] = await db.select().from(users).where(eq(users.id, userId));
-    if (!user) return { authenticated: false };
+    const session = liveSession(req);
+    if (!session) return { authenticated: false };
+    const [user] = await db.select().from(users).where(eq(users.id, session.userId));
+    if (user && sessionSuperseded(session, user.sessionsValidAfter)) return { authenticated: false };
+    // A deleted or blocked account reports as signed out rather than as an
+    // error, so the client falls through to its normal login screen instead
+    // of sitting on a broken session it cannot explain.
+    if (!user || user.disabledAt) return { authenticated: false };
     return { authenticated: true, user: publicUser(user) };
   });
 
@@ -350,11 +408,45 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
     const url = req.raw.url ?? "";
     if (!url.startsWith("/api/")) return;
     if (url.startsWith("/api/auth/") || url.startsWith("/api/android/") || url === "/api/health" || url === "/api/steps/webhook") return;
-    const userId = parseSession(req);
-    if (!userId) {
+    const session = liveSession(req);
+    if (!session) {
       reply.code(401).send({ error: "Not authenticated" });
       return;
     }
+    const userId = session.userId;
+    // The session cookie is self-contained and long-lived, so proving
+    // it is authentic is not the same as proving the account still exists or
+    // is still allowed in. Without this lookup, deleting or blocking someone
+    // leaves every route but /auth/status happily serving their stale cookie
+    // until it expires. A primary-key read on better-sqlite3 is measured in
+    // microseconds — cheap enough that caching it would only add staleness.
+    const [user] = await db
+      .select({
+        id: users.id,
+        disabledAt: users.disabledAt,
+        lastSeenAt: users.lastSeenAt,
+        sessionsValidAfter: users.sessionsValidAfter,
+      })
+      .from(users)
+      .where(eq(users.id, userId));
+    if (!user || sessionSuperseded(session, user.sessionsValidAfter)) {
+      reply.code(401).send({ error: "Not authenticated" });
+      return;
+    }
+    if (user.disabledAt) {
+      reply.code(403).send({ error: "This account has been blocked" });
+      return;
+    }
+
+    // Rolling renewal, gated on elapsed time rather than done every request so
+    // a Set-Cookie isn't appended to every photo and chart response.
+    if (Date.now() - (session.expiry - SESSION_MS) > SESSION_REFRESH_AFTER_MS) signSession(reply, userId);
+
+    const lastSeen = user.lastSeenAt ? Date.parse(user.lastSeenAt) : Number.NaN;
+    if (!Number.isFinite(lastSeen) || Date.now() - lastSeen > LAST_SEEN_THROTTLE_MS) {
+      await db.update(users).set({ lastSeenAt: new Date().toISOString() }).where(eq(users.id, userId));
+    }
+
     req.userId = userId;
   });
 }

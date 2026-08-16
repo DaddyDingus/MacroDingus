@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ChevronDown } from "lucide-react";
 import { useDayLog, useLogsHistory } from "../api/logs";
@@ -13,6 +13,7 @@ import ChartCard from "../components/ChartCard";
 import NutrientHistoryChart, { NutrientHistoryChartLegend, type NutrientChartPoint } from "../components/NutrientHistoryChart";
 import MonthSection from "../components/MonthSection";
 import { staggerStyle } from "../lib/stagger";
+import { useExpandable } from "../hooks/useExpandable";
 
 // Exported so NutrientDayDetailScreen (the per-day drill-in reached by
 // tapping a history row below) can share the exact same label/color/target
@@ -82,7 +83,7 @@ export default function NutrientDetailScreen() {
   const metricId: MetricId = metric && metric in METRIC_CONFIG ? (metric as MetricId) : "calories";
   const config = METRIC_CONFIG[metricId];
 
-  const [showAllContributors, setShowAllContributors] = useState(false);
+  const contributorsExpand = useExpandable(false);
   const { unit: energyUnit } = useEnergyUnit();
   const today = localDateString();
   const dayLog = useDayLog(today);
@@ -101,7 +102,9 @@ export default function NutrientDetailScreen() {
   const convert = (n: number) => (metricId === "calories" ? kcalToUnit(n, energyUnit) : n);
   const unitLabel = metricId === "calories" ? energyUnitLabel(energyUnit) : config.unit;
 
-  const contributors = topContributors(dayLog.data?.entries ?? [], metricId, showAllContributors ? 999 : 3);
+  const allContributors = topContributors(dayLog.data?.entries ?? [], metricId, 999);
+  const visibleContributors = allContributors.slice(0, 3);
+  const restContributors = allContributors.slice(3);
   const consumedToday = dayLog.data?.totals[metricId] ?? 0;
   const targetsToday = targetsForDate(programList, today);
   const targetToday = targetsToday ? targetsToday[config.targetKey] : null;
@@ -225,36 +228,71 @@ export default function NutrientDetailScreen() {
           </div>
         </div>
 
-        {contributors.length > 0 && (
-          <div className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
-            <button
-              onClick={() => setShowAllContributors((v) => !v)}
-              className="w-full px-4 py-2.5 flex items-center justify-between border-b border-line text-left"
-            >
-              <span className="text-[11px] tracking-widest uppercase text-muted">
-                {showAllContributors ? "All contributors today" : "Top 3 contributors today"}
-              </span>
-              <ChevronDown className={`w-4 h-4 text-muted transition-transform ${showAllContributors ? "rotate-180" : ""}`} strokeWidth={2} />
-            </button>
-            {contributors.map((c) => (
-              <div key={c.foodId} className="flex items-center justify-between px-4 py-2.5 border-b border-line/60 last:border-b-0">
-                <span className="text-sm truncate pr-2">{c.name}</span>
-                <span className="tabular text-sm shrink-0">
-                  {fmt(convert(c.amount))} {unitLabel}
-                </span>
+        {allContributors.length > 0 && (
+          <div className="tile-enter" style={staggerStyle(block++, 60, 5)}>
+            <div ref={contributorsExpand.ref} className="border border-line bg-surface rounded-2xl overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-line flex items-center justify-between">
+                <span className="text-[11px] tracking-widest uppercase text-muted">Top contributors today</span>
+                {restContributors.length > 0 && (
+                  <button
+                    onClick={contributorsExpand.toggle}
+                    aria-expanded={contributorsExpand.open}
+                    className="flex items-center gap-1 text-xs text-accent"
+                  >
+                    {contributorsExpand.open ? "Show less" : `+${restContributors.length} more`}
+                    <ChevronDown
+                      className={`w-3.5 h-3.5 transition-transform duration-150 ${contributorsExpand.open ? "rotate-180" : ""}`}
+                      strokeWidth={2}
+                    />
+                  </button>
+                )}
               </div>
-            ))}
+              {visibleContributors.map((c, i) => (
+                <div
+                  key={c.foodId}
+                  className={`flex items-center justify-between px-4 py-2.5 ${
+                    restContributors.length === 0 && i === visibleContributors.length - 1 ? "" : "border-b border-line/60"
+                  }`}
+                >
+                  <span className="text-sm truncate pr-2">{c.name}</span>
+                  <span className="tabular text-sm shrink-0">
+                    {fmt(convert(c.amount))} {unitLabel}
+                  </span>
+                </div>
+              ))}
+              {restContributors.length > 0 && (
+                <div
+                  className="grid transition-[grid-template-rows] duration-150 ease-out"
+                  style={{ gridTemplateRows: contributorsExpand.open ? "1fr" : "0fr" }}
+                >
+                  <div className="overflow-hidden">
+                    {restContributors.map((c, i) => (
+                      <div
+                        key={c.foodId}
+                        className={`flex items-center justify-between px-4 py-2.5 ${
+                          i === restContributors.length - 1 ? "" : "border-b border-line/60"
+                        }`}
+                      >
+                        <span className="text-sm truncate pr-2">{c.name}</span>
+                        <span className="tabular text-sm shrink-0">
+                          {fmt(convert(c.amount))} {unitLabel}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
         {monthGroupsDesc.length > 0 && (
           <div className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
-            {monthGroupsDesc.map((g, gi) => (
+            {monthGroupsDesc.map((g) => (
               <MonthSection
                 key={g.key}
                 label={g.label}
                 summary={`${g.entries.length} ${g.entries.length === 1 ? "day" : "days"}`}
-                defaultOpen={gi === 0}
               >
                 {g.entries.map((d) => (
                   <button

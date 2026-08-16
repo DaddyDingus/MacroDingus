@@ -14,7 +14,12 @@ import type { RangePreset } from "../components/RangeToggle";
 // rounded corner, and the trailing X-axis date label runs into the right
 // edge — both need to be non-negative enough to clear rounded-2xl's corner
 // curve near the top of the card, not just avoid literal clipping.
-export const CHART_MARGIN = { top: 8, right: 14, left: -4, bottom: 0 };
+// `right` also has to clear half a bar's width for the stacked bar charts
+// (MacroHistoryChart, StepsChart): with a numeric domain ending exactly at
+// the last plotted day, that day's bar is centered on the axis boundary, so
+// half of `maxBarSize` (20, i.e. 10px) renders past it and got clipped by
+// the card's own rounded-corner overflow-hidden.
+export const CHART_MARGIN = { top: 8, right: 24, left: -4, bottom: 0 };
 export const Y_AXIS_WIDTH = 40;
 export const CHART_HEIGHT = 220;
 // A fixed taller height for the expand toggle, not a freely-resizable panel —

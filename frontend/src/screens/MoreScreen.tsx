@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Check, Palette, Ruler, CalendarDays, CookingPot, ChevronDown, ChevronRight, AlertTriangle, LogOut, User, KeyRound, Activity, Sparkles, Download, Upload, Database, RefreshCw, ShieldCheck, Share2, Globe2, Smartphone, Footprints } from "lucide-react";
+import { Check, Palette, Ruler, CalendarDays, CookingPot, ChevronDown, ChevronRight, AlertTriangle, LogOut, User, Users, Activity, Sparkles, Download, Upload, Database, RefreshCw, ShieldCheck, Share2, Globe2, Smartphone, Footprints } from "lucide-react";
 import { useAuthStatus, useLogout } from "../api/auth";
 import { useCoachStatus, useSaveProfile } from "../api/coach";
 import { useTheme, THEME_CATALOG } from "../lib/theme";
@@ -11,7 +11,6 @@ import { staggerStyle } from "../lib/stagger";
 import ClearAccountDataSheet from "../components/ClearAccountDataSheet";
 import ChangeCheckInDaySheet from "../components/ChangeCheckInDaySheet";
 import RenameAccountSheet from "../components/RenameAccountSheet";
-import ChangePasswordSheet from "../components/ChangePasswordSheet";
 import EditBodyProfileSheet from "../components/EditBodyProfileSheet";
 import AiSettingsSheet from "../components/AiSettingsSheet";
 import CookwareSheet from "../components/CookwareSheet";
@@ -51,7 +50,6 @@ export default function MoreScreen() {
   const [showClearData, setShowClearData] = useState(false);
   const [showCheckInDaySheet, setShowCheckInDaySheet] = useState(false);
   const [showRenameSheet, setShowRenameSheet] = useState(false);
-  const [showPasswordSheet, setShowPasswordSheet] = useState(false);
   const [showBodyProfileSheet, setShowBodyProfileSheet] = useState(false);
   const [showAiSettingsSheet, setShowAiSettingsSheet] = useState(false);
   const [showCookwareSheet, setShowCookwareSheet] = useState(false);
@@ -239,9 +237,13 @@ export default function MoreScreen() {
 
         <section className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
           <SectionHeader icon={<User size={15} strokeWidth={2} className="text-muted" />} label="Account" />
+          {/* No "Change password" row: sign-in is Authentik-only (auth.ts
+              rejects /api/auth/login outright while OIDC_ISSUER is set), so
+              changing the local password hash could never affect logging in.
+              Passwords are managed in Authentik — see Household below. */}
           <button
             onClick={() => setShowRenameSheet(true)}
-            className="w-full flex items-center justify-between px-4 py-2.5 border-b border-line/60 text-left active:bg-surface-raised"
+            className="w-full flex items-center justify-between px-4 py-2.5 text-left active:bg-surface-raised"
           >
             <span className="text-sm">Rename account</span>
             <span className="flex items-center gap-1 text-sm text-muted">
@@ -249,21 +251,21 @@ export default function MoreScreen() {
               <ChevronRight size={16} strokeWidth={2.5} className="text-muted shrink-0" />
             </span>
           </button>
-          <button
-            onClick={() => setShowPasswordSheet(true)}
-            className="w-full flex items-center justify-between px-4 py-2.5 text-left active:bg-surface-raised"
-          >
-            <span className="flex items-center gap-2 text-sm">
-              <KeyRound size={14} strokeWidth={2} className="text-muted" />
-              Change password
-            </span>
-            <ChevronRight size={16} strokeWidth={2.5} className="text-muted shrink-0" />
-          </button>
         </section>
 
         {isAdmin && (
           <section className="tile-enter border border-accent/25 bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
-            <SectionHeader icon={<Share2 size={15} strokeWidth={2} className="text-accent" />} label="Invite & share" />
+            <SectionHeader icon={<Users size={15} strokeWidth={2} className="text-accent" />} label="Household" />
+            <button
+              onClick={() => navigate("/more/accounts")}
+              className="w-full flex items-center justify-between px-4 py-2.5 border-b border-line/60 text-left active:bg-surface-raised"
+            >
+              <span className="min-w-0 flex-1 pr-3">
+                <span className="block text-sm">Manage accounts</span>
+                <span className="block text-xs text-muted">Review activity, block or delete</span>
+              </span>
+              <ChevronRight size={16} strokeWidth={2.5} className="text-muted shrink-0" />
+            </button>
             <div className="px-4 py-3 border-b border-line/60">
               <p className="text-xs text-muted leading-relaxed">
                 Add a person in Authentik, then send either link. Their first sign-in creates a separate MacroDaddy account.
@@ -464,7 +466,6 @@ export default function MoreScreen() {
         />
       )}
       {showRenameSheet && <RenameAccountSheet currentName={name} onClose={() => setShowRenameSheet(false)} />}
-      {showPasswordSheet && <ChangePasswordSheet onClose={() => setShowPasswordSheet(false)} />}
       {showBodyProfileSheet && profile && (
         <EditBodyProfileSheet profile={profile} onClose={() => setShowBodyProfileSheet(false)} />
       )}

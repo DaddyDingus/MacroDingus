@@ -10,6 +10,7 @@ import ExpenditureChartCard from "../components/ExpenditureChartCard";
 import MiniLineSpark from "../components/MiniLineSpark";
 import ChangeDirectionIcon from "../components/ChangeDirectionIcon";
 import MonthSection from "../components/MonthSection";
+import CollapsibleCard from "../components/CollapsibleCard";
 import StatTile from "../components/StatTile";
 import { staggerStyle } from "../lib/stagger";
 
@@ -85,7 +86,6 @@ export default function ExpenditureDetailScreen() {
   const status = useCoachStatus();
   const dailySeries = useExpenditureDailySeries(DAILY_SERIES_DAYS);
   const { unit: energyUnit } = useEnergyUnit();
-  const [showHistory, setShowHistory] = useState(false);
 
   // Still the "last official check-in" snapshot, used only for the Current
   // Expenditure/Current Strategy tiles below — the graph, header stat, and
@@ -291,21 +291,13 @@ export default function ExpenditureDetailScreen() {
         </div>
 
         {monthGroupsDesc.length > 0 && (
-          <div className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>
-            <button
-              onClick={() => setShowHistory((v) => !v)}
-              className="w-full px-4 py-2.5 flex items-center justify-between text-left"
-            >
-              <span className="text-[11px] tracking-widest uppercase text-muted">Daily history</span>
-              <span className="text-xs text-accent">{showHistory ? "Hide" : "Show"}</span>
-            </button>
-            {showHistory &&
-              monthGroupsDesc.map((g, gi) => (
+          <div className="tile-enter" style={staggerStyle(block++, 60, 5)}>
+            <CollapsibleCard label="Daily history">
+              {monthGroupsDesc.map((g) => (
                 <MonthSection
                   key={g.key}
                   label={g.label}
                   summary={`${g.entries.length} ${g.entries.length === 1 ? "day" : "days"}`}
-                  defaultOpen={gi === 0}
                 >
                   {g.entries.map((p) => {
                     const dir = changeDirection(p.delta, EXPENDITURE_CHANGE_EPSILON);
@@ -328,6 +320,7 @@ export default function ExpenditureDetailScreen() {
                   })}
                 </MonthSection>
               ))}
+            </CollapsibleCard>
           </div>
         )}
       </main>

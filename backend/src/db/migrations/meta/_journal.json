@@ -260,6 +260,20 @@
       "when": 1786752000000,
       "tag": "0036_health_connect_steps",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1786924800000,
+      "tag": "0037_admin_account_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1786928400000,
+      "tag": "0038_rolling_sessions",
+      "breakpoints": true
     }
   ]
 }

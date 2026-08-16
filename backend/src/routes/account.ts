@@ -1,6 +1,4 @@
 import type { FastifyInstance } from "fastify";
-import fs from "node:fs";
-import path from "node:path";
 import crypto from "node:crypto";
 import bcrypt from "bcrypt";
 import { z } from "zod";
@@ -9,9 +7,10 @@ import { db, sqlite } from "../db/index.js";
 import {
   logs, favorites, cookware, foodSearchStats, programDays, programs, checkins, goals, weights, photos, profiles, users,
   nutritionDayStatuses, dailyAdjustments, measurements, userSettings, recipes, recipeIngredients, foods,
-  stepRecords, stepDailyTotals, stepSyncState, stepsWebhookTokens,
+  stepRecords, stepDailyTotals, stepSyncState,
 } from "../db/schema.js";
 import { createServerBackup, serverBackupStatus } from "../lib/serverBackups.js";
+import { purgeUserData } from "../lib/userData.js";
 
 const nameSchema = z.object({ name: z.string().trim().min(1).max(40) });
 const passwordSchema = z.object({
@@ -264,37 +263,11 @@ export function registerAccountRoutes(app: FastifyInstance, dataDir: string) {
   });
 
   app.delete("/api/account/data", async (req, reply) => {
-    const userId = req.userId!;
-
-    const userPrograms = await db.select({ id: programs.id }).from(programs).where(eq(programs.userId, userId));
-    const userRecipes = await db.select({ id: recipes.id }).from(recipes).where(eq(recipes.userId, userId));
-    for (const p of userPrograms) {
-      await db.delete(programDays).where(eq(programDays.programId, p.id));
-    }
-    await db.delete(logs).where(eq(logs.userId, userId));
-    await db.delete(nutritionDayStatuses).where(eq(nutritionDayStatuses.userId, userId));
-    await db.delete(dailyAdjustments).where(eq(dailyAdjustments.userId, userId));
-    await db.delete(measurements).where(eq(measurements.userId, userId));
-    await db.delete(favorites).where(eq(favorites.userId, userId));
-    await db.delete(cookware).where(eq(cookware.userId, userId));
-    await db.delete(foodSearchStats).where(eq(foodSearchStats.userId, userId));
-    await db.delete(stepRecords).where(eq(stepRecords.userId, userId));
-    await db.delete(stepDailyTotals).where(eq(stepDailyTotals.userId, userId));
-    await db.delete(stepSyncState).where(eq(stepSyncState.userId, userId));
-    await db.delete(stepsWebhookTokens).where(eq(stepsWebhookTokens.userId, userId));
-    await db.delete(userSettings).where(eq(userSettings.userId, userId));
-    for (const recipe of userRecipes) {
-      await db.delete(recipeIngredients).where(eq(recipeIngredients.recipeId, recipe.id));
-    }
-    await db.delete(recipes).where(eq(recipes.userId, userId));
-    await db.delete(programs).where(eq(programs.userId, userId));
-    await db.delete(checkins).where(eq(checkins.userId, userId));
-    await db.delete(goals).where(eq(goals.userId, userId));
-    await db.delete(weights).where(eq(weights.userId, userId));
-    await db.delete(photos).where(eq(photos.userId, userId));
-    await db.delete(profiles).where(eq(profiles.userId, userId));
-
-    await fs.promises.rm(path.join(dataDir, "photos", userId), { recursive: true, force: true });
+    // Table list lives in lib/userData.ts, shared with the admin delete —
+    // this route previously kept its own copy and silently missed the
+    // event-plan tables for as long as they existed. Saved AI keys survive a
+    // self-service clear; only deleting the account removes those.
+    await purgeUserData(req.userId!, dataDir);
 
     reply.code(204);
     return null;

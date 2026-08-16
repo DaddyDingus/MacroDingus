@@ -9,6 +9,20 @@ export const users = sqliteTable("users", {
   passwordHash: text("password_hash").notNull(),
   oidcSub: text("oidc_sub").unique(),
   role: text("role").notNull().default("member"),
+  // Set by an admin to refuse this account entry while keeping its data.
+  // Deleting the row cannot keep anyone out: Authentik still holds the
+  // identity, and userForOidcClaims provisions a fresh account for any
+  // unrecognized `sub`. "Blocked" therefore has to be a state the account
+  // *keeps*, which is the whole reason this column exists alongside delete.
+  disabledAt: text("disabled_at"),
+  // Last authenticated API request, written at most once an hour (see
+  // auth.ts). Deliberately distinct from "last logged food": it answers "is
+  // anyone still opening this account?" for an account that never logs.
+  lastSeenAt: text("last_seen_at"),
+  // Sessions are rolling and effectively permanent (auth.ts), so logout can't
+  // rely on the browser dropping a cookie — WebViews have been seen restoring
+  // one. Any session issued before this instant is refused.
+  sessionsValidAfter: text("sessions_valid_after"),
   createdAt: text("created_at").notNull(),
 });
 

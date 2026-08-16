@@ -27,7 +27,7 @@ export default function StatTile({
   return (
     <div className="flex items-center gap-4 border border-line bg-surface rounded-2xl p-4">
       <div className="w-20 shrink-0 flex flex-col items-center justify-center text-center">
-        <p className={`tabular font-medium tracking-tight ${valueClassName}`}>{value}</p>
+        <p className={`tabular font-medium tracking-tight ${value === "—" ? "text-muted" : ""} ${valueClassName}`}>{value}</p>
         {unit && <p className="text-xs text-muted mt-0.5">{unit}</p>}
       </div>
       <div className="min-w-0">

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import imageCompression from "browser-image-compression";
 import { Calendar, Camera, ChevronDown, ChevronLeft, Columns2, Trash2, X } from "lucide-react";
@@ -24,6 +24,7 @@ import { useWeightTrend } from "../api/weights";
 import { localDateString, formatDayLabel, addDays } from "../lib/date";
 import { useBackDismiss } from "../lib/useBackDismiss";
 import { useHideBottomNav } from "../lib/navVisibility";
+import { lockBodyScroll, unlockBodyScroll } from "../lib/bodyScrollLock";
 import PhotoAlignerModal from "../components/PhotoAlignerModal";
 import CalendarJumpSheet from "../components/CalendarJumpSheet";
 import ConfirmDeleteSheet from "../components/ConfirmDeleteSheet";
@@ -235,6 +236,66 @@ export default function PhotosScreen() {
   // lightbox instead of leaving Photos via the tab bar's own screen.
   useBackDismiss(!!viewing, () => setViewingId(null));
   useHideBottomNav(!!viewing);
+
+  // Unlike every other full-screen overlay (BottomSheet, AddFoodSheet), this
+  // lightbox never locked background scroll. PhotosScreen behind it is a
+  // tall scrollable page, so background touch-scroll/rubber-band and the
+  // mobile browser's dynamic address-bar resize could shift the visual
+  // viewport under this `fixed inset-0` panel, pushing its header/footer out
+  // of view — looked like a bug where the title and delete button needed
+  // scrolling to reach. Same lock BottomSheet uses.
+  useEffect(() => {
+    if (!viewing) return;
+    lockBodyScroll();
+    return unlockBodyScroll;
+  }, [!!viewing]);
+
+  // Every photo taken on the same day as the one currently open, in the same
+  // order shown in the History row (posed poses first, then unposed) — the
+  // swipe set for the lightbox. Keyed on the date rather than the group
+  // object so swiping between photos (which changes `viewingId` but not the
+  // date) doesn't recompute this on every slide.
+  const viewingDayPhotos = useMemo(() => {
+    if (!viewing) return [];
+    const group = historyGroups.find((g) => g.date === viewing.date);
+    return group ? [...group.posed, ...group.other] : [viewing];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyGroups, viewing?.date]);
+
+  const lightboxScrollerRef = useRef<HTMLDivElement>(null);
+  // Tracks whether the *previous* render had the lightbox closed, so the
+  // jump-to-photo effect below only fires on the opening transition — never
+  // in response to `handleLightboxScroll`'s own `setViewingId` calls while a
+  // swipe is in progress. Reacting to those too (matching
+  // DashboardTotalsArcCard's convention: scroll-driven state updates are
+  // read-only, `scrollTo` is only ever invoked from an explicit
+  // open/navigate action) used to fight the browser's own scroll-snap
+  // momentum mid-gesture — an instant `scrollTo` landing on top of a still-
+  // decelerating native scroll, which looked like another photo flashing on
+  // screen for an instant.
+  const wasClosedRef = useRef(true);
+
+  useLayoutEffect(() => {
+    const el = lightboxScrollerRef.current;
+    if (!el || !viewingId) {
+      wasClosedRef.current = true;
+      return;
+    }
+    const justOpened = wasClosedRef.current;
+    wasClosedRef.current = false;
+    if (!justOpened) return;
+    const index = viewingDayPhotos.findIndex((p) => p.id === viewingId);
+    if (index < 0) return;
+    el.scrollTo({ left: index * el.clientWidth });
+  }, [viewingId, viewingDayPhotos]);
+
+  function handleLightboxScroll() {
+    const el = lightboxScrollerRef.current;
+    if (!el || el.clientWidth === 0) return;
+    const index = Math.round(el.scrollLeft / el.clientWidth);
+    const photo = viewingDayPhotos[index];
+    if (photo && photo.id !== viewingId) setViewingId(photo.id);
+  }
 
   return (
     <div className="min-h-dvh pb-24">
@@ -526,17 +587,42 @@ export default function PhotosScreen() {
             <span className="text-sm text-ink">
               {formatDayLabel(viewing.date)}
               {viewing.pose && <span className="text-muted"> · {PHOTO_POSE_LABEL[viewing.pose]}</span>}
+              {viewingDayPhotos.length > 1 && (
+                <span className="text-muted">
+                  {" "}
+                  · {viewingDayPhotos.findIndex((p) => p.id === viewing.id) + 1}/{viewingDayPhotos.length}
+                </span>
+              )}
             </span>
             <button onClick={() => setViewingId(null)} className="text-muted text-xl leading-none px-1">
               ×
             </button>
           </div>
-          <div className="flex-1 flex items-center justify-center overflow-hidden">
-            <img
-              src={`/api/photos/${viewing.id}/file`}
-              alt={formatDayLabel(viewing.date)}
-              className="max-w-full max-h-full object-contain"
-            />
+          {/* Same horizontal scroll-snap swipe pattern as
+              DashboardTotalsArcCard: native scroll-snap rather than hand-rolled
+              touch math, with data-rubber-band-horizontal-swipe so the shared
+              rubber-band hook axis-locks instead of racing this for the
+              gesture. */}
+          <div
+            ref={lightboxScrollerRef}
+            onScroll={handleLightboxScroll}
+            data-rubber-band-horizontal-swipe
+            className="flex-1 flex overflow-x-auto no-scrollbar overscroll-x-contain select-none"
+            style={{ scrollSnapType: "x mandatory", touchAction: "pan-x" }}
+          >
+            {viewingDayPhotos.map((photo) => (
+              <div
+                key={photo.id}
+                className="w-full h-full shrink-0 flex items-center justify-center overflow-hidden"
+                style={{ scrollSnapAlign: "center" }}
+              >
+                <img
+                  src={`/api/photos/${photo.id}/file`}
+                  alt={photo.pose ? `${PHOTO_POSE_LABEL[photo.pose]} photo for ${formatDayLabel(photo.date)}` : formatDayLabel(photo.date)}
+                  className="max-w-full max-h-full object-contain"
+                />
+              </div>
+            ))}
           </div>
           <div className="p-4 shrink-0">
             <button
