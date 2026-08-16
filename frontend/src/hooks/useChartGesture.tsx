@@ -181,7 +181,16 @@ export function useChartGesture({
     const el = overlayRef.current;
     if (!el) return;
     function onTouchMove(e: TouchEvent) {
-      if (axisIntent.current === "horizontal" && e.cancelable) e.preventDefault();
+      if (axisIntent.current === "pending" && e.touches.length === 1 && panGesture.current) {
+        const dx = Math.abs(e.touches[0].clientX - panGesture.current.startClientX);
+        const dy = Math.abs(e.touches[0].clientY - panGesture.current.startClientY);
+        if (Math.max(dx, dy) >= AXIS_LOCK_THRESHOLD_PX) {
+          axisIntent.current = dx > dy ? "horizontal" : "vertical";
+        }
+      }
+      if (axisIntent.current === "horizontal" && e.cancelable) {
+        e.preventDefault();
+      }
     }
     el.addEventListener("touchmove", onTouchMove, { passive: false });
     return () => el.removeEventListener("touchmove", onTouchMove);

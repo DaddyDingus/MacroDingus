@@ -134,7 +134,7 @@ export default function WeightChart({
     return vals;
   });
   const domain: [number, number] = visibleValues.length
-    ? [Math.min(...visibleValues) - 1, Math.max(...visibleValues) + 1]
+    ? [Math.floor(Math.min(...visibleValues) - 1), Math.ceil(Math.max(...visibleValues) + 1)]
     : [0, 1];
 
   // Trend Weight only dots at 1W/1M zoom (see chartLayout.ts's
