@@ -87,7 +87,7 @@ export default function NutrientTimingChart({
         <XAxis
           dataKey="label"
           tick={{ fill: MUTED, fontSize: 9 }}
-          axisLine={{ stroke: GRID }}
+          axisLine={false}
           tickLine={false}
           interval={0}
           // Flat horizontal labels (even shrunk down and packed edge-to-edge)

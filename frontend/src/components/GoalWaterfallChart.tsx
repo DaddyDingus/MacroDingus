@@ -61,7 +61,7 @@ export default function GoalWaterfallChart({
         <XAxis
           dataKey="label"
           tick={{ fill: MUTED, fontSize: 11 }}
-          axisLine={{ stroke: GRID }}
+          axisLine={false}
           tickLine={false}
           minTickGap={30}
           interval="preserveStartEnd"

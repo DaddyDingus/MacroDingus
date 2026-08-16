@@ -114,7 +114,7 @@ export default function EnergyBalanceChart({
           allowDataOverflow
           tickFormatter={formatShortTs}
           tick={{ fill: MUTED, fontSize: 11 }}
-          axisLine={{ stroke: GRID }}
+          axisLine={false}
           tickLine={false}
           minTickGap={40}
         />

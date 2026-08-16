@@ -41,7 +41,7 @@ export default function StepsChart({
     <ResponsiveContainer width="100%" height={height}>
       <ComposedChart data={data} margin={CHART_MARGIN}>
         <CartesianGrid stroke={GRID} vertical={false} />
-        <XAxis type="number" dataKey="ts" domain={[windowStart, windowEnd]} allowDataOverflow tickFormatter={formatShortTs} tick={{ fill: MUTED, fontSize: 11 }} axisLine={{ stroke: GRID }} tickLine={false} minTickGap={40} />
+        <XAxis type="number" dataKey="ts" domain={[windowStart, windowEnd]} allowDataOverflow tickFormatter={formatShortTs} tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={40} />
         <YAxis domain={[0, Math.ceil(maximum * 1.1)]} allowDataOverflow tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} width={44} allowDecimals={false} tickFormatter={(value: number) => value >= 1_000 ? `${Math.round(value / 1_000)}k` : String(value)} />
         <Tooltip content={<StepsTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
         <ReferenceLine y={goal} stroke="#F7D372" strokeDasharray="4 4" />
