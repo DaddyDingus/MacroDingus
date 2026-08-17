@@ -33,6 +33,15 @@ export interface CheckinTargetChanges {
   proteinG: { from: number; to: number };
   carbsG: { from: number; to: number };
   fatG: { from: number; to: number };
+  // How far below measured expenditure these targets sit (0.31 = 31%), and
+  // whether that's past the advisory DEEP_DEFICIT_FRACTION. **Advisory only** —
+  // the targets always deliver the goal's chosen rate, so this changes what
+  // the screen says, never what it proposes.
+  deficitFraction: number;
+  deepDeficit: boolean;
+  // What these targets actually imply in kg/week. Only differs from the goal's
+  // own rate when the absolute calorie floor bound.
+  effectiveRateKgPerWeek: number;
 }
 
 export interface CheckInResult {

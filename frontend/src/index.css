@@ -387,11 +387,36 @@
   animation: checkin-impact 620ms cubic-bezier(0.1, 0.7, 0.3, 1) both;
 }
 
+/* Describe Meal's completion is a brief handoff into Plate View, not a modal
+   destination. The checkmark has one grounded arrival while the fine ring
+   expands and disappears, giving the result a tactile finish before the
+   sheet drops to reveal the editable foods underneath. */
+@keyframes describe-resolve-pop {
+  0% { opacity: 0; transform: scale(0.72); }
+  65% { opacity: 1; transform: scale(1.06); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+.describe-resolve-pop {
+  animation: describe-resolve-pop 420ms cubic-bezier(0.2, 0.85, 0.25, 1) both;
+}
+
+@keyframes describe-resolve-ring {
+  0% { opacity: 0.8; transform: scale(0.72); }
+  100% { opacity: 0; transform: scale(1.45); }
+}
+
+.describe-resolve-ring {
+  animation: describe-resolve-ring 700ms cubic-bezier(0.15, 0.7, 0.25, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* No drop at all under reduced motion — the number is simply there. The
      component also skips the haptics and shortens the loading phase. */
   .checkin-drop,
-  .checkin-impact {
+  .checkin-impact,
+  .describe-resolve-pop,
+  .describe-resolve-ring {
     animation: none;
   }
   .checkin-impact {

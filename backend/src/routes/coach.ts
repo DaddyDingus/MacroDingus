@@ -7,10 +7,11 @@ import { profiles, checkins, goals, programs, programDays } from "../db/schema.j
 import { computeTrend, daysBetween, addDaysToDateString } from "../engine/trendWeight.js";
 import { macroFactorTdee, estimateAdaptiveTdee, adaptiveTdeeCoverage } from "../engine/tdee.js";
 import { generateCoachedProgramDays, type DietType, type ProteinLevel } from "../engine/program.js";
-import { generateCheckinNarrative } from "../engine/checkinNarrative.js";
+import { generateCheckinNarrative, type CheckinNarrativeInput } from "../engine/checkinNarrative.js";
 import { aiTaskConfigured } from "../engine/aiProvider.js";
 import {
   currentTrendKg,
+  goalRateKgPerWeek,
   gatherAdaptiveTdeeInputs,
   gatherDailyTdeeSeriesInputs,
   mostRecentBodyFatPercent,
@@ -66,6 +67,18 @@ export interface CheckinTargetChanges {
   proteinG: { from: number; to: number };
   carbsG: { from: number; to: number };
   fatG: { from: number; to: number };
+  // How far below measured expenditure the new targets sit, and whether that
+  // is past DEEP_DEFICIT_FRACTION (see engine/program.ts). Advisory: the
+  // targets deliver the goal's rate either way. Rides along with the change
+  // being accepted because this is where the user can act on it — the
+  // check-in is the moment the deficit's depth is knowable, since it is the
+  // moment expenditure was re-measured.
+  deficitFraction: number;
+  deepDeficit: boolean;
+  // What this program's new average target actually implies, in kg/week.
+  // Differs from the goal's own rate only when the absolute calorie floor
+  // bound.
+  effectiveRateKgPerWeek: number;
 }
 
 // Named rather than returned as bare object literals: TypeScript normalizes a
@@ -147,6 +160,7 @@ export async function planCheckin(userId: string) {
 
   const adaptiveTdee = estimateAdaptiveTdee(weighIns, dailyCalories);
   const age = new Date().getFullYear() - profile.birthYear;
+  const resolvedGoalRateKgPerWeek = activeGoal ? goalRateKgPerWeek(activeGoal, trendWeightKg) : 0;
   const formulaTdee = macroFactorTdee({
     sex: profile.sex as "male" | "female",
     age,
@@ -155,7 +169,7 @@ export async function planCheckin(userId: string) {
     activityLevel: profile.activityLevel,
     bodyFatPercent,
     weeklyExerciseHours: profile.weeklyExerciseHours,
-    inDeficit: activeGoal != null && activeGoal.targetRateKgPerWeek < 0,
+    inDeficit: resolvedGoalRateKgPerWeek < 0,
     peakWeightKg,
   });
   const tdee = adaptiveTdee?.tdee ?? formulaTdee;
@@ -175,12 +189,14 @@ export async function planCheckin(userId: string) {
         age,
         heightCm: profile.heightCm,
         activityLevel: profile.activityLevel,
-        targetRateKgPerWeek: activeGoal.targetRateKgPerWeek,
+        targetRateKgPerWeek: resolvedGoalRateKgPerWeek,
         dietType: activeProgram.dietType as DietType,
         proteinLevel: activeProgram.proteinLevel as ProteinLevel,
         // Same lookup as programs.ts's own regenerate — re-derives from what
         // was resolved at creation time, not re-asked here.
         customProteinPerKg: activeProgram.proteinLevel === "custom" ? (activeProgram.proteinPerKgUsed ?? undefined) : undefined,
+        resolvedProteinPerKg: activeProgram.proteinPerKgUsed ?? undefined,
+        proteinTargetGOverride: currentTargets?.proteinG,
         initialTdeeOverrideKcal: activeProgram.initialTdeeOverrideKcal,
         calorieFloorKcal: activeProgram.calorieFloorKcal!,
         distributionMode: activeProgram.distributionMode as "even" | "shifted",
@@ -204,6 +220,9 @@ export async function planCheckin(userId: string) {
           proteinG: { from: before.proteinG, to: after.proteinG },
           carbsG: { from: before.carbsG, to: after.carbsG },
           fatG: { from: before.fatG, to: after.fatG },
+          deficitFraction: result.breakdown.deficitFraction,
+          deepDeficit: result.breakdown.deepDeficit,
+          effectiveRateKgPerWeek: result.breakdown.effectiveRateKgPerWeek,
         };
       }
     }
@@ -229,6 +248,21 @@ export async function planCheckin(userId: string) {
 // The write half. Re-plans from scratch rather than taking a plan from the
 // caller: a plan is cheap to recompute and deterministic given the same data,
 // and accepting one over the wire would let a client dictate its own targets.
+// The narrative is useful context for the next Coach/Dashboard visit, but it
+// must never make accepting a check-in wait on a remote AI provider. Persist
+// the completed check-in first, return it to the phone, then fill the optional
+// note in best-effort background work. A failed provider call simply leaves
+// the nullable field empty, exactly as it did before.
+async function generateAndStoreCheckinNarrative(userId: string, checkinId: string, input: CheckinNarrativeInput) {
+  if (!(await aiTaskConfigured(userId, "checkinNarrative"))) return;
+  try {
+    const narrative = await generateCheckinNarrative(userId, input);
+    await db.update(checkins).set({ narrative }).where(and(eq(checkins.id, checkinId), eq(checkins.userId, userId)));
+  } catch (err) {
+    console.error("checkin narrative generation failed:", err);
+  }
+}
+
 export async function performCheckin(userId: string) {
   const plan = await planCheckin(userId);
   if ("error" in plan) return plan;
@@ -252,38 +286,33 @@ export async function performCheckin(userId: string) {
       .where(eq(programs.id, regenerate.programId));
   }
 
-  // Best-effort — a narrative failure (no API key, a transient API error)
-  // must never block the check-in itself, which is why this is generated
-  // and swallowed here rather than left to the route handler: everything
-  // else in performCheckin() is the real check-in logic, this is additive.
-  let narrative: string | null = null;
-  if (await aiTaskConfigured(userId, "checkinNarrative")) {
-    try {
-      const windowStart = latestCheckin ? addDaysToDateString(latestCheckin.date, 1) : addDaysToDateString(today, -6);
-      const windowDays = latestCheckin ? Math.max(1, daysBetween(latestCheckin.date, today)) : 7;
-      const inWindow = dailyCalories.filter((d) => d.date >= windowStart && d.date <= today);
-      const avgCaloriesInWindow = inWindow.length > 0 ? inWindow.reduce((s, d) => s + d.calories, 0) / inWindow.length : null;
-      const proteinInWindow = dailyProtein.filter((d) => d.date >= windowStart && d.date <= today);
-      const avgProteinInWindow = proteinInWindow.length > 0 ? proteinInWindow.reduce((s, d) => s + d.protein, 0) / proteinInWindow.length : null;
-      narrative = await generateCheckinNarrative(userId, {
-        isFirstCheckin: latestCheckin == null,
-        windowDays,
-        loggedDays: inWindow.length,
-        trendWeightKg,
-        previousTrendWeightKg: latestCheckin?.trendWeightKg ?? null,
-        tdee: Math.round(tdee),
-        previousTdee: latestCheckin?.tdee ?? null,
-        usedAdaptiveTdee: adaptiveTdee !== null,
-        avgCaloriesInWindow,
-        goal: activeGoal ? { goalType: activeGoal.goalType, targetRateKgPerWeek: activeGoal.targetRateKgPerWeek } : null,
-        targetCalories: currentTargetCalories,
-        avgProteinInWindow,
-        targetProteinG: currentTargetProteinG,
-      });
-    } catch (err) {
-      console.error("checkin narrative generation failed:", err);
-    }
-  }
+  const windowStart = latestCheckin ? addDaysToDateString(latestCheckin.date, 1) : addDaysToDateString(today, -6);
+  const windowDays = latestCheckin ? Math.max(1, daysBetween(latestCheckin.date, today)) : 7;
+  const inWindow = dailyCalories.filter((d) => d.date >= windowStart && d.date <= today);
+  const proteinInWindow = dailyProtein.filter((d) => d.date >= windowStart && d.date <= today);
+  const narrativeInput: CheckinNarrativeInput = {
+    isFirstCheckin: latestCheckin == null,
+    windowDays,
+    loggedDays: inWindow.length,
+    trendWeightKg,
+    previousTrendWeightKg: latestCheckin?.trendWeightKg ?? null,
+    tdee: Math.round(tdee),
+    previousTdee: latestCheckin?.tdee ?? null,
+    usedAdaptiveTdee: adaptiveTdee !== null,
+    avgCaloriesInWindow: inWindow.length > 0 ? inWindow.reduce((s, d) => s + d.calories, 0) / inWindow.length : null,
+    // The rate the *program* is set up to deliver, not the rate the goal
+    // asked for. These agree unless the absolute calorie floor held the
+    // target above the goal rate.
+    goal: activeGoal
+      ? {
+          goalType: activeGoal.goalType,
+          targetRateKgPerWeek: targetChanges?.effectiveRateKgPerWeek ?? goalRateKgPerWeek(activeGoal, trendWeightKg),
+        }
+      : null,
+    targetCalories: currentTargetCalories,
+    avgProteinInWindow: proteinInWindow.length > 0 ? proteinInWindow.reduce((s, d) => s + d.protein, 0) / proteinInWindow.length : null,
+    targetProteinG: currentTargetProteinG,
+  };
 
   const id = randomUUID();
   await db.insert(checkins).values({
@@ -294,7 +323,7 @@ export async function performCheckin(userId: string) {
     trendWeightKg,
     usedAdaptiveTdee: adaptiveTdee !== null,
     tdeeFluxKcal: adaptiveTdee ? Math.round(adaptiveTdee.fluxKcal) : null,
-    narrative,
+    narrative: null,
     createdAt: new Date().toISOString(),
   });
 
@@ -306,6 +335,7 @@ export async function performCheckin(userId: string) {
   }
 
   const [checkin] = await db.select().from(checkins).where(eq(checkins.id, id));
+  void generateAndStoreCheckinNarrative(userId, id, narrativeInput);
   return { checkin, usedAdaptiveTdee: adaptiveTdee !== null, targetChanges };
 }
 

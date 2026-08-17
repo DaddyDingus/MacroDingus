@@ -31,6 +31,27 @@ const RATE_RANGE_PCT_BW: Record<GoalTypeValue, { min: number; max: number } | nu
 // numbers this screen used before the %BW-based ranges above existed.
 const FALLBACK_FLAT_KG_PER_WEEK: Record<GoalTypeValue, number> = { cut: -0.5, bulk: 0.25, maintain: 0 };
 
+// Mirrors the backend's DEEP_DEFICIT_FRACTION (engine/program.ts) — the
+// deficit depth past which the app says something, expressed as a share of
+// measured expenditure. Duplicated rather than fetched: it's a copy-editing
+// threshold for one advisory line, and a round trip to learn it would make
+// the rate slider's live feedback wait on the network.
+//
+// This asks a different question from the %BW ranges above and both are worth
+// having. A rate can sit inside the recommended 0.5-1.0%/week and still imply
+// a brutal deficit if expenditure is low, and vice versa — %BW scales the rate
+// to your size, this scales it to what you actually burn.
+export const DEEP_DEFICIT_FRACTION = 0.25;
+
+// How far below expenditure a rate would put you, as a fraction. Null when
+// there's no expenditure estimate yet to measure against — the caller must
+// treat that as "can't say", never as "fine".
+export function impliedDeficitFraction(rateKgPerWeek: number, tdeeKcal: number | null): number | null {
+  if (tdeeKcal === null || tdeeKcal <= 0) return null;
+  const target = tdeeKcal + (rateKgPerWeek * 7700) / 7;
+  return (tdeeKcal - target) / tdeeKcal;
+}
+
 export function recommendedRateRangeKgPerWeek(
   goalType: GoalTypeValue,
   trendWeightKg: number | null

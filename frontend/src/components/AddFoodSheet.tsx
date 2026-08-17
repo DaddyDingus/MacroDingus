@@ -14,7 +14,7 @@ import {
   ChevronRight,
   ChefHat,
   Link2,
-  Flame,
+  CircleCheck,
   type LucideIcon,
 } from "lucide-react";
 import type { Food, LogEntry, Nutrition } from "../api/types";
@@ -41,6 +41,7 @@ import DateTimePickerSheet from "./DateTimePickerSheet";
 import ConfirmDeleteSheet from "./ConfirmDeleteSheet";
 import PhotoSourceSheet from "./PhotoSourceSheet";
 import DiscardWarningSheet from "./DiscardWarningSheet";
+import OrbitLoadingAnimation from "./OrbitLoadingAnimation";
 import { foodMeasures } from "../lib/foodMeasures";
 import DecimalInput from "./DecimalInput";
 import SwipeToDeleteRow from "./SwipeToDeleteRow";
@@ -98,6 +99,10 @@ interface DescribeAction {
   canSubmit: boolean;
   pending: boolean;
   submit: () => void;
+}
+
+interface DescribeCompletion {
+  count: number;
 }
 
 // Order matches the redesign spec: Search, Scan, Quick Add, Library. There
@@ -234,6 +239,8 @@ export default function AddFoodSheet({
   stepRef.current = step;
   const [activeTab, setActiveTab] = useState<Tab>("search");
   const [describeAction, setDescribeAction] = useState<DescribeAction | null>(null);
+  const [describeCompletion, setDescribeCompletion] = useState<DescribeCompletion | null>(null);
+  const describeCompletionTimerRef = useRef<number | null>(null);
   const [libraryView, setLibraryView] = useState<LibraryView>("recipes");
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -474,7 +481,7 @@ export default function AddFoodSheet({
     } else {
       setSelectedFood(null);
       setStep(initialStep === "scan" ? "scan" : initialStep === "create" ? "create" : initialStep === "recipe" ? "recipeChoice" : "browse");
-      setActiveTab(initialStep === "describe" ? "describe" : initialStep === "library" ? "library" : "search");
+    setActiveTab(initialStep === "describe" ? "describe" : initialStep === "library" ? "library" : "search");
       if (initialStep === "library") setLibraryView("recipes");
       setPendingSearchFocus(initialStep === "search");
       setQuickLogInitialFood(false);
@@ -494,6 +501,9 @@ export default function AddFoodSheet({
     setEditingRecipeId(null);
     setPendingRecipeAction(null);
     setSheetExpanded(true);
+    if (describeCompletionTimerRef.current !== null) window.clearTimeout(describeCompletionTimerRef.current);
+    describeCompletionTimerRef.current = null;
+    setDescribeCompletion(null);
     setCloseWarningSource(null);
     setLoggedAtOverride(forcedLoggedAt ?? localIsoNoTz());
     setLogDate(date);
@@ -509,6 +519,25 @@ export default function AddFoodSheet({
     // this effect (and re-clear the plate) on every render instead of only
     // on an actual open/step transition.
   }, [open, editingEntry, initialFood, initialStep, date]);
+
+  useEffect(() => {
+    return () => {
+      if (describeCompletionTimerRef.current !== null) window.clearTimeout(describeCompletionTimerRef.current);
+    };
+  }, []);
+
+  function celebrateDescribedMeal(count: number) {
+    if (describeCompletionTimerRef.current !== null) window.clearTimeout(describeCompletionTimerRef.current);
+    dismissNativeKeyboard();
+    setDescribeCompletion({ count });
+    describeCompletionTimerRef.current = window.setTimeout(() => {
+      describeCompletionTimerRef.current = null;
+      setDescribeCompletion(null);
+      // The reveal is the handoff: the resolved foods are now visible in
+      // Plate View, where their quantities can be checked before logging.
+      setSheetExpanded(false);
+    }, 2800);
+  }
 
   // One history entry per back press this sheet can absorb: one for the sheet
   // itself, one for the expanded Search layer above Plate View, plus one for
@@ -1269,7 +1298,9 @@ export default function AddFoodSheet({
 
                       {activeTab === "quickAdd" && <QuickAddTab createFood={createFood} onCreated={addToPlate} />}
 
-                      {activeTab === "describe" && <DescribeTab onAdded={addToPlate} onActionChange={setDescribeAction} />}
+                      {activeTab === "describe" && (
+                        <DescribeTab onAdded={addToPlate} onActionChange={setDescribeAction} onResolved={celebrateDescribedMeal} />
+                      )}
 
                       {activeTab === "library" && (
                         <LibraryTab
@@ -1785,6 +1816,7 @@ export default function AddFoodSheet({
         )}
     </div>
 
+      {describeCompletion && <DescribeCompletionMoment count={describeCompletion.count} />}
       {step === "scan" && (
         <Suspense fallback={<div className="fixed inset-0 z-[60] bg-black" />}>
           <BarcodeScanner onScan={handleScan} onClose={() => changeStep("browse")} />
@@ -2240,7 +2272,7 @@ function ActionBar({
           {describeAction?.pending ? (
             <>
               <Loader2 size={16} className="animate-spin shrink-0" />
-              <span>Thinking…</span>
+              <span>Creating plate…</span>
             </>
           ) : (
             "Add to Plate"
@@ -2404,15 +2436,11 @@ function StagedPlateSection({
         </button>
       </div>
 
-      {/* Matches MacroSummaryBar's own row exactly (icon/letter + number,
-          thin bar below) rather than a separate, heavier tile format — the
-          old version (spelled-out label, big number, "143g protein in
-          plate" subtext, h-2 bar) was the same information shown two
-          different ways depending on which screen you were on. The
-          "in plate"/"today" distinction the subtext used to spell out is
-          still available via the Plate/Day pill above; it's just implicit
-          now instead of repeated on every tile. */}
-      <div className="px-4 pb-4 grid grid-cols-4 gap-3">
+      {/* Same Dashboard tile styling, but a deliberately compact landscape proportion like
+          MacroFactor's Plate overview: this is supporting review data, not a
+          full Dashboard grid. The cards are display-only; Plate/Day remains
+          the one control for switching their context. */}
+      <div className="px-4 pb-4 grid grid-cols-2 gap-3">
         {NUTRITION_METRICS.map((m) => {
           const plateVal = plateTotals[m.key];
           const shownVal = nutritionView === "plate" ? plateVal : (totals?.[m.key] ?? 0) + plateVal;
@@ -2424,30 +2452,31 @@ function StagedPlateSection({
           const displayVal = m.key === "calories" ? kcalToUnit(shownVal, energyUnit) : shownVal;
           const displayTarget = m.key === "calories" ? kcalToUnit(target, energyUnit) : target;
           return (
-            <div key={m.key} className="min-w-0 flex flex-col items-center text-center" aria-label={m.label}>
-              <p className="tabular flex items-center justify-center gap-1 truncate" aria-hidden="true">
-                {m.key === "calories" ? (
-                  <Flame className="w-3 h-3 shrink-0" strokeWidth={2.4} style={{ color: m.color }} />
-                ) : (
-                  <span className="text-[11px] font-bold shrink-0" style={{ color: m.color }}>
-                    {m.letter}
-                  </span>
-                )}
-                <span className="text-[11px] font-medium text-white">{fmt(displayVal)}</span>
-                {/* Only meaningful against a real daily target — RecipeForm's
-                    ingredient picker opens this same sheet with no totals/
-                    targets prop at all (a recipe has no "day"), so target is
-                    always 0 there. */}
-                {target > 0 && <span className="text-[9px] text-muted">/{fmt(displayTarget)}</span>}
+            <div key={m.key} className="aspect-[1.75/1] min-w-0 rounded-2xl bg-dashboardCard p-3 flex flex-col" aria-label={m.label}>
+              <p className="text-[13px] leading-4 font-semibold text-white">{m.label}</p>
+              <p className="mt-1 tabular text-[21px] leading-6 font-bold tracking-tight text-white truncate">
+                {fmt(displayVal)} <span className="text-[13px] font-medium text-muted">{m.key === "calories" ? energyUnit : "g"}</span>
               </p>
-              {target > 0 && (
-                <span className="block h-1 w-full rounded-full bg-dashboardTrack overflow-hidden mt-1.5">
+              <p className="mt-0.5 text-[11px] leading-3.5 text-muted truncate">
+                {target > 0 ? `of ${fmt(displayTarget)} ${m.key === "calories" ? energyUnit : "g"}` : nutritionView === "plate" ? "in plate" : "today"}
+              </p>
+              <div className="mt-auto pt-1.5">
+                <span className="relative block h-2 w-full overflow-hidden rounded-full bg-dashboardTrack">
                   <span
                     className="block h-full rounded-full"
-                    style={{ width: `${pct(shownVal, target)}%`, backgroundColor: m.color }}
+                    style={{ width: `${target > 0 ? pct(shownVal, target) : 0}%`, backgroundColor: m.color }}
                   />
+                  {target > 0 && (
+                    <span
+                      className="absolute inset-y-0 w-0.5 rounded-full bg-white/85"
+                      style={{ left: `${Math.min(100, Math.max(0, (target / Math.max(target, shownVal || target)) * 100))}%` }}
+                    />
+                  )}
                 </span>
-              )}
+                <p className="mt-1 text-[9px] leading-3 font-medium uppercase tracking-wider" style={{ color: m.color }}>
+                  {nutritionView === "plate" ? "In plate" : "Today"}
+                </p>
+              </div>
             </div>
           );
         })}
@@ -2611,6 +2640,24 @@ function QuickAddTab({
   );
 }
 
+function DescribeCompletionMoment({ count }: { count: number }) {
+  return (
+    <div className="fixed inset-0 z-[55] flex items-center justify-center bg-dashboardBg/95 px-6 backdrop-blur-sm">
+      <div className="w-full max-w-xs text-center">
+        <div className="relative mx-auto mb-6 grid h-24 w-24 place-items-center rounded-full bg-accent/15 ring-1 ring-accent/40 shadow-[0_0_50px_rgba(116,158,244,0.18)] describe-resolve-pop">
+          <span className="absolute inset-2 rounded-full border border-accent/30 describe-resolve-ring" aria-hidden="true" />
+          <CircleCheck className="h-11 w-11 text-accent" strokeWidth={1.75} />
+        </div>
+        <p className="text-[11px] font-semibold tracking-[0.2em] uppercase text-accent">Plate ready</p>
+        <h2 className="mt-2 text-2xl font-bold text-white">
+          {count} food{count === 1 ? "" : "s"} added
+        </h2>
+        <p className="mt-2 text-sm leading-relaxed text-muted">Review quantities before logging.</p>
+      </div>
+    </div>
+  );
+}
+
 // Describes a whole meal in one shot: Sonnet 5 breaks the text into items,
 // matches each against the household's own library where confident and
 // falls back to its own per-100g estimate otherwise (see
@@ -2622,14 +2669,15 @@ function QuickAddTab({
 function DescribeTab({
   onAdded,
   onActionChange,
+  onResolved,
 }: {
   onAdded: (food: Food, quantityGrams?: number) => void;
   onActionChange: (action: DescribeAction | null) => void;
+  onResolved: (count: number) => void;
 }) {
   const [text, setText] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
-  const [addedSummary, setAddedSummary] = useState<string | null>(null);
   const describeMeal = useDescribeMeal();
   // Two separate inputs, not one bare accept="image/*" — same reasoning as
   // PhotosScreen's cameraInputRef/libraryInputRef (see that file's comment):
@@ -2675,18 +2723,14 @@ function DescribeTab({
   function submit(value?: string) {
     const toSubmit = (value ?? text).trim();
     if ((!toSubmit && !photo) || describeMeal.isPending) return;
-    setAddedSummary(null);
     describeMeal.mutate(
       { text: toSubmit || undefined, photo: photo ?? undefined },
       {
         onSuccess: (items) => {
           for (const item of items) onAdded(item.food, item.quantityGrams);
-          setAddedSummary(
-            `Added ${items.length} item${items.length === 1 ? "" : "s"} — check quantities before logging: ` +
-              items.map((i) => i.servingDescription ? `${i.food.name} (${i.servingDescription})` : i.food.name).join(", ")
-          );
           setText("");
           removePhoto();
+          onResolved(items.length);
         },
       }
     );
@@ -2704,6 +2748,14 @@ function DescribeTab({
     onActionChange({ canSubmit, pending: describeMeal.isPending, submit: invokeSubmitRef.current });
   }, [canSubmit, describeMeal.isPending, onActionChange]);
   useEffect(() => () => onActionChange(null), [onActionChange]);
+
+  if (describeMeal.isPending) {
+    return (
+      <div className="h-full min-h-[360px] flex items-center justify-center px-4">
+        <OrbitLoadingAnimation lines={["Reading your meal…", "Identifying foods…", "Estimating portions…"]} />
+      </div>
+    );
+  }
 
   return (
     <>
@@ -2807,7 +2859,6 @@ function DescribeTab({
             {describeMeal.error instanceof Error ? describeMeal.error.message : "Couldn't make sense of that meal"}
           </p>
         )}
-        {addedSummary && <p className="text-xs text-accent">{addedSummary}</p>}
       </div>
       {sourcePickerOpen && (
         <PhotoSourceSheet

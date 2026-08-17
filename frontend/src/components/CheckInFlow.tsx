@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { X, Flame } from "lucide-react";
 import { useCheckIn, useCoachStatus, useIgnoreCheckin, usePreviewCheckIn, type CheckInPreview, type CheckinTargetChanges } from "../api/coach";
 import { useEnergyUnit, energyUnitLabel, formatEnergy, kcalToUnit, type EnergyUnit } from "../lib/energyUnit";
+import { useWeightUnit, formatRate } from "../lib/weightUnit";
 import { useBackDismiss } from "../lib/useBackDismiss";
 import { useHideBottomNav, useHideShortcutsBar } from "../lib/navVisibility";
 import { staggerStyle } from "../lib/stagger";
@@ -34,9 +36,18 @@ const DROP_IMPACT_FRACTIONS = [0.46, 0.8] as const;
 // Beat between the number settling and the rest of the page arriving.
 const DROP_HOLD_MS = 320;
 // The illustration needs long enough to register as a deliberate step. The
-// check-in itself usually returns well inside this, so in practice this is
-// what sets the pace, not the network.
-const MIN_WORKING_MS = 2400;
+// check-in itself always returns well inside this (the whole plan — every DB
+// read, the adaptive estimate and a full program regeneration — measures
+// ~0.3ms), so this is entirely what sets the pace, not the network.
+//
+// Was 2400ms. Cut to 1400 on 2026-08-17: at 2400 the first thing that moves
+// arrives 2.4s after the tap and the detail lands near 4s, which is a long
+// time to hold someone still for a number that was ready immediately. It also
+// straddled OrbitLoadingAnimation's 1800ms status-line cadence, so the second
+// line flashed up for 600ms and was cut off mid-read; 1400 shows exactly one
+// line, steadily. The drop itself (DROP_MS) is deliberately untouched — that's
+// the moment worth having, not the wait in front of it.
+const MIN_WORKING_MS = 1400;
 const MIN_WORKING_MS_REDUCED = 700;
 
 const STATUS_LINES = [
@@ -116,7 +127,22 @@ export default function CheckInFlow({ onClose }: { onClose: () => void }) {
   const deciding = checkIn.isPending || ignoreCheckin.isPending;
   const decisionError = checkIn.error ?? ignoreCheckin.error;
 
-  return (
+  // Portaled to <body>, and it must stay that way. Both call sites
+  // (DashboardScreen, CoachScreen) render this from inside their
+  // [data-rubber-band-surface], which index.css gives a *permanent*
+  // `will-change: transform` — that establishes a containing block for fixed
+  // descendants and a stacking context exactly like a real transform would,
+  // always, not just mid-gesture. In place, this "full-screen" overlay was
+  // therefore neither: `inset-0` resolved against the page-height surface
+  // instead of the viewport, so the docked footer holding Accept/Decline sat
+  // ~2,500px down and had to be scrolled to (verified headlessly: a 900px
+  // viewport produced a 2,560px overlay), the working-phase illustration
+  // centred itself somewhere off-screen so the wait looked like a hang, and
+  // z-50 was trapped below the root-level ShortcutsBar's z-30, leaving the
+  // shortcut icons floating on top of the check-in. Rendering into <body>
+  // puts it back in the viewport's own containing block and stacking context.
+  // Same reasoning as DashboardScreen's pull-to-refresh pill.
+  return createPortal(
     <div className="fixed inset-0 z-50 bg-dashboardBg flex flex-col">
       <header
         className="shrink-0 flex items-center justify-between px-2 pb-2"
@@ -202,7 +228,8 @@ export default function CheckInFlow({ onClose }: { onClose: () => void }) {
           </button>
         </div>
       )}
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -279,6 +306,7 @@ function Detail({
   program: { days: { dayOfWeek: number; targetCalories: number; targetProteinG: number; targetCarbsG: number; targetFatG: number }[] } | null;
 }) {
   const changes = result.targetChanges;
+  const { unit: weightUnit } = useWeightUnit();
   const energy = (kcal: number) => formatEnergy(kcal, unit);
   let block = 0;
 
@@ -322,6 +350,24 @@ function Detail({
               so every figure above is the daily average across the week — the
               number the program is actually built around. */}
           <p className="text-xs text-muted pt-2">Daily average across your week. Check the Strategy tab for each day.</p>
+          {/* Information, not an objection — these targets are exactly the
+              rate that was asked for, and accepting is the right call as often
+              as not. It sits with the numbers rather than in "What's next?"
+              because a check-in is the moment the depth becomes knowable at
+              all: it's the moment expenditure was re-measured. */}
+          {changes.deepDeficit && (
+            <div className="mt-3 rounded-xl border p-3" style={{ borderColor: "rgba(217,89,38,0.4)" }}>
+              <p className="text-xs font-semibold">
+                Heads up — that's a {Math.round(changes.deficitFraction * 100)}% deficit
+              </p>
+              <p className="text-xs text-muted mt-1 leading-relaxed">
+                These targets deliver the {formatRate(changes.effectiveRateKgPerWeek, weightUnit)} per week you asked for. They just do it
+                by eating {Math.round(changes.deficitFraction * 100)}% under what you burn, and past about 25% is where muscle, training
+                quality and sticking to the plan start to suffer. Worth accepting with your eyes open — or easing the goal rate on the
+                Strategy tab.
+              </p>
+            </div>
+          )}
         </div>
       ) : (
         <div className="tile-enter space-y-2" style={staggerStyle(block++, 70, 8)}>

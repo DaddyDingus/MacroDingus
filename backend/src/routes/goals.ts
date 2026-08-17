@@ -11,11 +11,13 @@ const goalInput = z.object({
   goalType: z.enum(["cut", "bulk", "maintain"]),
   goalWeightKg: z.number().positive().max(500).nullable(),
   targetRateKgPerWeek: z.number().min(-2).max(2),
+  targetRatePercentPerWeek: z.number().min(-2).max(2).nullable().optional(),
 });
 
 const goalEditInput = z.object({
   goalWeightKg: z.number().positive().max(500).nullable(),
   targetRateKgPerWeek: z.number().min(-2).max(2),
+  targetRatePercentPerWeek: z.number().min(-2).max(2).nullable().optional(),
 });
 
 function goalShapeError(goalType: "cut" | "bulk" | "maintain", goalWeightKg: number | null, rate: number): string | null {
@@ -66,6 +68,7 @@ export function registerGoalRoutes(app: FastifyInstance) {
       goalType: parsed.data.goalType,
       goalWeightKg: parsed.data.goalWeightKg,
       targetRateKgPerWeek: parsed.data.targetRateKgPerWeek,
+      targetRatePercentPerWeek: parsed.data.targetRatePercentPerWeek ?? null,
       startedAt: now,
       startWeightKg: await currentTrendKg(userId),
       createdAt: now,
@@ -109,7 +112,11 @@ export function registerGoalRoutes(app: FastifyInstance) {
 
     await db
       .update(goals)
-      .set({ goalWeightKg: parsed.data.goalWeightKg, targetRateKgPerWeek: parsed.data.targetRateKgPerWeek })
+      .set({
+        goalWeightKg: parsed.data.goalWeightKg,
+        targetRateKgPerWeek: parsed.data.targetRateKgPerWeek,
+        targetRatePercentPerWeek: parsed.data.targetRatePercentPerWeek ?? existing.targetRatePercentPerWeek,
+      })
       .where(eq(goals.id, id));
 
     const [updated] = await db.select().from(goals).where(eq(goals.id, id));

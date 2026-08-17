@@ -45,3 +45,14 @@ export function kgToUnit(kg: number, unit: WeightUnit): number {
 export function unitToKg(value: number, unit: WeightUnit): number {
   return unit === "kg" ? value : value * KG_PER_LB;
 }
+
+// A rate of weight change, as a magnitude with its unit and no sign — every
+// caller so far sits in a sentence that already says which direction it's
+// going ("lose about 0.55 kg per week"), where a leading minus reads as a
+// typo. Two decimals in kg, one in lb: a kg/week rate is a small number where
+// the second digit is the whole distinction between 0.55 and 0.6, while the
+// same figure in lb is roughly twice as large and doesn't need it.
+export function formatRate(kgPerWeek: number, unit: WeightUnit): string {
+  const value = Math.abs(kgToUnit(kgPerWeek, unit));
+  return `${value.toFixed(unit === "kg" ? 2 : 1)} ${unit}`;
+}

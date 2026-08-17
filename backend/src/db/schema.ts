@@ -267,6 +267,10 @@ export const goals = sqliteTable("goals", {
   goalType: text("goal_type").notNull(), // cut|bulk|maintain
   goalWeightKg: real("goal_weight_kg"), // null for maintain
   targetRateKgPerWeek: real("target_rate_kg_per_week").notNull(),
+  // The user's durable intent. targetRateKgPerWeek remains the originally
+  // resolved/displayable kg rate for backwards compatibility; coached targets
+  // re-resolve this percentage against current trend weight at every check-in.
+  targetRatePercentPerWeek: real("target_rate_percent_per_week"),
   startedAt: text("started_at").notNull(),
   // Trend weight at the moment this goal was created — same role
   // profiles.goalStartWeightKg used to play, via the same currentTrendKg()

@@ -14,6 +14,15 @@ export async function currentTrendKg(userId: string): Promise<number | null> {
   return trend[trend.length - 1].trendKg;
 }
 
+// Goals created before percentage-based rate persistence have a null percent
+// and deliberately retain their historical fixed-kg behavior. New goals use
+// this resolver everywhere calorie targets are generated.
+export function goalRateKgPerWeek(goal: { targetRateKgPerWeek: number; targetRatePercentPerWeek: number | null }, trendWeightKg: number | null): number {
+  return goal.targetRatePercentPerWeek !== null && trendWeightKg !== null
+    ? (goal.targetRatePercentPerWeek / 100) * trendWeightKg
+    : goal.targetRateKgPerWeek;
+}
+
 // Most recent non-null body fat % on file — not a trend/EWMA like weight,
 // since entries are occasional (Navy tape/calipers/BIA), not daily. Carries
 // forward as-is until the next reading.
@@ -74,6 +83,25 @@ export function serializeGoal<T extends { startedAt: string; endedAt: string | n
 
 const CALORIE_LOOKBACK_DAYS = 28; // window for adaptive TDEE (needs 21 days of overlap; pad a bit for logging gaps)
 
+// Today's logging is still in progress, so its running total is not a day's
+// intake — it's whatever has been eaten so far. Nothing downstream can tell
+// the difference: estimateAdaptiveTdee() counts it toward coverage and averages
+// it in like any other day (found 2026-08-17 with 204 kcal logged by mid
+// morning). trimmedMean() usually discards it as the window's low value, which
+// is worse than it sounds — the trim is then spent on a partial day instead of
+// the real outlier it exists to remove — and fluxKcal is untrimmed by design,
+// so the same 204 more than doubled the Flux Range band (251 -> 584 kcal)
+// purely because the day wasn't over yet.
+//
+// Dropped everywhere the TDEE engine reads, not patched at one call site: the
+// same numbers feed the estimate, the coverage gates, the expenditure chart
+// and the check-in narrative, and they have to agree. Cost is at most one day
+// of a 21-day window, and only for a check-in run late enough that today was
+// already complete.
+function excludeToday<T extends { date: string }>(rows: T[], today: string): T[] {
+  return rows.filter((row) => row.date < today);
+}
+
 // The raw weigh-in + windowed daily-calorie inputs estimateAdaptiveTdee()
 // needs — shared by performCheckin() (an actual check-in) and the New
 // Program wizard's Coached generation (which estimates TDEE the exact same
@@ -109,8 +137,11 @@ export async function gatherAdaptiveTdeeInputs(userId: string) {
     caloriesByDate.set(log.date, (caloriesByDate.get(log.date) ?? 0) + scaled.calories);
     proteinByDate.set(log.date, (proteinByDate.get(log.date) ?? 0) + scaled.protein);
   }
-  const dailyCalories = [...caloriesByDate.entries()].map(([date, calories]) => ({ date, calories }));
-  const dailyProtein = [...proteinByDate.entries()].map(([date, protein]) => ({ date, protein }));
+  const dailyCalories = excludeToday(
+    [...caloriesByDate.entries()].map(([date, calories]) => ({ date, calories })),
+    today
+  );
+  const dailyProtein = excludeToday([...proteinByDate.entries()].map(([date, protein]) => ({ date, protein })), today);
 
   return {
     weighIns: weighIns.map((w) => ({ date: w.date, weightKg: w.weightKg })),
@@ -149,7 +180,14 @@ export async function gatherDailyTdeeSeriesInputs(userId: string, days: number) 
     const calories = scaleNutrition(food, log.quantityGrams).calories;
     caloriesByDate.set(log.date, (caloriesByDate.get(log.date) ?? 0) + calories);
   }
-  const dailyCalories = [...caloriesByDate.entries()].map(([date, calories]) => ({ date, calories }));
+  // Same partial-day exclusion as gatherAdaptiveTdeeInputs above. It matters
+  // here for one point specifically — the chart's newest — but that is the one
+  // the Expenditure headline reads from, and it would have drifted downward
+  // through each morning and recovered by evening.
+  const dailyCalories = excludeToday(
+    [...caloriesByDate.entries()].map(([date, calories]) => ({ date, calories })),
+    today
+  );
 
   return {
     weighIns: weighIns.map((w) => ({ date: w.date, weightKg: w.weightKg })),

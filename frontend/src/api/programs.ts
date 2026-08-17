@@ -44,7 +44,14 @@ export interface ProgramBreakdown {
   tdeeFluxKcal: number | null;
   trendWeightKg: number;
   flatTargetCalories: number;
+  // How far below expenditure these targets sit, and whether that's past the
+  // advisory DEEP_DEFICIT_FRACTION (see backend engine/program.ts). Nothing is
+  // clamped to it — the goal's rate is always delivered as chosen.
+  deficitFraction: number;
+  deepDeficit: boolean;
+  effectiveRateKgPerWeek: number;
   proteinPerKgUsed: number;
+  targetProteinG: number;
   fatPercentUsed: number;
   proteinBasisUsed: ProteinBasis;
   leanBodyMassKg: number | null;

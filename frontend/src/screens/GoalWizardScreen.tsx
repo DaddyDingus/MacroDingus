@@ -12,12 +12,15 @@ import {
   isWithinRecommendedRange,
   defaultRateKgPerWeek,
   rateSliderBoundsKgPerWeek,
+  impliedDeficitFraction,
+  DEEP_DEFICIT_FRACTION,
 } from "../lib/goalRateGuidance";
 import WizardShell from "../components/WizardShell";
 import WizardIntroCard, { type WizardIntroStep } from "../components/WizardIntroCard";
 import WizardOption from "../components/WizardOption";
 import { useBackDismissDepth } from "../lib/useBackDismiss";
 import DecimalInput from "../components/DecimalInput";
+import { apiFetch } from "../api/client";
 
 type Step = "intro" | "type" | "target" | "summary";
 
@@ -87,8 +90,6 @@ function GoalWizardBody({ mode, status }: { mode: "new" | "edit"; status: CoachS
   const today = localDateString();
 
   const [step, setStep] = useState<Step>("intro");
-  const [goalOneDone, setGoalOneDone] = useState(false);
-  const [savedGoalId, setSavedGoalId] = useState<string | null>(null);
 
   const [goalType, setGoalType] = useState<GoalTypeValue>(
     mode === "edit" && activeGoal ? (activeGoal.goalType as GoalTypeValue) : "cut"
@@ -109,23 +110,22 @@ function GoalWizardBody({ mode, status }: { mode: "new" | "edit"; status: CoachS
       // match its sign, but this guards against stale data (e.g. from
       // before this restriction existed) putting the slider out of bounds.
       const bounds = rateSliderBoundsKgPerWeek(activeGoal.goalType as GoalTypeValue, trendWeightKg);
-      return clamp(activeGoal.targetRateKgPerWeek, bounds.min, bounds.max);
+      const rate = activeGoal.targetRatePercentPerWeek !== null && trendWeightKg !== null
+        ? (activeGoal.targetRatePercentPerWeek / 100) * trendWeightKg
+        : activeGoal.targetRateKgPerWeek;
+      return clamp(rate, bounds.min, bounds.max);
     }
     return defaultRateKgPerWeek("cut", trendWeightKg);
   });
+  const weeklyPctBw = trendWeightKg ? (rateKgPerWeek / trendWeightKg) * 100 : null;
 
   const introTitle = mode === "new" ? "New Goal" : "Edit Goal";
-  // Only meaningful once the goal edit has actually been saved (goalOneDone)
-  // — before that, rateKgPerWeek is still the in-progress edit, not
-  // something to judge the active program against yet.
-  const programStillValid = goalOneDone && currentProgramStillValid();
   const introSteps: WizardIntroStep[] = [
     {
       label: mode === "new" ? "Set new goal" : "Edit goal",
       description: mode === "new" ? "Choose goal weight and rate of change" : "Modify goal weight and rate of weight change",
-      status: goalOneDone ? "done" : "active",
+      status: "active",
     },
-    { label: programStillValid ? "Review program" : "Set new program", status: goalOneDone ? "active" : "pending" },
   ];
 
   // Single source of truth for "back" within the wizard's own steps — shared
@@ -182,45 +182,45 @@ function GoalWizardBody({ mode, status }: { mode: "new" | "edit"; status: CoachS
     }
   }
 
-  // Whether the currently active program's targets are still exactly what
-  // they'd be if regenerated right now, so there's nothing to actually
-  // regenerate:
-  //  - A brand new goal (mode 'new') never has this — whatever program was
-  //    active belonged to the goal that just got superseded.
-  //  - A manual program is immune regardless of what changed: its targets
-  //    are hand-entered, never derived from the goal's rate in the first
-  //    place (see routes/programs.ts's manual branch).
-  //  - A coached program's calorie targets are a function of targetRateKgPerWeek
-  //    and nothing else about the goal — generateCoachedProgramDays never
-  //    reads goalWeightKg (see engine/program.ts's flatTargetCalories). So
-  //    editing only the target weight leaves a coached program exactly
-  //    valid too; only a rate change actually invalidates it.
-  function currentProgramStillValid(): boolean {
-    if (mode !== "edit" || !activeGoal) return false;
-    const activeProgram = status.activeProgram;
-    if (!activeProgram) return false;
-    if (activeProgram.style === "manual") return true;
-    return activeGoal.targetRateKgPerWeek === rateKgPerWeek;
-  }
-
   function saveGoal() {
-    const input = { goalType, goalWeightKg, targetRateKgPerWeek: rateKgPerWeek };
+    const input = { goalType, goalWeightKg, targetRateKgPerWeek: rateKgPerWeek, targetRatePercentPerWeek: weeklyPctBw };
     if (mode === "new") {
       createGoal.mutate(input, {
         onSuccess: (goal) => {
-          setSavedGoalId(goal.id);
-          setGoalOneDone(true);
-          setStep("intro");
+          // A new goal closes the old program, so its macro grid is no
+          // longer a meaningful preview. Go directly to the preferences that
+          // determine the replacement; the first grid the user sees is the
+          // newly generated program, not stale targets.
+          navigate(`/strategy/new-program?goalId=${goal.id}`);
         },
       });
     } else if (activeGoal) {
+      const rateChanged = activeGoal.targetRatePercentPerWeek !== null && weeklyPctBw !== null
+        ? activeGoal.targetRatePercentPerWeek !== weeklyPctBw
+        : activeGoal.targetRateKgPerWeek !== rateKgPerWeek;
       editGoal.mutate(
-        { id: activeGoal.id, goalWeightKg, targetRateKgPerWeek: rateKgPerWeek },
+        { id: activeGoal.id, goalWeightKg, targetRateKgPerWeek: rateKgPerWeek, targetRatePercentPerWeek: weeklyPctBw },
         {
-          onSuccess: (goal) => {
-            setSavedGoalId(goal.id);
-            setGoalOneDone(true);
-            setStep("intro");
+          onSuccess: async () => {
+            let programUpdateFailed = false;
+            const activeProgram = status.activeProgram;
+            if (
+              rateChanged &&
+              activeProgram?.style === "coached" &&
+              activeProgram.distributionMode !== "custom"
+            ) {
+              try {
+                await apiFetch(`/programs/${activeProgram.id}/regenerate?preserveDistribution=1`, { method: "POST" });
+              } catch {
+                programUpdateFailed = true;
+              }
+            }
+            // A real document navigation discards the completed wizard's
+            // mounted state. The review route explicitly refetches fresh
+            // server data before displaying the saved goal/program.
+            window.location.replace(
+              `/strategy/review-program?goalSaved=1${programUpdateFailed ? "&programUpdateFailed=1" : ""}`
+            );
           },
         }
       );
@@ -233,15 +233,9 @@ function GoalWizardBody({ mode, status }: { mode: "new" | "edit"; status: CoachS
         title={introTitle}
         illustration="goal"
         steps={introSteps}
-        ctaLabel={goalOneDone ? (programStillValid ? "Review Program" : "Set New Program") : mode === "new" ? "Set New Goal" : "Edit Goal Parameters"}
+        ctaLabel={mode === "new" ? "Set New Goal" : "Edit Goal Parameters"}
         onClose={() => navigate("/strategy")}
-        onCta={() => {
-          if (goalOneDone && savedGoalId) {
-            navigate(programStillValid ? "/strategy/review-program" : `/strategy/new-program?goalId=${savedGoalId}`);
-          } else {
-            setStep(mode === "new" ? "type" : "target");
-          }
-        }}
+        onCta={() => setStep(mode === "new" ? "type" : "target")}
       />
     );
   }
@@ -284,8 +278,44 @@ function GoalWizardBody({ mode, status }: { mode: "new" | "edit"; status: CoachS
     const { min: rateMin, max: rateMax } = rateSliderBoundsKgPerWeek(goalType, trendWeightKg);
     const weightBoundsKg = weightSliderBoundsKg(goalType, trendWeightKg);
     const monthlyRateKg = rateKgPerWeek * 4.345;
-    const weeklyPctBw = trendWeightKg ? (rateKgPerWeek / trendWeightKg) * 100 : null;
+    // Two independent reasons to speak up, sharing one line of UI because
+    // they'd never both be worth two. The rate itself is never constrained by
+    // either — see DEEP_DEFICIT_FRACTION's own comment on why an advisory
+    // beats a clamp.
+    const deficitFraction = impliedDeficitFraction(rateKgPerWeek, previewTdee);
+    const isDeepDeficit = deficitFraction !== null && deficitFraction > DEEP_DEFICIT_FRACTION;
+    // An *absent* "Standard (Recommended)" badge is not a warning — the pill
+    // above goes `invisible` outside the range and says nothing, so before
+    // this there was no point at which choosing an aggressive rate produced a
+    // single word about it.
+    // "Outside recommended" only means faster here. A deliberately slower
+    // rate is not a risk warning, and describing it as "faster" was plainly
+    // wrong for the near-maintenance end of a cut slider.
+    const isFasterThanRecommended = recommendedRange !== null &&
+      (goalType === "cut" ? rateKgPerWeek < recommendedRange.min : rateKgPerWeek > recommendedRange.max);
     const monthlyPctBw = weeklyPctBw !== null ? weeklyPctBw * 4.345 : null;
+
+    // The rate band is evidence-based, while the advisory is based on this
+    // person's expenditure. Where both are known, green means both things at
+    // once: recommended *and* no deeper than the 25% deficit advisory. This
+    // prevents a warning from appearing while the thumb is still in green.
+    const deepestRateBeforeWarning = previewTdee === null
+      ? null
+      : -(previewTdee * DEEP_DEFICIT_FRACTION * 7) / 7700;
+    const safeRecommendedRange = recommendedRange === null
+      ? null
+      : goalType === "cut" && deepestRateBeforeWarning !== null
+        ? {
+            min: Math.max(recommendedRange.min, deepestRateBeforeWarning),
+            max: recommendedRange.max,
+          }
+        : recommendedRange;
+    const greenRange = safeRecommendedRange !== null && safeRecommendedRange.min <= safeRecommendedRange.max
+      ? safeRecommendedRange
+      : null;
+    const percentageOfExpenditure = deficitFraction === null
+      ? null
+      : `${Math.round(Math.abs(deficitFraction) * 100)}% ${deficitFraction >= 0 ? "deficit" : "surplus"}`;
 
     return (
       <WizardShell key={step} title={mode === "new" ? "Create New Goal" : "Edit Goal"} progress={mode === "new" ? 2 / 3 : 1 / 2} onBack={goBack} footer={
@@ -337,7 +367,7 @@ function GoalWizardBody({ mode, status }: { mode: "new" | "edit"; status: CoachS
 
         <h2 className="text-xl font-bold mb-1">What is your target goal rate?</h2>
         <p
-          className={`inline-block text-xs font-semibold px-2.5 py-1 rounded-full mb-3 ${isStandardRate ? "" : "invisible"}`}
+          className={`inline-block text-xs font-semibold px-2.5 py-1 rounded-full mb-3 ${isStandardRate && !isDeepDeficit ? "" : "invisible"}`}
           style={{ background: "rgba(5,150,105,0.2)", color: "#059669" }}
         >
           Standard (Recommended)
@@ -347,9 +377,14 @@ function GoalWizardBody({ mode, status }: { mode: "new" | "edit"; status: CoachS
           min={rateMin}
           max={rateMax}
           step={0.05}
-          range={recommendedRange}
+          range={greenRange}
           onChange={setRateKgPerWeek}
         />
+        <p className="text-center text-xs font-medium text-muted -mt-0.5 mb-1" aria-live="polite">
+          {percentageOfExpenditure !== null
+            ? `About a ${percentageOfExpenditure} of your daily expenditure`
+            : "Deficit or surplus percentage will appear after your first expenditure estimate"}
+        </p>
         <div className="grid grid-cols-3 gap-2 text-center text-xs mt-4">
           <RateStatTile
             label="per week"
@@ -374,6 +409,30 @@ function GoalWizardBody({ mode, status }: { mode: "new" | "edit"; status: CoachS
             onCommit={(v) => setRateKgPerWeek(clamp(unitToKg(v, unit) / 4.345, rateMin, rateMax))}
           />
         </div>
+
+        {(isDeepDeficit || isFasterThanRecommended) && (
+          <div className="mt-5 rounded-xl border p-3" style={{ borderColor: "rgba(217,89,38,0.4)" }}>
+            <p className="text-xs font-semibold">
+              {isDeepDeficit ? `That's a ${Math.round(deficitFraction! * 100)}% deficit` : "Faster than the recommended range"}
+            </p>
+            <p className="text-xs text-muted mt-1 leading-relaxed">
+              {isDeepDeficit && previewTdee !== null && (
+                <>
+                  You burn about {previewTdee} kcal a day, so this rate means eating {Math.round(deficitFraction! * 100)}% under that. Past
+                  roughly 25% is where muscle, training quality and simply sticking to it start to suffer.{" "}
+                </>
+              )}
+              {isFasterThanRecommended && recommendedRange !== null && (
+                <>
+                  The evidence supports {Math.abs(kgToUnit(recommendedRange.max, unit)).toFixed(2)}–
+                  {Math.abs(kgToUnit(recommendedRange.min, unit)).toFixed(2)} {unit} per week for a {goalType}; beyond that, more of what
+                  you lose tends to be muscle rather than fat.{" "}
+                </>
+              )}
+              We'll set exactly the rate you pick — this is so you're picking it knowingly, not a limit.
+            </p>
+          </div>
+        )}
       </WizardShell>
     );
   }

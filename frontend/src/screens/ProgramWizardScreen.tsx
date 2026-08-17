@@ -27,6 +27,8 @@ import WeeklyProgramGrid from "../components/WeeklyProgramGrid";
 import OrbitLoadingAnimation from "../components/OrbitLoadingAnimation";
 import DecimalInput from "../components/DecimalInput";
 import { useBackDismissDepth } from "../lib/useBackDismiss";
+import { useWeightUnit, formatRate } from "../lib/weightUnit";
+import { PROTEIN_LEVEL_GRAMS_PER_KG } from "../lib/proteinGuidance";
 
 type Step = "intro" | "style" | "diet" | "floor" | "distribution" | "shiftDays" | "protein" | "calories" | "manualEntry" | "generating" | "results";
 // Total step count the progress bar's fractions are measured against — the
@@ -64,6 +66,7 @@ function ProgramWizardBody({ goalId }: { goalId: string }) {
   const navigate = useNavigate();
   const createProgram = useCreateProgram();
   const status = useCoachStatus();
+  const { unit: weightUnit } = useWeightUnit();
   const bodyFatPercent = status.data?.bodyFatPercent ?? null;
   const trendWeightKg = status.data?.trendWeightKg ?? null;
 
@@ -79,7 +82,10 @@ function ProgramWizardBody({ goalId }: { goalId: string }) {
   const [shiftedHighDays, setShiftedHighDays] = useState<number[]>([0, 6]);
   const [proteinLevel, setProteinLevel] = useState<ProteinLevel>("moderate");
   const [customProteinPerKg, setCustomProteinPerKg] = useState(2.0);
-  const [proteinBasis, setProteinBasis] = useState<ProteinBasis>("total");
+  // Prefer lean mass for this bodybuilding-oriented app when we have a body
+  // fat estimate. Total weight remains the honest fallback when we do not.
+  const [proteinBasis, setProteinBasis] = useState<ProteinBasis>(() => bodyFatPercent !== null ? "lean" : "total");
+  const proteinPresets = PROTEIN_LEVEL_GRAMS_PER_KG[proteinBasis];
   // Weight the live "g/day" preview under the Custom slider is based on —
   // lean mass when that's what proteinBasis will actually apply (matches
   // generateCoachedProgramDays' own useLean fallback), else trend weight.
@@ -351,10 +357,10 @@ function ProgramWizardBody({ goalId }: { goalId: string }) {
       }>
         <h2 className="text-lg font-bold mb-3">What is your preferred protein intake?</h2>
         <div className="space-y-2">
-          <WizardOption icon={<BatteryLow className="w-4 h-4" strokeWidth={2} />} title="Low" description="1.4 g/kg — floor of the ISSN-recommended range for most exercising adults." selected={proteinLevel === "low"} onSelect={() => setProteinLevel("low")} />
-          <WizardOption icon={<Egg className="w-4 h-4" strokeWidth={2} />} title="Moderate" description="1.8 g/kg — comfortably above the intake shown to maximize muscle gains." selected={proteinLevel === "moderate"} onSelect={() => setProteinLevel("moderate")} />
-          <WizardOption icon={<Beef className="w-4 h-4" strokeWidth={2} />} title="High" description="2.2 g/kg — top of the evidence-backed range for building muscle." selected={proteinLevel === "high"} onSelect={() => setProteinLevel("high")} />
-          <WizardOption icon={<Dumbbell className="w-4 h-4" strokeWidth={2} />} title="Extra High" description="2.8 g/kg — within the higher range research supports for preserving muscle in a calorie deficit." selected={proteinLevel === "extra_high"} onSelect={() => setProteinLevel("extra_high")} />
+          <WizardOption icon={<BatteryLow className="w-4 h-4" strokeWidth={2} />} title="Low" description={`${proteinPresets.low} g/kg — a bodybuilding-focused minimum.`} selected={proteinLevel === "low"} onSelect={() => setProteinLevel("low")} />
+          <WizardOption icon={<Egg className="w-4 h-4" strokeWidth={2} />} title="Moderate" description={`${proteinPresets.moderate} g/kg — a strong everyday target for resistance training.`} selected={proteinLevel === "moderate"} onSelect={() => setProteinLevel("moderate")} />
+          <WizardOption icon={<Beef className="w-4 h-4" strokeWidth={2} />} title="High" description={`${proteinPresets.high} g/kg — toward the top of the evidence-backed range.`} selected={proteinLevel === "high"} onSelect={() => setProteinLevel("high")} />
+          <WizardOption icon={<Dumbbell className="w-4 h-4" strokeWidth={2} />} title="Extra High" description={`${proteinPresets.extra_high} g/kg — intended for preserving lean mass during a cut.`} selected={proteinLevel === "extra_high"} onSelect={() => setProteinLevel("extra_high")} />
           <WizardOption icon={<SlidersHorizontal className="w-4 h-4" strokeWidth={2} />} title="Custom" description="Pick your own g/kg target with a slider." selected={proteinLevel === "custom"} onSelect={() => setProteinLevel("custom")} />
         </div>
 
@@ -563,12 +569,20 @@ function ProgramWizardBody({ goalId }: { goalId: string }) {
             </ReasoningStep>
             <ReasoningStep n={2} label="Average Target" value={`${b.flatTargetCalories} kcal`} valueColor="#059669">
               Your goal rate implies a daily average Calorie target of around {b.flatTargetCalories} kcal.
+              {b.deepDeficit && (
+                <>
+                  {" "}
+                  That's {Math.round(b.deficitFraction * 100)}% below your expenditure — a deep deficit. It's the{" "}
+                  {formatRate(b.effectiveRateKgPerWeek, weightUnit)} per week you asked for and we'll set it, but past about 25% is where
+                  muscle, training quality and adherence start to suffer.
+                </>
+              )}
             </ReasoningStep>
-            <ReasoningStep n={3} label="Target Protein" value={`${b.proteinPerKgUsed} g/kg`} valueColor="#EF8D6A">
+            <ReasoningStep n={3} label="Target Protein" value={`${Math.round(b.targetProteinG)} g/day`} valueColor="#EF8D6A">
               {b.proteinBasisUsed === "lean" && b.leanBodyMassKg !== null ? (
-                <>Given your goal and preferred protein level ({PROTEIN_LABELS[proteinLevel]}), consuming {b.proteinPerKgUsed} g/kg of your estimated {b.leanBodyMassKg} kg lean body mass is the daily average this program targets.</>
+                <>Set from your preferred protein level ({PROTEIN_LABELS[proteinLevel]}) and estimated {b.leanBodyMassKg} kg lean body mass. This {Math.round(b.targetProteinG)} g daily target stays stable as check-ins adjust Calories.</>
               ) : (
-                <>Given your goal and preferred protein level ({PROTEIN_LABELS[proteinLevel]}), consuming {b.proteinPerKgUsed} g/kg of body weight is the daily average this program targets.</>
+                <>Set from your preferred protein level ({PROTEIN_LABELS[proteinLevel]}) and body weight. This {Math.round(b.targetProteinG)} g daily target stays stable as check-ins adjust Calories.</>
               )}
             </ReasoningStep>
             <ReasoningStep n={4} label="Diet Type" value={DIET_LABELS[dietType]} valueColor="#F7D372" last>

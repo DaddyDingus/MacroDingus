@@ -193,7 +193,7 @@ function GoalProgressBody({
             value={etaDate ? formatEtaParts(etaDate).main : "—"}
             unit={etaDate ? formatEtaParts(etaDate).year : undefined}
             valueClassName="text-lg"
-            label="Optimistic ETA"
+            label="Estimated Goal Date"
             description={`Estimate of when you'd reach your goal if you achieve and sustain your intended rate of weight change, based on ${
               tab === "scale" ? "scale weight" : "trend weight"
             }.`}

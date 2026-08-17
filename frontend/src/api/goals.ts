@@ -7,6 +7,7 @@ export interface Goal {
   goalType: GoalType;
   goalWeightKg: number | null;
   targetRateKgPerWeek: number;
+  targetRatePercentPerWeek: number | null;
   startedAt: string;
   startedDate: string;
   startWeightKg: number | null;
@@ -19,11 +20,13 @@ export interface GoalInput {
   goalType: GoalType;
   goalWeightKg: number | null;
   targetRateKgPerWeek: number;
+  targetRatePercentPerWeek?: number | null;
 }
 
 export interface GoalEditInput {
   goalWeightKg: number | null;
   targetRateKgPerWeek: number;
+  targetRatePercentPerWeek?: number | null;
 }
 
 export function useGoals() {

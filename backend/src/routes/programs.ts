@@ -4,7 +4,8 @@ import { eq, and, isNull, desc } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "../db/index.js";
 import { programs, programDays, profiles, goals } from "../db/schema.js";
-import { gatherAdaptiveTdeeInputs, mostRecentBodyFatPercent, shiftedHighDaysJson, serializeProgram } from "./shared.js";
+import { gatherAdaptiveTdeeInputs, goalRateKgPerWeek, mostRecentBodyFatPercent, parseShiftedHighDays, shiftedHighDaysJson, serializeProgram } from "./shared.js";
+import { computeTrend } from "../engine/trendWeight.js";
 import { generateCoachedProgramDays, type ProteinLevel, type DietType } from "../engine/program.js";
 import { KCAL_PER_KG } from "../engine/trendWeight.js";
 
@@ -131,6 +132,8 @@ export function registerProgramRoutes(app: FastifyInstance) {
       if (!profile) return reply.code(400).send({ error: "Set up your profile first" });
       const { weighIns, dailyCalories } = await gatherAdaptiveTdeeInputs(userId);
       if (weighIns.length === 0) return reply.code(400).send({ error: "Log at least one weight first" });
+      const trendWeightKg = computeTrend(weighIns)[weighIns.length - 1].trendKg;
+      const targetRateKgPerWeek = goalRateKgPerWeek(goal, trendWeightKg);
 
       const age = new Date().getFullYear() - profile.birthYear;
       const bodyFatPercent = await mostRecentBodyFatPercent(userId);
@@ -141,7 +144,7 @@ export function registerProgramRoutes(app: FastifyInstance) {
       // frozen calorie number.
       const initialTdeeOverrideKcal =
         parsed.data.startingCalories !== undefined
-          ? parsed.data.startingCalories - (goal.targetRateKgPerWeek * KCAL_PER_KG) / 7
+          ? parsed.data.startingCalories - (targetRateKgPerWeek * KCAL_PER_KG) / 7
           : null;
       const result = generateCoachedProgramDays({
         weighIns,
@@ -150,7 +153,7 @@ export function registerProgramRoutes(app: FastifyInstance) {
         age,
         heightCm: profile.heightCm,
         activityLevel: profile.activityLevel,
-        targetRateKgPerWeek: goal.targetRateKgPerWeek,
+        targetRateKgPerWeek,
         dietType: parsed.data.dietType as DietType,
         proteinLevel: parsed.data.proteinLevel as ProteinLevel,
         customProteinPerKg: parsed.data.customProteinPerKg,
@@ -237,6 +240,7 @@ export function registerProgramRoutes(app: FastifyInstance) {
   // programs have no formula to regenerate from.
   app.post("/api/programs/:id/regenerate", async (req, reply) => {
     const { id } = req.params as { id: string };
+    const { preserveDistribution } = req.query as { preserveDistribution?: string };
     const userId = req.userId!;
 
     const [program] = await db.select().from(programs).where(and(eq(programs.id, id), eq(programs.userId, userId)));
@@ -249,9 +253,12 @@ export function registerProgramRoutes(app: FastifyInstance) {
 
     const { weighIns, dailyCalories } = await gatherAdaptiveTdeeInputs(userId);
     if (weighIns.length === 0) return reply.code(400).send({ error: "Log at least one weight first" });
+    const trendWeightKg = computeTrend(weighIns)[weighIns.length - 1].trendKg;
+    const targetRateKgPerWeek = goalRateKgPerWeek(goal, trendWeightKg);
 
     const age = new Date().getFullYear() - profile.birthYear;
     const bodyFatPercent = await mostRecentBodyFatPercent(userId);
+    const existingDays = await db.select().from(programDays).where(eq(programDays.programId, program.id));
     const result = generateCoachedProgramDays({
       weighIns,
       dailyCalories,
@@ -259,16 +266,19 @@ export function registerProgramRoutes(app: FastifyInstance) {
       age,
       heightCm: profile.heightCm,
       activityLevel: profile.activityLevel,
-      targetRateKgPerWeek: goal.targetRateKgPerWeek,
+      targetRateKgPerWeek,
       dietType: program.dietType as DietType,
       proteinLevel: program.proteinLevel as ProteinLevel,
       // Re-derives from the value already resolved and stored last time
       // (proteinPerKgUsed), not re-asked from the user — regenerate has no
       // wizard step to re-pick a custom g/kg from.
       customProteinPerKg: program.proteinLevel === "custom" ? (program.proteinPerKgUsed ?? undefined) : undefined,
+      resolvedProteinPerKg: program.proteinPerKgUsed ?? undefined,
+      proteinTargetGOverride: existingDays[0]?.targetProteinG,
       initialTdeeOverrideKcal: program.initialTdeeOverrideKcal,
       calorieFloorKcal: program.calorieFloorKcal!,
-      distributionMode: "even",
+      distributionMode: preserveDistribution === "1" && program.distributionMode === "shifted" ? "shifted" : "even",
+      shiftedHighDays: preserveDistribution === "1" ? parseShiftedHighDays(program.shiftedHighDays) : undefined,
       proteinBasis: program.proteinBasis as "total" | "lean",
       bodyFatPercent,
       weeklyExerciseHours: profile.weeklyExerciseHours ?? null,
@@ -288,7 +298,7 @@ export function registerProgramRoutes(app: FastifyInstance) {
     await db
       .update(programs)
       .set({
-        distributionMode: "even",
+        distributionMode: preserveDistribution === "1" && program.distributionMode === "shifted" ? "shifted" : "even",
         proteinPerKgUsed: result.breakdown.proteinPerKgUsed,
         proteinBasis: result.breakdown.proteinBasisUsed,
       })

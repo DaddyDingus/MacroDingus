@@ -133,8 +133,20 @@ export default function WeightChart({
     if (showTrend) vals.push(d.trendDisplay);
     return vals;
   });
+  // Keep the vertical scale specific to the visible time window. The old
+  // whole-kilogram rounding plus a fixed 1 kg pad often produced the exact
+  // same domain for 1W, 1M and 3M, even though their data differed. The
+  // horizontal grid therefore looked frozen when changing ranges. A modest
+  // proportional pad lets the scale (and its grid) follow the selected
+  // window, while the minimum prevents a nearly-flat week from looking like
+  // an exaggerated cliff.
   const domain: [number, number] = visibleValues.length
-    ? [Math.floor(Math.min(...visibleValues) - 1), Math.ceil(Math.max(...visibleValues) + 1)]
+    ? (() => {
+        const min = Math.min(...visibleValues);
+        const max = Math.max(...visibleValues);
+        const pad = Math.max(0.25, (max - min) * 0.2);
+        return [min - pad, max + pad];
+      })()
     : [0, 1];
 
   // Trend Weight only dots at 1W/1M zoom (see chartLayout.ts's

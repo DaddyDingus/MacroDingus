@@ -1,4 +1,5 @@
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useCoachStatus } from "../api/coach";
 import WizardShell from "../components/WizardShell";
 import WeeklyProgramGrid from "../components/WeeklyProgramGrid";
@@ -14,9 +15,16 @@ const STYLE_LABELS: Record<string, string> = { coached: "Coached", manual: "Manu
 // forcing a brand new program wizard every time a goal is touched at all.
 export default function ProgramReviewScreen() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const status = useCoachStatus();
+  const [fresh, setFresh] = useState(params.get("goalSaved") !== "1");
 
-  if (status.isLoading) {
+  useEffect(() => {
+    if (params.get("goalSaved") !== "1") return;
+    void status.refetch().finally(() => setFresh(true));
+  }, []); // This route mounts after a full navigation; one forced refetch is sufficient.
+
+  if (status.isLoading || !fresh) {
     return (
       <div className="min-h-dvh flex items-center justify-center">
         <p className="text-sm text-muted">Loading…</p>
@@ -37,7 +45,7 @@ export default function ProgramReviewScreen() {
 
   return (
     <WizardShell
-      title="Edit Goal"
+      title="Program Review"
       progress={1}
       onBack={() => navigate("/strategy")}
       footer={
@@ -59,6 +67,11 @@ export default function ProgramReviewScreen() {
       }
     >
       <h2 className="text-lg font-bold mb-4">Do your program preferences still look good to you?</h2>
+      {params.get("programUpdateFailed") === "1" && (
+        <p className="text-xs text-red-400 mb-4 leading-relaxed">
+          Your goal was saved, but the program could not be recalculated. Set a new program to update its targets.
+        </p>
+      )}
       <div className="border border-line bg-surface rounded-2xl overflow-hidden mb-4">
         <div className="flex items-center justify-between px-4 py-3">
           <span className="text-sm font-medium">Program Style</span>

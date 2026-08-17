@@ -42,7 +42,8 @@ function clamp(n: number, min: number, max: number): number {
 // every other hand-rolled gesture in this codebase (DraggableSnapSheet.tsx,
 // BottomSheet.tsx, DashboardCustomizeScreen.tsx) — never raw touch/mouse
 // events, transient per-frame state in refs, `setPointerCapture` explicit,
-// and `touch-action: pan-y` so native vertical scrolling remains available.
+// and `touch-action: none` so a slight vertical wobble cannot let the browser
+// steal a chart pan before our horizontal axis lock resolves.
 //
 // `viewRef` is the single source of truth for the live gesture, read/written
 // synchronously by the pointer handlers — reading React state here would
@@ -166,36 +167,6 @@ export function useChartGesture({
     };
   }, []);
 
-  // `touch-action: pan-y` on the overlay (below) is what lets a vertical
-  // finger keep scrolling the page at all, but per this codebase's own
-  // established gotcha (see useRubberBandScroll.ts and CLAUDE.md's
-  // pointerdown/touch-action note) neither `touch-action` changed mid-
-  // gesture nor a Pointer Event's own preventDefault() can reliably stop a
-  // scroll already recognized as vertical — only a non-passive touchmove's
-  // preventDefault() can. The axis-lock decision itself still lives in
-  // handlePointerMove above (so the pan math and the lock share one source
-  // of truth); this listener's only job is enforcing that decision against
-  // native scrolling once it lands on "horizontal", so a diagonal finger
-  // can't pan the chart and scroll the page at the same time.
-  useEffect(() => {
-    const el = overlayRef.current;
-    if (!el) return;
-    function onTouchMove(e: TouchEvent) {
-      if (axisIntent.current === "pending" && e.touches.length === 1 && panGesture.current) {
-        const dx = Math.abs(e.touches[0].clientX - panGesture.current.startClientX);
-        const dy = Math.abs(e.touches[0].clientY - panGesture.current.startClientY);
-        if (Math.max(dx, dy) >= AXIS_LOCK_THRESHOLD_PX) {
-          axisIntent.current = dx > dy ? "horizontal" : "vertical";
-        }
-      }
-      if (axisIntent.current === "horizontal" && e.cancelable) {
-        e.preventDefault();
-      }
-    }
-    el.addEventListener("touchmove", onTouchMove, { passive: false });
-    return () => el.removeEventListener("touchmove", onTouchMove);
-  }, []);
-
   function selectPreset(days: number) {
     const end = todayTs;
     const target = clampWindow(end - (days - 1), end);
@@ -279,11 +250,10 @@ export function useChartGesture({
         if (Math.max(dx, dy) < AXIS_LOCK_THRESHOLD_PX) return;
         axisIntent.current = dx > dy ? "horizontal" : "vertical";
         if (axisIntent.current === "vertical") {
-          // The finger means to scroll the page, not pan the chart —
-          // release this gesture entirely so native vertical scrolling (see
-          // the touchmove listener below, which stops preventDefault-ing
-          // once this ref reads "vertical") takes over cleanly with no
-          // partial pan left applied.
+          // The gesture is vertical, not a chart pan. The chart surface owns
+          // touch input so diagonal attempts cannot be handed to page scroll
+          // before this decision is made; leave it inactive rather than
+          // applying any partial horizontal movement.
           pointers.current.clear();
           panGesture.current = null;
           return;
@@ -336,10 +306,15 @@ export function useChartGesture({
   const overlay = (
     <div
       ref={overlayRef}
-      // Preserve native vertical page scrolling while reserving horizontal
-      // movement and two-finger pinch for the chart. `touch-none` trapped any
-      // scroll that happened to start over this large overlay.
-      className="absolute top-0 touch-pan-y"
+      // The app-wide rubber-band handler listens at window level. Explicitly
+      // opt this direct-manipulation surface out so it cannot interpret a
+      // chart pan's vertical wobble as a page pull.
+      data-no-rubber-band
+      // Charts are a direct-manipulation surface: favor reliable pan/pinch
+      // over page scrolling from inside this small plot area. With pan-y,
+      // Android Chrome could claim a slightly diagonal swipe for vertical
+      // page scroll before the chart's horizontal axis lock ran.
+      className="absolute top-0 touch-none"
       style={{
         height: chartHeight,
         left: Y_AXIS_WIDTH + CHART_MARGIN.left,
