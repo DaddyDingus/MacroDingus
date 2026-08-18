@@ -1,9 +1,10 @@
 import { addDays, daysBetween } from "./date";
 
-export interface WeeklyDistancePoint {
-  label: string;
+export interface GoalWeightPoint {
+  date: string;
+  weightKg: number;
   distanceKg: number;
-  direction: "away" | "towards" | "status";
+  kind: "start" | "checkpoint" | "current";
 }
 
 // Looks up the last known value at or before `date` — used to resolve "what
@@ -18,46 +19,54 @@ function valueAtOrBefore(points: { date: string; valueKg: number }[], date: stri
   return result;
 }
 
-// One bar per completed 7-day period since the goal started, plus a final
-// "Status" bar for right now — mirrors MacroFactor's own waterfall: the
-// distance-to-goal at the end of each week, colored by whether that week
-// moved the distance closer ("towards") or further ("away") than the week
-// before it. Week 0 (the starting point) has nothing to compare against,
-// so it's always "away"-colored — a neutral starting marker, not a
-// judgment, same as MacroFactor's own lighter first bar. The final "Status"
-// bar is today's actual distance rather than a completed week, so it's
-// rendered as its own neutral direction rather than folded into the
-// away/towards coloring.
-export function computeGoalWaterfall(
+// A small chronological series of actual-weight checkpoints. The goal's
+// saved start-weight is always the first point; each full week becomes an
+// intermediate point and the most recent real value is the final point. The
+// accompanying distance is retained for the tooltip, while the chart itself
+// can show the more recognisable scale/trend weight values.
+export function computeGoalWeightSeries(
   points: { date: string; valueKg: number }[],
   goalStartDate: string,
   goalStartWeightKg: number,
   goalWeightKg: number,
   today: string
-): WeeklyDistancePoint[] {
-  const totalDays = Math.max(0, daysBetween(goalStartDate, today));
-  const totalWeeks = Math.floor(totalDays / 7);
+): GoalWeightPoint[] {
+  // A weigh-in from before this goal must not overwrite the goal's own
+  // start-weight snapshot. That snapshot defines this particular journey.
+  const goalPoints = points.filter((point) => point.date >= goalStartDate && point.date <= today);
+  const latestPoint = goalPoints[goalPoints.length - 1];
+  const currentDate = latestPoint?.date ?? goalStartDate;
+  const currentWeightKg = latestPoint?.valueKg ?? goalStartWeightKg;
+  const totalWeeks = Math.floor(Math.max(0, daysBetween(goalStartDate, currentDate)) / 7);
 
-  const buckets: WeeklyDistancePoint[] = [];
-  let prevDistance: number | null = null;
-  for (let w = 0; w <= totalWeeks; w++) {
+  const series: GoalWeightPoint[] = [
+    {
+      date: goalStartDate,
+      weightKg: goalStartWeightKg,
+      distanceKg: Math.abs(goalWeightKg - goalStartWeightKg),
+      kind: "start",
+    },
+  ];
+
+  for (let w = 1; w <= totalWeeks; w++) {
     const weekEndDate = addDays(goalStartDate, w * 7);
-    // The goal stores its own start-weight snapshot independently of the
-    // weigh-in history. Use that snapshot as Week 0 and carry it until the
-    // first dated point, so a goal created between weigh-ins still gets the
-    // intended baseline column instead of rendering only a grey Status bar.
-    const value = w === 0 ? goalStartWeightKg : valueAtOrBefore(points, weekEndDate) ?? goalStartWeightKg;
-    const distance = Math.abs(goalWeightKg - value);
-    const direction: WeeklyDistancePoint["direction"] =
-      prevDistance === null ? "away" : distance <= prevDistance ? "towards" : "away";
-    buckets.push({ label: `Week ${w}`, distanceKg: distance, direction });
-    prevDistance = distance;
+    // The final point below owns the current date, including when it happens
+    // to fall exactly on a weekly checkpoint; don't render it twice.
+    if (weekEndDate >= currentDate) break;
+    const value = valueAtOrBefore(goalPoints, weekEndDate) ?? goalStartWeightKg;
+    series.push({ date: weekEndDate, weightKg: value, distanceKg: Math.abs(goalWeightKg - value), kind: "checkpoint" });
   }
 
-  const latestValue = valueAtOrBefore(points, today) ?? goalStartWeightKg;
-  buckets.push({ label: "Status", distanceKg: Math.abs(goalWeightKg - latestValue), direction: "status" });
+  if (currentDate !== goalStartDate) {
+    series.push({
+      date: currentDate,
+      weightKg: currentWeightKg,
+      distanceKg: Math.abs(goalWeightKg - currentWeightKg),
+      kind: "current",
+    });
+  }
 
-  return buckets;
+  return series;
 }
 
 // "Optimistic" because it assumes the profile's own *intended* rate

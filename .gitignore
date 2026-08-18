@@ -18,3 +18,4 @@ android/*.jks
 
 # Ad-hoc pre-surgery SQLite snapshots (see data/) - never version these
 data/*.backup
+.aider*

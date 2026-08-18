@@ -1,89 +1,116 @@
-import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import type { WeeklyDistancePoint } from "../lib/goalProgressInsights";
+import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import type { GoalWeightPoint } from "../lib/goalProgressInsights";
 import { kgToUnit, type WeightUnit } from "../lib/weightUnit";
+import { dayIndex } from "../lib/date";
+import { formatShortTs } from "../lib/chartLayout";
 
 const GRID = "rgb(var(--color-divider))";
 const MUTED = "#8A8F98";
-const STATUS_COLOR = "#8A8F98";
 
 function CustomTooltip({ active, payload, unit }: any) {
   if (!active || !payload?.length) return null;
   const point = payload[0].payload;
-  const directionText = point.direction === "towards" ? "Towards goal" : point.direction === "away" ? "Away from goal" : "Current";
   return (
     <div className="bg-surface-raised border border-line rounded-md px-3 py-2 text-xs">
-      <p className="text-muted mb-1">{point.label}</p>
+      <p className="text-muted mb-1">{point.kind === "start" ? "Goal start" : point.kind === "current" ? "Latest" : formatShortTs(point.ts)}</p>
       <p className="tabular text-ink">
-        {point.distance} {unit} to go
+        {point.weight} {unit}
       </p>
-      <p className="text-muted mt-0.5">{directionText}</p>
+      <p className="tabular text-muted mt-0.5">{point.distance} {unit} remaining</p>
     </div>
   );
 }
 
-// Distance-to-goal at the end of each week since the goal started, as a
-// staircase of bars rather than a line — each bar's color (not just its
-// height) carries information: full-opacity `color` for a week that moved
-// distance closer to goal ("towards"), the same hue at reduced opacity for
-// a week that moved further away ("away"), and neutral grey for the final
-// "Status" bar (today, not a completed week). Reusing one hue at two
-// opacities rather than two unrelated colors keeps "towards"/"away" legible
-// as a single continuum (closer vs. further) rather than reading as two
-// unrelated categories the way e.g. red/green would.
+// The chart shows the actual selected weight series (scale or trend), while a
+// target line makes the remaining gap visible without making users mentally
+// translate a "kg remaining" axis back into their own bodyweight.
 export default function GoalWaterfallChart({
-  buckets,
+  series,
   color,
   unit,
+  targetWeightKg,
+  title,
 }: {
-  buckets: WeeklyDistancePoint[];
+  series: GoalWeightPoint[];
   color: string;
   unit: WeightUnit;
+  targetWeightKg: number;
+  title: string;
 }) {
-  if (buckets.length === 0) {
+  if (series.length < 2) {
     return (
       <div className="h-[220px] flex items-center justify-center">
-        <p className="text-sm text-muted">Not enough history yet to chart your progress.</p>
+        <p className="text-sm text-muted text-center max-w-[15rem]">Your starting weight is set. Log another weight to see your path to the goal.</p>
       </div>
     );
   }
 
-  const data = buckets.map((b) => ({
-    label: b.label,
-    distance: Math.round(kgToUnit(b.distanceKg, unit) * 10) / 10,
-    direction: b.direction,
+  const data = series.map((point) => ({
+    ts: dayIndex(point.date),
+    weight: Math.round(kgToUnit(point.weightKg, unit) * 10) / 10,
+    distance: Math.round(kgToUnit(point.distanceKg, unit) * 10) / 10,
+    kind: point.kind,
   }));
-  const maxDistance = Math.max(...data.map((d) => d.distance));
+  const targetWeight = kgToUnit(targetWeightKg, unit);
+  const minWeight = Math.min(targetWeight, ...data.map((point) => point.weight));
+  const maxWeight = Math.max(targetWeight, ...data.map((point) => point.weight));
+  const weightPadding = Math.max(0.25, (maxWeight - minWeight) * 0.12);
+  const yDomain: [number, number] = [minWeight - weightPadding, maxWeight + weightPadding];
+  const firstTs = data[0].ts;
+  const lastTs = data[data.length - 1].ts;
+  // A little breathing room prevents the start/latest dots being clipped by
+  // the plot edge. Explicit checkpoint ticks also keep a date label directly
+  // beneath each point, rather than showing arbitrary calendar dates between
+  // measurements.
+  const xDomain: [number, number] = [firstTs - 1, lastTs + 1];
+  const tickLimit = 4;
+  const tickStep = Math.max(1, Math.ceil((data.length - 1) / (tickLimit - 1)));
+  const xTicks = Array.from(new Set([...data.filter((_, index) => index % tickStep === 0).map((point) => point.ts), lastTs]));
 
   return (
-    <ResponsiveContainer width="100%" height={220}>
-      <BarChart data={data} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
-        <CartesianGrid stroke={GRID} vertical={false} />
-        <XAxis
-          dataKey="label"
-          tick={{ fill: MUTED, fontSize: 11 }}
-          axisLine={false}
-          tickLine={false}
-          minTickGap={30}
-          interval="preserveStartEnd"
-        />
-        <YAxis
-          domain={[0, maxDistance * 1.1]}
-          tick={{ fill: MUTED, fontSize: 11 }}
-          axisLine={false}
-          tickLine={false}
-          width={32}
-        />
-        <Tooltip content={<CustomTooltip unit={unit} />} cursor={{ fill: GRID, opacity: 0.3 }} />
-        <Bar dataKey="distance" radius={[2, 2, 0, 0]} isAnimationActive animationDuration={500} animationEasing="ease-out">
-          {data.map((d, i) => (
-            <Cell
-              key={i}
-              fill={d.direction === "status" ? STATUS_COLOR : color}
-              fillOpacity={d.direction === "away" ? 0.45 : d.direction === "status" ? 0.6 : 1}
-            />
-          ))}
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>
+    <div>
+      <div className="flex items-baseline justify-between px-1 pb-2">
+        <p className="text-xs font-medium text-ink">{title}</p>
+        <p className="tabular text-[11px] text-muted">Target {targetWeight.toFixed(1)} {unit}</p>
+      </div>
+      <ResponsiveContainer width="100%" height={196}>
+        <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+          <CartesianGrid stroke={GRID} vertical={false} />
+          <XAxis
+            type="number"
+            dataKey="ts"
+            domain={xDomain}
+            allowDataOverflow
+            ticks={xTicks}
+            tickFormatter={formatShortTs}
+            tick={{ fill: MUTED, fontSize: 11 }}
+            axisLine={false}
+            tickLine={false}
+            minTickGap={40}
+          />
+          <YAxis
+            domain={yDomain}
+            tick={{ fill: MUTED, fontSize: 11 }}
+            axisLine={false}
+            tickLine={false}
+            width={36}
+            tickFormatter={(value: number) => value.toFixed(1)}
+          />
+          <ReferenceLine y={targetWeight} stroke="#F7D372" strokeOpacity={0.9} strokeDasharray="4 4" />
+          <Tooltip content={<CustomTooltip unit={unit} />} cursor={{ stroke: GRID }} />
+          <Line
+            type="monotone"
+            dataKey="weight"
+            stroke={color}
+            strokeWidth={2.5}
+            dot={{ r: 3.5, fill: color, stroke: "rgb(var(--color-card))", strokeWidth: 2 }}
+            activeDot={{ r: 5, fill: color, stroke: "rgb(var(--color-card))", strokeWidth: 2 }}
+            isAnimationActive
+            animationDuration={500}
+            animationEasing="ease-out"
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
   );
 }

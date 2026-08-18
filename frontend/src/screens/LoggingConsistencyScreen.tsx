@@ -26,17 +26,20 @@ export default function LoggingConsistencyScreen() {
           <div className="relative grid grid-cols-2 gap-6">
             <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/10" />
             <div className="text-center">
-              <p className="text-[11px] tracking-widest uppercase text-muted">Today</p>
-              <p className="tabular text-2xl font-medium tracking-tight">
-                {Math.round(kcalToUnit(todayCalories, energyUnit)).toLocaleString()}{" "}
+              <p className="text-[11px] tracking-widest uppercase text-muted mb-1">Today</p>
+              <div className="flex items-baseline justify-center gap-1">
+                <p className="tabular text-2xl font-medium tracking-tight">
+                  {Math.round(kcalToUnit(todayCalories, energyUnit)).toLocaleString()}
+                </p>
                 <span className="text-sm font-normal text-muted">{energyUnitLabel(energyUnit)}</span>
-              </p>
+              </div>
             </div>
             <div className="text-center">
-              <p className="text-[11px] tracking-widest uppercase text-muted">Streak</p>
-              <p className="tabular text-2xl font-medium tracking-tight">
-                {streak} <span className="text-sm font-normal text-muted">days</span>
-              </p>
+              <p className="text-[11px] tracking-widest uppercase text-muted mb-1">Streak</p>
+              <div className="flex items-baseline justify-center gap-1">
+                <p className="tabular text-2xl font-medium tracking-tight">{streak}</p>
+                <span className="text-sm font-normal text-muted">days</span>
+              </div>
             </div>
           </div>
         </div>

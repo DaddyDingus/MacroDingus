@@ -310,10 +310,6 @@ export default function TodayScreen() {
           <p className="text-sm text-muted text-center py-16">Nothing logged yet.</p>
         ) : (
           <div className="relative">
-            {/* TimeBlockGroup's dot is w-2 (8px) flush to this container's right edge, so its
-                center sits 4px in from the edge. This 1px-wide line must start 0.5px further
-                out (right: 3.5px) so its own center lands on that same 4px point. */}
-            <div className="absolute top-2 bottom-2 w-px bg-dashboardDivider" style={{ right: "23px" }} />
             <div className="space-y-6">
               {groups.map((group, i) => {
                 // A string, not a filtered array: unaffected groups get the

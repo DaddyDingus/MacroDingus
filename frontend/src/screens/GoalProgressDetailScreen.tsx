@@ -6,7 +6,7 @@ import type { Goal } from "../api/goals";
 import { useWeights, useWeightTrend } from "../api/weights";
 import { useWeightUnit, kgToUnit, type WeightUnit } from "../lib/weightUnit";
 import { daysBetween, localDateString } from "../lib/date";
-import { computeGoalWaterfall, computeOptimisticEtaDate } from "../lib/goalProgressInsights";
+import { computeGoalWeightSeries, computeOptimisticEtaDate } from "../lib/goalProgressInsights";
 import ScreenTabs from "../components/ScreenTabs";
 import GoalWaterfallChart from "../components/GoalWaterfallChart";
 import StatTile from "../components/StatTile";
@@ -124,7 +124,7 @@ function GoalProgressBody({
       ? Math.min(100, Math.max(0, Math.round(((totalPlannedKg - distanceKg) / totalPlannedKg) * 100)))
       : null;
 
-  const waterfall = computeGoalWaterfall(points, goalStartDate, startWeightKg, goalWeightKg, today);
+  const weightSeries = computeGoalWeightSeries(points, goalStartDate, startWeightKg, goalWeightKg, today);
   const etaDate = distanceKg !== null ? computeOptimisticEtaDate(distanceKg, goal.targetRateKgPerWeek, today) : null;
   const durationDays = daysBetween(goalStartDate, today);
 
@@ -144,14 +144,14 @@ function GoalProgressBody({
           <div className="relative grid grid-cols-2 gap-6">
             <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/10" />
             <div className="text-center">
-              <p className="text-[11px] tracking-widest uppercase text-muted">Distance</p>
+              <p className="text-[11px] tracking-widest uppercase text-muted">Remaining</p>
               <p className="tabular text-2xl font-medium tracking-tight">
                 {distanceKg !== null ? kgToUnit(distanceKg, unit).toFixed(1) : "—"}{" "}
                 <span className="text-sm font-normal text-muted">{unit}</span>
               </p>
             </div>
             <div className="text-center">
-              <p className="text-[11px] tracking-widest uppercase text-muted">Progress</p>
+              <p className="text-[11px] tracking-widest uppercase text-muted">Complete</p>
               <p className="tabular text-2xl font-medium tracking-tight">
                 {progressPct !== null ? progressPct : "—"} <span className="text-sm font-normal text-muted">%</span>
               </p>
@@ -161,17 +161,13 @@ function GoalProgressBody({
         </div>
 
         <div className="tile-enter border border-line bg-surface rounded-2xl p-4" style={staggerStyle(1, 60, 5)}>
-          <GoalWaterfallChart buckets={waterfall} color={config.color} unit={unit} />
-          <div className="flex items-center gap-4 px-1 pt-2">
-            <span className="flex items-center gap-1.5 text-xs text-muted">
-              <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: config.color, opacity: 0.45 }} />
-              Away
-            </span>
-            <span className="flex items-center gap-1.5 text-xs text-muted">
-              <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: config.color }} />
-              Towards
-            </span>
-          </div>
+          <GoalWaterfallChart
+            series={weightSeries}
+            color={config.color}
+            unit={unit}
+            targetWeightKg={goalWeightKg}
+            title={config.label}
+          />
         </div>
 
         <p className="text-[11px] tracking-widest uppercase text-muted px-1 pt-2">Insights &amp; Data</p>

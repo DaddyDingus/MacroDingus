@@ -95,7 +95,7 @@ const TimeBlockGroup = memo(function TimeBlockGroup({
       }`}
     >
       <div className="flex items-center gap-2">
-        <div className="shrink-0 min-w-0 flex items-center gap-2.5 text-xs text-muted tabular bg-white/5 rounded-full px-2.5 py-1.5">
+        <div className="shrink-0 min-w-0 flex items-center gap-2.5 text-xs text-muted tabular px-1 py-1.5">
           {/* Letter-prefix (P119, not 119P) to match MacroSummaryBar's own
               convention above — this pill and the sticky header used to
               disagree with each other on which side of the number the
@@ -129,8 +129,8 @@ const TimeBlockGroup = memo(function TimeBlockGroup({
             onClick={() => !isOrigin && onMergeInto(entries)}
             disabled={isOrigin}
             aria-label={isOrigin ? "Origin group" : "Move selected foods here"}
-            className={`shrink-0 p-1.5 -m-0.5 rounded-full ${
-              isOrigin ? "text-white opacity-[0.15] pointer-events-none" : "bg-white/5 text-muted active:text-white"
+            className={`shrink-0 p-1.5 -m-0.5 rounded-full transition-colors ${
+              isOrigin ? "text-white opacity-[0.15] pointer-events-none" : "text-muted hover:bg-white/5 active:text-white"
             }`}
           >
             <ArrowRight className="w-[18px] h-[18px]" strokeWidth={2.5} />
@@ -140,7 +140,7 @@ const TimeBlockGroup = memo(function TimeBlockGroup({
             type="button"
             onClick={() => onQuickAdd(entries)}
             aria-label="Add a food to this time"
-            className="shrink-0 p-1.5 -m-0.5 rounded-full bg-white/5 text-muted active:text-white"
+            className="shrink-0 p-1.5 -m-0.5 rounded-full text-muted hover:bg-white/5 active:text-white transition-colors"
           >
             <Plus className="w-4 h-4" strokeWidth={2} />
           </button>

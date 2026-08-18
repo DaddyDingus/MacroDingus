@@ -100,7 +100,7 @@ function MonthGrid({
   ];
 
   return (
-    <div className="max-w-[320px] mx-auto">
+    <div>
       <div className="flex items-center gap-2 mb-3">
         <div className="flex items-center gap-1 shrink-0">
           <button
@@ -152,14 +152,26 @@ function MonthGrid({
           const isToday = date === today;
           return (
             <div key={date} className="aspect-square flex items-center justify-center" title={date}>
-              <span
-                className={`w-full h-full rounded-md flex items-center justify-center text-xs tabular ${
-                  active ? "bg-accent" : "bg-surface-raised text-muted"
-                } ${isToday ? "ring-1 ring-accent" : ""}`}
-                style={active ? { color: "#0B1210" } : undefined}
-              >
-                {dayNum}
-              </span>
+              <div className="flex flex-col items-center justify-center gap-1">
+                <span
+                  className={`flex items-center justify-center w-7 h-7 rounded-full text-xs tabular z-10 ${
+                    isToday
+                      ? active
+                        ? "bg-accent text-[#0B1210] font-semibold"
+                        : "border border-accent text-accent font-semibold"
+                      : active
+                      ? "text-content font-medium"
+                      : "text-muted"
+                  }`}
+                >
+                  {dayNum}
+                </span>
+                <div className="h-1 flex items-center justify-center">
+                  {active && !isToday && (
+                    <span className="w-1 h-1 rounded-full bg-accent" />
+                  )}
+                </div>
+              </div>
             </div>
           );
         })}
@@ -283,17 +295,15 @@ export default function ConsistencyCalendar({ activeDates }: { activeDates: Set<
         yearOptions={yearViews}
       />
 
-      <div className="border border-line bg-surface rounded-2xl p-4">
-        <div className="flex items-center justify-center gap-6 text-xs text-muted">
-          <span className="flex items-center gap-2">
-            <span className="w-3 h-3 rounded-full bg-accent" />
-            Tracked
-          </span>
-          <span className="flex items-center gap-2">
-            <span className="w-3 h-3 rounded-full border border-line" />
-            Untracked
-          </span>
-        </div>
+      <div className="flex items-center justify-center gap-6 text-xs text-muted">
+        <span className="flex items-center gap-2">
+          <span className="w-2.5 h-2.5 rounded-[3px] bg-accent" />
+          Tracked
+        </span>
+        <span className="flex items-center gap-2">
+          <span className="w-2.5 h-2.5 rounded-[3px] bg-surface-raised" />
+          Untracked
+        </span>
       </div>
 
       {yearViews.length > 0 && (
