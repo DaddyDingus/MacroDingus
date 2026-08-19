@@ -610,3 +610,26 @@ export const eventPlanDays = sqliteTable("event_plan_days", {
 }, (table) => ({
   planDateIdx: uniqueIndex("event_plan_days_plan_date_idx").on(table.planId, table.date),
 }));
+
+/**
+ * Bearer tokens for first-party integrations that write on a user's behalf —
+ * currently DaddysRecipes logging a cooked serving.
+ *
+ * Deliberately a separate table from steps_webhook_tokens rather than a
+ * shared one: a steps token must not be able to write food logs, and keeping
+ * them apart means revoking one never affects the other. Same proven shape
+ * otherwise — hashed at rest, per-user, revocable, with a visible prefix so
+ * a token can be identified in a list without being displayed.
+ */
+export const integrationTokens = sqliteTable("integration_tokens", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id),
+  name: text("name").notNull(),
+  tokenHash: text("token_hash").notNull().unique(),
+  tokenPrefix: text("token_prefix").notNull(),
+  createdAt: text("created_at").notNull(),
+  lastUsedAt: text("last_used_at"),
+  revokedAt: text("revoked_at"),
+}, (table) => ({
+  userCreatedIdx: index("integration_tokens_user_created_idx").on(table.userId, table.createdAt),
+}));

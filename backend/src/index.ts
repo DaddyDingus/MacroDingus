@@ -23,6 +23,7 @@ import { registerCookwareRoutes } from "./routes/cookware.js";
 import { registerAdjustmentRoutes } from "./routes/adjustments.js";
 import { registerEventPlanRoutes } from "./routes/eventPlans.js";
 import { registerStepRoutes } from "./routes/steps.js";
+import { registerIntegrationRoutes } from "./routes/integrations.js";
 import { configureAiProviderStore } from "./engine/aiProvider.js";
 import { startAutomaticServerBackups } from "./lib/serverBackups.js";
 
@@ -72,6 +73,7 @@ registerCookwareRoutes(app);
 registerAdjustmentRoutes(app);
 registerEventPlanRoutes(app);
 registerStepRoutes(app);
+registerIntegrationRoutes(app);
 
 await app.register(fastifyStatic, {
   root: STATIC_DIR,

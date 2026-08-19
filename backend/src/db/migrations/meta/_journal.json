@@ -281,6 +281,13 @@
       "when": 1786968000000,
       "tag": "0039_goal_rate_percent",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1787176018360,
+      "tag": "0040_equal_spyke",
+      "breakpoints": true
     }
   ]
 }
