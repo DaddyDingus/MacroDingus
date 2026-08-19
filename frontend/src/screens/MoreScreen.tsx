@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Check, Palette, Ruler, CalendarDays, CookingPot, ChevronDown, ChevronRight, AlertTriangle, LogOut, User, Users, Activity, Sparkles, Download, Upload, Database, RefreshCw, ShieldCheck, Share2, Globe2, Smartphone, Footprints } from "lucide-react";
+import { Check, Palette, Ruler, CalendarDays, CookingPot, ChevronDown, ChevronRight, AlertTriangle, LogOut, User, Users, Activity, Sparkles, Download, Upload, Database, RefreshCw, ShieldCheck, Share2, Globe2, Smartphone, Footprints, KeyRound } from "lucide-react";
 import { useAuthStatus, useLogout } from "../api/auth";
 import { useCoachStatus, useSaveProfile } from "../api/coach";
 import { useTheme, THEME_CATALOG } from "../lib/theme";
@@ -331,6 +331,17 @@ export default function MoreScreen() {
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-medium">Health Connect</span>
               <span className="block text-xs text-muted">Sync informational step counts</span>
+            </span>
+            <ChevronRight size={16} strokeWidth={2.5} className="text-muted shrink-0" />
+          </button>
+          <button
+            onClick={() => navigate("/more/integrations")}
+            className="w-full flex items-center gap-3 px-4 py-2.5 text-left border-t border-line/60 active:bg-surface-raised"
+          >
+            <KeyRound size={15} strokeWidth={2} className="text-muted shrink-0" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-medium">Integrations</span>
+              <span className="block text-xs text-muted">Let DaddysRecipes log a cooked serving</span>
             </span>
             <ChevronRight size={16} strokeWidth={2.5} className="text-muted shrink-0" />
           </button>
