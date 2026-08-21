@@ -86,6 +86,7 @@ export default function ScaleWeightDetailScreen() {
   const monthGroupsDesc = [...monthGroups.entries()]
     .sort((a, b) => b[0].localeCompare(a[0]))
     .map(([key, g]) => ({ key, label: g.label, entries: [...g.entries].reverse() }));
+  const currentMonth = localDateString().slice(0, 7);
 
   function startEdit(id: string, weightKg: number) {
     setEditingId(id);
@@ -151,6 +152,7 @@ export default function ScaleWeightDetailScreen() {
                   key={g.key}
                   label={g.label}
                   summary={`${g.entries.length} ${g.entries.length === 1 ? "day" : "days"}`}
+                  defaultOpen={g.key === currentMonth}
                 >
                   {g.entries.map((w) => {
                     const shown = roundToDisplay(kgToUnit(w.weightKg, unit));

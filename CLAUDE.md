@@ -95,10 +95,18 @@ shared `<video>`. Drop the pin and `return` — the re-run owns the retry.
 **Media `deviceId`s do not survive an app restart.** Chromium salts them per
 browsing session and the WebView shell re-salts every launch, so a pinned lens
 is always rejected on first open. The saved preference therefore stores
-`{id, label}`; the label is stable hardware identity and re-pins the id after
-the fallback stream comes up (labels are blank until camera access is granted,
-so this can't happen earlier). One recovery attempt per mount — re-pinning
-restarts the stream and an unmatchable label would otherwise loop.
+`{id, label}`; the label is stable hardware identity and re-pins the id. One
+recovery attempt per mount — re-pinning restarts the stream and an unmatchable
+label would otherwise loop. **The re-pin must happen BEFORE any stream opens**
+(mount effect gating the camera effect on `lensResolved`, 2026-08-20):
+`enumerateDevices()` returns labels as soon as camera permission is granted to
+the origin, no active stream needed. Resolving it after the first open instead
+meant every session's first scan ran open-with-dead-id → fail → open on
+whatever `environment` resolves to (Samsung's fused stream, i.e. the
+ultra-wide) → enumerate → match → tear down → open again: three
+`getUserMedia` calls, presenting as "slow, flashes the wide lens, then
+switches". The open/fail/recover path stays as the fallback for the genuine
+first run, where labels are still blank.
 
 **`navigator.vibrate()` in the WebView runs against the host app's Android
 permissions, not the browser's.** All keypad/check-in haptics were silently
@@ -178,6 +186,12 @@ Standalone Quick Add embeds `DecimalKeypad` in its own sheet instead of opening 
 **Health Connect remains native-only.** The PWA cannot call Android's Jetpack Health Connect SDK directly. `POST /api/weights/import` is the authenticated batch-upsert bridge for a future native companion/TWA shell; it does not bypass normal session auth or grant browser-side Health Connect access.
 
 **Any `DashboardCard` text row that wraps to a second line silently eats the chart** (fixed 2026-08-15). The title block and the footer are both `shrink-0` siblings of the `flex-1` media box inside a fixed `aspect-square` card, so every line either one gains comes straight out of the sparkline. Steps' `"8,372" + "84% of goal"` fit on one line at a 412px viewport but wrapped at ≤384px, collapsing its chart from 48.5px to 8px; Macros' `"avg kcal/logged day, 7d"` subtitle did the same thing one row up. Bars render with *correct relative proportions* in a third of the height, which reads as "squished" rather than as a layout bug, and it only reproduces on narrow phones — desktop looked perfect, which sent two earlier fixes chasing Recharts and caching instead. Both rows are now pinned to a fixed line count (`whitespace-nowrap` on the footer, `truncate` on the subtitle), so tile geometry is identical at every width; **keep each tile's value+unit and subtitle short enough to fit rather than leaning on the ellipsis.** The media box also deliberately carries **no `py-*`** — it stacked with the flex gap for 16px of dead space that the fixed-height card could only fund from the chart. Debug this class of bug by measuring `contentH`/`footerH` per viewport width in a headless render, not by reading the diff. Two dead ends worth not retrying: `<YAxis domain={[0,"auto"]}>` on these mini `BarChart`s is a **no-op** (bar charts already anchor at zero), and `minHeight` on `ResponsiveContainer` actively hurts — a 48px chart inside an 8px `overflow-hidden` box clips every bar but the tallest one's tip, which looks like the chart lost its data.
+
+**Drag-to-reorder must never use `setPointerCapture`** (`hooks/useDragReorder.ts`, shared by `DashboardCustomizeScreen` and both shortcut lists in the quick-actions Edit view, 2026-08-20). Committing a move re-renders the list and React moves the dragged row's DOM node to its new index; `insertBefore` takes the node out of the document for the instant it takes to reinsert it, which **implicitly releases the capture**. Every later `pointermove`/`pointerup` then goes to whatever is under the finger, so the row freezes mid-drag *and* keeps its transform after release (the handler that clears the drag state never runs). Window-level listeners have no lifetime tie to the node being reordered. `touch-action: none` on the handle is still what stops the page panning — `preventDefault()` on `pointerdown` does not. Second, unrelated half of the same bug: **the measured row height must span a whole list item.** A pinned shortcut is two stacked rows (label + color swatches), so measuring only the label row made one list step read as half an item — the row lagged the finger and needed a double-height drag to move one place.
+
+**A control inside a `BottomSheet`'s scroll area that owns vertical drag itself needs `data-no-sheet-drag`.** The sheet's `scrollDragRef` mechanism arms swipe-to-dismiss on *any* downward touch while `scrollTop === 0`, so dragging a reorder handle down moved the whole sheet instead of the row, and far enough dismissed it.
+
+**A swipe-to-reveal gesture has to claim the touch inside Chrome's ~8px scroll slop** (`hooks/useSwipeToReveal.ts`, shared by `FoodItemCard` and `SwipeToDeleteRow`, 2026-08-20). Both copies decided horizontal-vs-vertical at 8px from React's pointer handlers, which is racing something already lost: once the browser classifies a sequence as a scroll it stops honouring `preventDefault()` and cancels the pointer stream outright, so a mostly-sideways swipe on a food row just scrolled the list. Recognition now runs on a **non-passive native `touchmove`** (React attaches touch listeners passively at the root, so `preventDefault()` from JSX is a silent no-op), decides at 4px, and is biased toward horizontal (`|dx| > 0.8·|dy|`) because vertical stays natively available via `touch-action: pan-y` and shouldn't win on a few pixels of incidental drift. Dropping pointer capture also **removed the click suppression it provided as a side effect** — the row body is a real button, so a committed swipe now installs a one-shot capture-phase click swallow, or lifting the finger over the row selects it.
 
 **Dashboard tiles** (`lib/dashboardLayout.tsx`): `load()` trusts the stored array as-is — does NOT auto-append missing catalog tiles (an earlier version did, silently reversing every toggle-off on reload); a tile added to the catalog later won't appear until the "+ Add" sheet is opened. Also, a tile's headline must match its own subtitle's window — Energy Balance's said "Last 7 days" but its headline was just the latest single day, disagreeing with its own sparkline (`avgBalance7` fixed it by averaging the same window shown).
 
@@ -266,6 +280,10 @@ The Recipes shortcut directly hands the quick-actions menu's history trap to `Ad
 **No DnD library** anywhere — hand-rolled drag in `DashboardCustomizeScreen.tsx`, swipe-to-dismiss in `BottomSheet.tsx`. Keep it that way (bundle size + touch reliability).
 
 **Lazy loading**: Dashboard (`/`) and Food log (`/log`) are eager. Everything else is `React.lazy`. `DashboardTileSections.tsx` (recharts) and the barcode scanner (`@zxing/*`, uses `@zxing/browser` not `BarcodeDetector` — Firefox doesn't support it) are lazy-split. Don't import sizeable UI into an eager screen without lazy-splitting. In `App.tsx`, `Suspense` must stay outside the keyed `.page-enter` wrapper so a lazy route's transition begins when its real content mounts, not while the null fallback is showing.
+
+**Every expandable surface animates via `grid-template-rows` 0fr→1fr** (`CollapsibleCard`, `MonthSection`, More's Appearance list) — a bare `{open && ...}` snaps. A header that only *paints* its border while open must still reserve 1px of it (transparent when closed), or the collapse animation fights a 1px height change. Related: **a row whose trailing element is conditional must reserve that element's width** — More's theme list added an 18px check on selection, which narrowed the text column enough that the longest description wrapped and the row grew as you picked it.
+
+**Native `window.alert`/`confirm` are not used anywhere.** `AndroidUpdatePrompt` renders all four update states (checking / available / up to date / failed) as its own top card; the two acknowledgement states clear themselves after ~3s.
 
 **Global preferences** (`weightUnit`, `energyUnit`, `theme`): React Context + localStorage. Backend always stores kg and kcal; convert at display/input boundary only, never persist a converted value.
 

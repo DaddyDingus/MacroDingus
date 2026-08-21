@@ -141,6 +141,7 @@ export default function WeightDetailScreen() {
   const monthGroupsDesc = [...monthGroups.entries()]
     .sort((a, b) => b[0].localeCompare(a[0]))
     .map(([key, g]) => ({ key, label: g.label, entries: [...g.entries].reverse() }));
+  const currentMonth = localDateString().slice(0, 7);
 
   // Block-level stagger-in for the screen's own top-level cards (the
   // Dashboard's per-tile version doesn't apply here — this screen has no
@@ -294,6 +295,7 @@ export default function WeightDetailScreen() {
                   key={g.key}
                   label={g.label}
                   summary={`${g.entries.length} ${g.entries.length === 1 ? "day" : "days"}`}
+                  defaultOpen={g.key === currentMonth}
                 >
                   {g.entries.map((w) => {
                     const shown = roundToDisplay(kgToUnit(w.trendKg, unit));

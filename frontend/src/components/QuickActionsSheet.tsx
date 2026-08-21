@@ -1,4 +1,4 @@
-import { useEffect, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { SlidersHorizontal, ChevronRight, GripVertical, Plus } from "lucide-react";
 import {
@@ -12,15 +12,7 @@ import QuickActionFlow from "./QuickActionFlow";
 import BottomSheet from "./BottomSheet";
 import ToggleSwitch from "./ToggleSwitch";
 import { armTrapHandoff } from "../lib/useBackDismiss";
-
-interface ShortcutDragState {
-  id: ShortcutId;
-  startIndex: number;
-  currentIndex: number;
-  startY: number;
-  rowHeight: number;
-  offset: number;
-}
+import { useDragReorder } from "../hooks/useDragReorder";
 
 // The center nav button and everything it opens: the full quick-actions menu,
 // an edit-shortcuts checklist, and (once an action is picked) the shared
@@ -46,73 +38,20 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
   const { shortcuts, toggle, reorder, order, reorderMore, colors, setColor } = useDashboardShortcuts();
   const [view, setView] = useState<"menu" | "edit">("menu");
   const [runningAction, setRunningAction] = useState<ShortcutId | null>(null);
-  // Hand-rolled pointer drag, not a DnD library — same reasoning and same
-  // pattern as DashboardCustomizeScreen's own tile reordering (this app
+  // Hand-rolled pointer drag, not a DnD library — same reasoning and the same
+  // shared hook as DashboardCustomizeScreen's tile reordering (this app
   // deliberately has no drag-and-drop dependency anywhere). Two independent
-  // drag states rather than one generalized one: the pinned grid and the
-  // "more shortcuts" list below it are separate lists with separate backing
-  // arrays (`shortcuts` vs `order`/`reorderMore`), same reasoning as keeping
-  // the two handler sets textually separate instead of threading a "which
-  // list" flag through one shared implementation.
-  const [drag, setDrag] = useState<ShortcutDragState | null>(null);
-  const [moreDrag, setMoreDrag] = useState<ShortcutDragState | null>(null);
+  // drag sessions rather than one: the pinned grid and the "more shortcuts"
+  // list below it are separate lists with separate backing arrays
+  // (`shortcuts` vs `order`/`reorderMore`).
+  const pinnedDrag = useDragReorder((key, toIndex) => reorder(key as ShortcutId, toIndex));
+  const moreListDrag = useDragReorder((key, toIndex) => reorderMore(key as ShortcutId, toIndex));
   // Photos is a lazy route. Start fetching/evaluating its chunk while the
   // user is looking at this menu so its real content is normally ready by
   // the time the sheet slides away after a Photos tap.
   useEffect(() => {
     void import("../screens/PhotosScreen");
   }, []);
-
-  function handlePointerDown(e: ReactPointerEvent<HTMLButtonElement>, id: ShortcutId, index: number) {
-    e.preventDefault();
-    const row = e.currentTarget.closest("[data-shortcut-row]") as HTMLElement | null;
-    const rowHeight = row?.getBoundingClientRect().height ?? 52;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    setDrag({ id, startIndex: index, currentIndex: index, startY: e.clientY, rowHeight, offset: 0 });
-  }
-
-  function handlePointerMove(e: ReactPointerEvent<HTMLButtonElement>) {
-    const clientY = e.clientY;
-    setDrag((d) => {
-      if (!d) return d;
-      const deltaY = clientY - d.startY;
-      const maxIndex = shortcuts.length - 1;
-      const rawShift = Math.round(deltaY / d.rowHeight);
-      const newIndex = Math.min(Math.max(d.startIndex + rawShift, 0), maxIndex);
-      if (newIndex !== d.currentIndex) reorder(d.id, newIndex);
-      return { ...d, currentIndex: newIndex, offset: deltaY - (newIndex - d.startIndex) * d.rowHeight };
-    });
-  }
-
-  function handlePointerUp(e: ReactPointerEvent<HTMLButtonElement>) {
-    e.currentTarget.releasePointerCapture(e.pointerId);
-    setDrag(null);
-  }
-
-  function handleMorePointerDown(e: ReactPointerEvent<HTMLButtonElement>, id: ShortcutId, index: number) {
-    e.preventDefault();
-    const row = e.currentTarget.closest("[data-shortcut-row]") as HTMLElement | null;
-    const rowHeight = row?.getBoundingClientRect().height ?? 52;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    setMoreDrag({ id, startIndex: index, currentIndex: index, startY: e.clientY, rowHeight, offset: 0 });
-  }
-
-  function handleMorePointerMove(e: ReactPointerEvent<HTMLButtonElement>, maxIndex: number) {
-    const clientY = e.clientY;
-    setMoreDrag((d) => {
-      if (!d) return d;
-      const deltaY = clientY - d.startY;
-      const rawShift = Math.round(deltaY / d.rowHeight);
-      const newIndex = Math.min(Math.max(d.startIndex + rawShift, 0), maxIndex);
-      if (newIndex !== d.currentIndex) reorderMore(d.id, newIndex);
-      return { ...d, currentIndex: newIndex, offset: deltaY - (newIndex - d.startIndex) * d.rowHeight };
-    });
-  }
-
-  function handleMorePointerUp(e: ReactPointerEvent<HTMLButtonElement>) {
-    e.currentTarget.releasePointerCapture(e.pointerId);
-    setMoreDrag(null);
-  }
 
   // Overlay actions swap the outgoing menu for QuickActionFlow immediately.
   // Both sides share the existing back-dismiss entry, and the destination's
@@ -258,18 +197,25 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
                     const Icon = s.icon;
                     const colorId = colors[id] ?? "default";
                     const color = SHORTCUT_COLOR_CATALOG.find((c) => c.id === colorId) ?? SHORTCUT_COLOR_CATALOG[0];
-                    const isDragging = drag?.id === id;
+                    const dragOffset = pinnedDrag.drag && pinnedDrag.drag.key === id ? pinnedDrag.drag.offset : null;
                     return (
-                      <div key={id}>
-                        <div
-                          data-shortcut-row
-                          className="flex items-center gap-3 px-4 py-3 bg-dashboardCard"
-                          style={
-                            isDragging
-                              ? { transform: `translateY(${drag.offset}px)`, position: "relative", zIndex: 10 }
-                              : undefined
-                          }
-                        >
+                      // The drag transform and the row-height measurement both
+                      // live on this wrapper, not on the label row inside it:
+                      // each pinned shortcut is *two* stacked rows (the label
+                      // and its color swatches), so measuring only the label
+                      // row made one list step read as roughly half a real
+                      // item — the row lagged the finger and needed a
+                      // double-height drag to move one place.
+                      <div
+                        key={id}
+                        data-reorder-row
+                        style={
+                          dragOffset !== null
+                            ? { transform: `translateY(${dragOffset}px)`, position: "relative", zIndex: 10 }
+                            : undefined
+                        }
+                      >
+                        <div className="flex items-center gap-3 px-4 py-3 bg-dashboardCard">
                           <span className="h-9 w-9 rounded-full bg-dashboardChip flex items-center justify-center shrink-0">
                             <Icon
                               size={16}
@@ -283,11 +229,9 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
                             <ToggleSwitch on={true} />
                           </button>
                           <button
-                            onPointerDown={(e) => handlePointerDown(e, id, i)}
-                            onPointerMove={handlePointerMove}
-                            onPointerUp={handlePointerUp}
-                            onPointerCancel={handlePointerUp}
+                            onPointerDown={(e) => pinnedDrag.start(e, id, i, shortcuts.length - 1)}
                             aria-label={`Reorder ${s.label}`}
+                            data-no-sheet-drag
                             className="text-muted shrink-0 p-1 touch-none cursor-grab active:cursor-grabbing"
                           >
                             <GripVertical size={18} strokeWidth={2} />
@@ -328,15 +272,16 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
                       {more.map((s, i) => {
                         const Icon = s.icon;
                         const disabled = shortcuts.length >= MAX_DASHBOARD_SHORTCUTS;
-                        const isDragging = moreDrag?.id === s.id;
+                        const dragOffset =
+                          moreListDrag.drag && moreListDrag.drag.key === s.id ? moreListDrag.drag.offset : null;
                         return (
                           <div
                             key={s.id}
-                            data-shortcut-row
+                            data-reorder-row
                             className="flex items-center gap-3 px-4 py-3 bg-dashboardCard"
                             style={
-                              isDragging
-                                ? { transform: `translateY(${moreDrag.offset}px)`, position: "relative", zIndex: 10 }
+                              dragOffset !== null
+                                ? { transform: `translateY(${dragOffset}px)`, position: "relative", zIndex: 10 }
                                 : undefined
                             }
                           >
@@ -353,11 +298,9 @@ function QuickActionsSheet({ onClose }: { onClose: () => void }) {
                               <ToggleSwitch on={false} />
                             </button>
                             <button
-                              onPointerDown={(e) => handleMorePointerDown(e, s.id, i)}
-                              onPointerMove={(e) => handleMorePointerMove(e, more.length - 1)}
-                              onPointerUp={handleMorePointerUp}
-                              onPointerCancel={handleMorePointerUp}
+                              onPointerDown={(e) => moreListDrag.start(e, s.id, i, more.length - 1)}
                               aria-label={`Reorder ${s.label}`}
+                              data-no-sheet-drag
                               className="text-muted shrink-0 p-1 touch-none cursor-grab active:cursor-grabbing"
                             >
                               <GripVertical size={18} strokeWidth={2} />

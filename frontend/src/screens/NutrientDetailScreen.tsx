@@ -293,6 +293,7 @@ export default function NutrientDetailScreen() {
                 key={g.key}
                 label={g.label}
                 summary={`${g.entries.length} ${g.entries.length === 1 ? "day" : "days"}`}
+                defaultOpen={g.key === today.slice(0, 7)}
               >
                 {g.entries.map((d) => (
                   <button

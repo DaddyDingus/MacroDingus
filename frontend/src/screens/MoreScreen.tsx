@@ -150,7 +150,11 @@ export default function MoreScreen() {
             type="button"
             onClick={() => setAppearanceOpen((open) => !open)}
             aria-expanded={appearanceOpen}
-            className={`w-full px-4 py-2.5 flex items-center gap-2 text-left active:bg-surface-raised ${appearanceOpen ? "border-b border-line" : ""}`}
+            /* Border is always 1px and only changes *color* on toggle — a
+               border that appears and disappears changes the header's height
+               by a pixel, which the collapse animation then has to fight
+               (same reasoning as CollapsibleCard's own header). */
+            className={`w-full px-4 py-2.5 flex items-center gap-2 text-left active:bg-surface-raised border-b transition-colors duration-150 ${appearanceOpen ? "border-line" : "border-transparent"}`}
           >
             <Palette size={15} strokeWidth={2} className="text-muted shrink-0" />
             <span className="text-sm font-medium flex-1">Appearance</span>
@@ -164,23 +168,44 @@ export default function MoreScreen() {
               />
             </span>
           </button>
-          {appearanceOpen && THEME_CATALOG.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => setTheme(t.id)}
-                className="w-full flex items-center gap-3 px-4 py-2.5 border-b border-line/60 last:border-b-0 text-left active:bg-surface-raised"
-              >
-                <span
-                  className="shrink-0 w-7 h-7 rounded-full border border-line"
-                  style={{ backgroundColor: t.swatch }}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm">{t.label}</span>
-                  <span className="block text-xs text-muted">{t.description}</span>
-                </span>
-                {theme === t.id && <Check size={18} className="shrink-0 text-accent" />}
-              </button>
-            ))}
+          {/* Animated open/close, same grid-template-rows 0fr->1fr collapse
+              every other expandable surface in the app uses (CollapsibleCard,
+              MonthSection) — this list used to be a bare `{open && ...}` and
+              simply snapped. The inner wrapper must keep overflow-hidden or
+              the rows spill out of the zero-height track while collapsed. */}
+          <div
+            className="grid transition-[grid-template-rows] duration-200 ease-out"
+            style={{ gridTemplateRows: appearanceOpen ? "1fr" : "0fr" }}
+          >
+            <div className="overflow-hidden">
+              {THEME_CATALOG.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setTheme(t.id)}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 border-b border-line/60 last:border-b-0 text-left active:bg-surface-raised"
+                >
+                  <span
+                    className="shrink-0 w-7 h-7 rounded-full border border-line"
+                    style={{ backgroundColor: t.swatch }}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm">{t.label}</span>
+                    <span className="block text-xs text-muted">{t.description}</span>
+                  </span>
+                  {/* The check slot is always present, only its icon is
+                      conditional: adding a 18px icon plus its gap on
+                      selection narrows the text column, and the longest
+                      description wrapped to a second line the moment you
+                      picked that theme — the row visibly grew as you chose
+                      it. Reserving the space keeps every row's height fixed
+                      whether selected or not. */}
+                  <span className="shrink-0 w-[18px] flex items-center justify-center">
+                    {theme === t.id && <Check size={18} className="text-accent" />}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
         </section>
 
         <section className="tile-enter border border-line bg-surface rounded-2xl overflow-hidden" style={staggerStyle(block++, 60, 5)}>

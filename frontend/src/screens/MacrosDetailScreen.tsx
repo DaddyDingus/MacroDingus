@@ -96,6 +96,7 @@ export default function MacrosDetailScreen() {
   const monthGroupsDesc = [...monthGroups.entries()]
     .sort((a, b) => b[0].localeCompare(a[0]))
     .map(([key, g]) => ({ key, label: g.label, entries: [...g.entries].reverse() }));
+  const currentMonth = localDateString().slice(0, 7);
 
   return (
     <div className="min-h-dvh pb-24">
@@ -151,6 +152,7 @@ export default function MacrosDetailScreen() {
                 key={g.key}
                 label={g.label}
                 summary={`${g.entries.length} ${g.entries.length === 1 ? "day" : "days"}`}
+                defaultOpen={g.key === currentMonth}
               >
                 {g.entries.map((d) => (
                   <button

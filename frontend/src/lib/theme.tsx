@@ -18,7 +18,7 @@ export const THEME_CATALOG: { id: Theme; label: string; description: string; swa
   // this one got added), so the description leads with "purple" and the
   // swatch is Catppuccin's own Mauve accent rather than its (much darker,
   // less immediately recognizable) background tone.
-  { id: "catppuccin", label: "Catppuccin Macchiato", description: "Purple-blue, cooler and softer than the others", swatch: "#C6A0F6" },
+  { id: "catppuccin", label: "Catppuccin Macchiato", description: "Soft purple-blue, cooler than the rest", swatch: "#C6A0F6" },
   { id: "midnight", label: "Midnight", description: "Deep navy with cool blue layers", swatch: "#315A8C" },
   { id: "evergreen", label: "Evergreen", description: "Dark forest green, calm and earthy", swatch: "#39735A" },
   { id: "aubergine", label: "Aubergine", description: "Rich plum with warm purple layers", swatch: "#7A477A" },

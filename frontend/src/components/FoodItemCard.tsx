@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useState } from "react";
 import { Trash2, Flame } from "lucide-react";
 import type { LogEntry } from "../api/types";
 import FoodIconAvatar from "./FoodIconAvatar";
 import RecipeIconStack from "./RecipeIconStack";
 import { useEnergyUnit, kcalToUnit } from "../lib/energyUnit";
+import { useSwipeToReveal } from "../hooks/useSwipeToReveal";
 
 function fmt(n: number): string {
   return Math.round(n).toLocaleString();
@@ -21,11 +22,6 @@ const SNAP_MS = 200;
 // showDeletePanel), so it doesn't reappear mid-fade while the card's
 // selected-state tint is still partially translucent.
 const SELECTED_COLOR_MS = 150;
-// Same two-phase recognition BottomSheet/DraggableSnapSheet use for their own
-// drag surfaces: a press doesn't commit to anything until it's moved this
-// far, so a plain tap (row select, the Delete action once revealed) is never
-// swallowed by gesture tracking that never actually left the ground.
-const COMMIT_THRESHOLD_PX = 8;
 
 export default function FoodItemCard({
   entry,
@@ -50,25 +46,20 @@ export default function FoodItemCard({
   onDelete: () => void;
 }) {
   const { unit: energyUnit } = useEnergyUnit();
-  const [dragX, setDragX] = useState(0);
-  const [dragging, setDragging] = useState(false);
-  const dragStart = useRef<{
-    x: number;
-    y: number;
-    baseX: number;
-    pointerId: number;
-    // null until the gesture has moved enough to tell horizontal from
-    // vertical; false means "let this be a normal vertical scroll/tap and
-    // stop tracking it" rather than "closed".
-    horizontal: boolean | null;
-  } | null>(null);
+  const {
+    ref: swipeRef,
+    dragX,
+    dragging,
+    syncOpen,
+    close: closeSwipe,
+  } = useSwipeToReveal({ enabled: swipeEnabled, revealPx: REVEAL_PX, maxDragPx: MAX_DRAG_PX, onOpenChange });
 
   // Follows `open` when nothing is actively being dragged — covers both an
   // external close (another row opened, multi-select started) and this
   // row's own post-release snap already having set the right value locally.
   useEffect(() => {
-    if (!dragStart.current) setDragX(open ? -REVEAL_PX : 0);
-  }, [open]);
+    syncOpen(open);
+  }, [open, syncOpen]);
 
   // Whether the Delete panel is actually mounted — lags `swipeEnabled`
   // turning true (leaving multi-select) by the same duration as the card's
@@ -86,43 +77,6 @@ export default function FoodItemCard({
     return () => window.clearTimeout(timer);
   }, [swipeEnabled]);
 
-  function handlePointerDown(e: ReactPointerEvent<HTMLDivElement>) {
-    if (!swipeEnabled) return;
-    dragStart.current = { x: e.clientX, y: e.clientY, baseX: dragX, pointerId: e.pointerId, horizontal: null };
-  }
-
-  function handlePointerMove(e: ReactPointerEvent<HTMLDivElement>) {
-    const drag = dragStart.current;
-    if (!drag || e.pointerId !== drag.pointerId) return;
-    const dx = e.clientX - drag.x;
-    const dy = e.clientY - drag.y;
-    if (drag.horizontal === null) {
-      if (Math.abs(dx) < COMMIT_THRESHOLD_PX && Math.abs(dy) < COMMIT_THRESHOLD_PX) return;
-      drag.horizontal = Math.abs(dx) > Math.abs(dy);
-      if (!drag.horizontal) {
-        // A vertical scroll gesture that happened to start on this row —
-        // hand it back to the page untouched rather than fighting it.
-        dragStart.current = null;
-        return;
-      }
-      e.currentTarget.setPointerCapture(e.pointerId);
-      setDragging(true);
-    }
-    setDragX(Math.min(0, Math.max(-MAX_DRAG_PX, drag.baseX + dx)));
-  }
-
-  function endDrag(e: ReactPointerEvent<HTMLDivElement>) {
-    const drag = dragStart.current;
-    dragStart.current = null;
-    if (!drag || drag.pointerId !== e.pointerId) return;
-    setDragging(false);
-    if (!drag.horizontal) return; // never committed — the tap underneath already fired normally
-    const next = Math.min(0, Math.max(-MAX_DRAG_PX, drag.baseX + (e.clientX - drag.x)));
-    const shouldOpen = next <= -REVEAL_PX / 2;
-    setDragX(shouldOpen ? -REVEAL_PX : 0);
-    onOpenChange?.(shouldOpen);
-  }
-
   return (
     <div className="relative rounded-2xl overflow-hidden">
       {/* Sits behind the sliding card, revealed as it's dragged left.
@@ -138,7 +92,7 @@ export default function FoodItemCard({
           type="button"
           aria-label={`Delete ${entry.food.name}`}
           onClick={() => {
-            setDragX(0);
+            closeSwipe();
             onOpenChange?.(false);
             onDelete();
           }}
@@ -150,14 +104,12 @@ export default function FoodItemCard({
         </button>
       )}
       <div
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-        // pan-y: the browser keeps handling vertical scrolling natively:
-        // our own horizontal-vs-vertical check above only takes over once a
-        // move is clearly horizontal, so a normal scroll starting on a food
-        // row is never delayed or fought.
+        ref={swipeRef}
+        // pan-y: the browser keeps handling vertical scrolling natively.
+        // useSwipeToReveal only takes the gesture over once it reads as
+        // horizontal, and does that within 4px so it beats the browser's own
+        // scroll slop — a normal scroll starting on a food row is never
+        // delayed or fought.
         style={{
           transform: `translateX(${dragX}px)`,
           // One inline transition covering both concerns: an inline
@@ -169,23 +121,16 @@ export default function FoodItemCard({
         }}
         // No data-no-rubber-band here (removed 2026-08-06) — it was an
         // upfront, whole-row opt-out applied at touchstart, before this
-        // component's own horizontal-vs-vertical check (above) has any
-        // chance to run. Since most of a food log's vertical space is food
-        // rows, that silently killed useRubberBandScroll's fling-based
-        // bounce (a fast flick that lifts the finger before the real edge,
-        // then bounces once native momentum reaches it — see that hook's
-        // own comments) for almost every scroll gesture in the app, while a
-        // slow drag starting on blank space (header, group timestamps)
-        // still worked. This component's own drag doesn't actually need
-        // the opt-out to be safe: a plain vertical scroll starting here
-        // already hands off untouched (dragStart.current = null above, no
-        // setPointerCapture, no preventDefault), and a confirmed horizontal
-        // swipe drives its visuals from React state (dragX) via
-        // setPointerCapture, not from the browser's native touch handling —
-        // so it doesn't depend on the touch event's default action being
-        // preserved even in the rare case both gestures' recognizers are
-        // live at once (already at the list's top/bottom edge with a swipe
-        // that has a little incidental vertical wobble).
+        // row's own horizontal-vs-vertical check has any chance to run.
+        // Since most of a food log's vertical space is food rows, that
+        // silently killed useRubberBandScroll's fling-based bounce (see that
+        // hook's own comments) for almost every scroll gesture in the app,
+        // while a slow drag starting on blank space (header, group
+        // timestamps) still worked. The gesture doesn't need the opt-out to
+        // be safe: a vertical scroll starting here is handed back untouched
+        // and never preventDefault-ed, and a confirmed horizontal swipe
+        // drives its visuals from React state (dragX), so it doesn't depend
+        // on the touch event's default action being preserved.
         // Rounds only the left side while actually slid open (dragX < 0,
         // which can only happen when swipeEnabled — selected/multi-select
         // always keeps dragX at exactly 0). The right side needs to be

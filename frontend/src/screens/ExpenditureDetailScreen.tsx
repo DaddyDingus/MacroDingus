@@ -152,6 +152,7 @@ export default function ExpenditureDetailScreen() {
   const monthGroupsDesc = [...monthGroups.entries()]
     .sort((a, b) => b[0].localeCompare(a[0]))
     .map(([key, g]) => ({ key, label: g.label, entries: g.entries }));
+  const currentMonth = today.slice(0, 7);
 
   let block = 0;
 
@@ -298,6 +299,7 @@ export default function ExpenditureDetailScreen() {
                   key={g.key}
                   label={g.label}
                   summary={`${g.entries.length} ${g.entries.length === 1 ? "day" : "days"}`}
+                  defaultOpen={g.key === currentMonth}
                 >
                   {g.entries.map((p) => {
                     const dir = changeDirection(p.delta, EXPENDITURE_CHANGE_EPSILON);

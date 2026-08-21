@@ -115,10 +115,57 @@ export default function BarcodeScanner({
   const [torchError, setTorchError] = useState<string | null>(null);
   const [showFocusHint, setShowFocusHint] = useState(true);
   const [cameraSession, setCameraSession] = useState(0);
+  // Gates the camera effect below until the saved lens preference has been
+  // translated into a deviceId that is valid for *this* browsing session.
+  const [lensResolved, setLensResolved] = useState(false);
 
   useEffect(() => {
     const id = window.setTimeout(() => setShowFocusHint(false), 2400);
     return () => window.clearTimeout(id);
+  }, []);
+
+  // Re-pin the saved lens BEFORE opening any stream. Chromium salts media
+  // deviceIds per browsing session and the WebView shell re-salts on every
+  // launch, so the id stored last time is always stale — which used to mean
+  // every first scan of a session ran the full slow path: open with the dead
+  // id, fail, drop the pin, open again on whatever "environment" resolves to
+  // (a Samsung fused stream that shows as the ultra-wide), enumerate, match
+  // the saved label, then tear that stream down and open a third time on the
+  // real lens. That is exactly the reported "delayed, flashes the wide lens,
+  // then switches". Labels are the stable hardware identity and are readable
+  // from enumerateDevices() as soon as camera permission has been granted to
+  // this origin — no active stream needed — so one cheap enumerate up front
+  // collapses three getUserMedia calls into one.
+  //
+  // On the genuine first run (permission not yet granted) labels are blank,
+  // nothing matches, and the old open/fail/recover path still runs as the
+  // fallback. That path is left in place for exactly that case.
+  useEffect(() => {
+    const pref = readLensPref();
+    if (!pref?.label || !navigator.mediaDevices?.enumerateDevices) {
+      setLensResolved(true);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const match = devices.find((d) => d.kind === "videoinput" && d.label && d.label === pref.label);
+        if (!cancelled && match) {
+          // Consumes the one recovery attempt the stream effect would
+          // otherwise make: it has already been done, correctly, here.
+          lensRecoveryDoneRef.current = true;
+          if (match.deviceId !== pref.id) writeLensPref({ id: match.deviceId, label: match.label });
+          setDeviceId(match.deviceId);
+        }
+      } catch {
+        // No lens list available — fall through to the open/fail/recover path.
+      }
+      if (!cancelled) setLensResolved(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Android WebView can leave a camera track alive-but-frozen after the app
@@ -141,10 +188,12 @@ export default function BarcodeScanner({
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, []);
 
-  // Deps: [deviceId]. Re-runs (tearing down and restarting the stream) when the
-  // user cycles lenses via handleSwitchLens. Reading onScan through a ref avoids
+  // Re-runs (tearing down and restarting the stream) when the user cycles
+  // lenses via handleSwitchLens, or when the mount-time lens resolution above
+  // settles on this session's real deviceId. Reading onScan through a ref avoids
   // restarting the camera stream every time the parent re-renders with a new callback.
   useEffect(() => {
+    if (!lensResolved) return;
     const hints = new Map();
     hints.set(DecodeHintType.POSSIBLE_FORMATS, PRODUCT_BARCODE_FORMATS);
     const reader = new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 150 });
@@ -310,7 +359,7 @@ export default function BarcodeScanner({
       if (scannerControlsRef.current === controls) scannerControlsRef.current = null;
       controls?.stop();
     };
-  }, [deviceId, cameraSession]);
+  }, [deviceId, cameraSession, lensResolved]);
 
   function handleSwitchLens() {
     if (lensOptions.length < 2) return;

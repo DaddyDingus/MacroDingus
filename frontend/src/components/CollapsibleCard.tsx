@@ -10,13 +10,15 @@ import { useExpandable } from "../hooks/useExpandable";
 export default function CollapsibleCard({
   label,
   className = "",
+  defaultOpen = true,
   children,
 }: {
   label: string;
   className?: string;
+  defaultOpen?: boolean;
   children: ReactNode;
 }) {
-  const { open, toggle, ref } = useExpandable(false);
+  const { open, toggle, ref } = useExpandable(defaultOpen);
 
   return (
     <div ref={ref} className={`border border-line bg-surface rounded-2xl overflow-hidden ${className}`}>

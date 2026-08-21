@@ -249,6 +249,11 @@ export default function BottomSheet({
       const el = scrollElRef.current;
       if (!el || closingRef.current || e.touches.length !== 1) return;
       if (!(e.target instanceof Node) || !el.contains(e.target)) return;
+      // A control inside the scroll area that owns vertical drag itself (the
+      // shortcut reorder handles) must not also arm swipe-to-dismiss: with
+      // the list scrolled to the top, dragging a row *down* moved the whole
+      // sheet instead of the row, and a long enough drag dismissed it.
+      if (e.target instanceof Element && e.target.closest("[data-no-sheet-drag]")) return;
       if (el.scrollTop > 0) return; // not at the top edge — a normal scroll owns this touch
       active = false;
       armedAtY = e.touches[0].clientY;
