@@ -33,11 +33,16 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import java.io.File
+import android.util.Base64
+import java.security.MessageDigest
+import java.security.SecureRandom
 
 class MainActivity : ComponentActivity() {
     companion object {
         private const val APP_ORIGIN = "https://macrodaddy.tail984e80.ts.net"
         private const val AUTHENTIK_HOST = "auth.tail984e80.ts.net"
+        private const val HANDOFF_PREFS = "auth_handoff"
+        private const val HANDOFF_VERIFIER = "verifier"
         private const val UPDATE_PREFS = "native_updates"
         private const val UPDATE_DOWNLOAD_ID = "download_id"
         private const val UPDATE_APK_PATH = "updates/MacroDaddy-update.apk"
@@ -118,10 +123,17 @@ class MainActivity : ComponentActivity() {
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     val uri = request.url
-                    val trustedHost = uri.host == Uri.parse(APP_ORIGIN).host || uri.host == AUTHENTIK_HOST
-                    if (uri.scheme == "https" && trustedHost) return false
+                    val appHost = Uri.parse(APP_ORIGIN).host
+                    if (uri.scheme == "https" && uri.host == appHost && uri.path == "/api/auth/oidc/start" && uri.getQueryParameter("client") != "android") { startAndroidLogin(uri); return true }
+                    if (uri.scheme == "https" && uri.host == appHost) return false
+                    if (uri.scheme == "https" && uri.host == AUTHENTIK_HOST) { startActivity(Intent(Intent.ACTION_VIEW, uri)); return true }
                     startActivity(Intent(Intent.ACTION_VIEW, uri))
                     return true
+                }
+
+                override fun onPageFinished(view: WebView, url: String?) {
+                    super.onPageFinished(view, url)
+                    if (url?.startsWith(APP_ORIGIN) == true) CookieManager.getInstance().flush()
                 }
             }
             webChromeClient = object : WebChromeClient() {
@@ -153,7 +165,6 @@ class MainActivity : ComponentActivity() {
                 runCatching { startActivity(Intent(Intent.ACTION_VIEW, uri)) }
                     .onFailure { showUpdateError("Android couldn't open that download.") }
             }
-            loadUrl(APP_ORIGIN)
         }
 
         // Android 15+ draws apps edge-to-edge. Keep the web viewport inside
@@ -188,12 +199,48 @@ class MainActivity : ComponentActivity() {
         }
         setContentView(rootContainer)
         ViewCompat.requestApplyInsets(rootContainer)
+        if (!completeAndroidLogin(intent)) webView.loadUrl(APP_ORIGIN)
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (webView.canGoBack()) webView.goBack() else finish()
             }
         })
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        completeAndroidLogin(intent)
+    }
+
+    override fun onPause() {
+        CookieManager.getInstance().flush()
+        super.onPause()
+    }
+
+    override fun onStop() {
+        CookieManager.getInstance().flush()
+        super.onStop()
+    }
+
+    private fun startAndroidLogin(uri: Uri) {
+        val verifier = Base64.encodeToString(ByteArray(32).also { SecureRandom().nextBytes(it) }, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val challenge = Base64.encodeToString(MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(Charsets.US_ASCII)), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        getSharedPreferences(HANDOFF_PREFS, MODE_PRIVATE).edit().putString(HANDOFF_VERIFIER, verifier).apply()
+        startActivity(Intent(Intent.ACTION_VIEW, uri.buildUpon().appendQueryParameter("client", "android").appendQueryParameter("handoff_challenge", challenge).build()))
+    }
+
+    private fun completeAndroidLogin(intent: Intent?): Boolean {
+        val uri = intent?.data ?: return false
+        if (uri.scheme != "macrodaddy" || uri.host != "auth" || uri.path != "/callback") return false
+        val code = uri.getQueryParameter("code") ?: return false
+        val prefs = getSharedPreferences(HANDOFF_PREFS, MODE_PRIVATE)
+        val verifier = prefs.getString(HANDOFF_VERIFIER, null) ?: return false
+        prefs.edit().remove(HANDOFF_VERIFIER).apply()
+        webView.loadUrl(Uri.parse("$APP_ORIGIN/api/auth/android/complete").buildUpon().appendQueryParameter("code", code).appendQueryParameter("verifier", verifier).build().toString())
+        intent.data = null
+        return true
     }
 
     private fun handleWebPermission(request: PermissionRequest) {

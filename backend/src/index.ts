@@ -32,9 +32,9 @@ const PORT = Number(process.env.PORT ?? 3000);
 const STATIC_DIR = path.join(__dirname, "..", "public");
 const DATA_DIR = process.env.DATA_DIR ?? path.join(__dirname, "..", "..", "data");
 const ANDROID_RELEASE = {
-  versionCode: 11,
-  versionName: "1.10",
-  downloadUrl: "/api/android/apk?v=1.10",
+  versionCode: 13,
+  versionName: "1.12",
+  downloadUrl: "/api/android/apk?v=1.12",
 };
 const HEALTH_CONNECT_RELEASE = {
   versionCode: 10915,

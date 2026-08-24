@@ -114,6 +114,7 @@ async function createSession(reply: import("fastify").FastifyReply, userId: stri
     createdAt: now,
   });
   setSessionCookie(reply, token);
+  return token;
 }
 
 async function liveSession(req: FastifyRequest, reply?: import("fastify").FastifyReply): Promise<LiveSession | null> {
@@ -194,7 +195,11 @@ interface OidcTransaction {
   codeVerifier: string;
   redirectUri: string;
   createdAt: number;
+  androidChallenge?: string;
 }
+
+const BASE64URL_256 = /^[A-Za-z0-9_-]{43}$/;
+const ANDROID_HANDOFF_MS = 2 * 60 * 1000;
 
 function readOidcTransaction(req: FastifyRequest): OidcTransaction | null {
   const raw = req.cookies[OIDC_COOKIE_NAME];
@@ -281,8 +286,9 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
   await app.register(fastifyFormbody);
   app.decorateRequest("userId", undefined);
   await ensureBootstrapAdmin();
+  const androidHandoffs = new Map<string, { challenge: string; token: string; expiresAt: number }>();
 
-  app.get("/api/auth/oidc/start", async (req, reply) => {
+  app.get<{ Querystring: { client?: string; handoff_challenge?: string } }>("/api/auth/oidc/start", async (req, reply) => {
     try {
       const client = await getOidcClient();
       const redirectUri = `${requestOrigin(req)}/api/auth/oidc/callback`;
@@ -292,7 +298,9 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
         codeVerifier: generators.codeVerifier(),
         redirectUri,
         createdAt: Date.now(),
+        ...(req.query.client === "android" ? { androidChallenge: req.query.handoff_challenge } : {}),
       };
+      if (req.query.client === "android" && !BASE64URL_256.test(transaction.androidChallenge ?? "")) return reply.code(400).send({ error: "Invalid Android sign-in request" });
       reply.setCookie(OIDC_COOKIE_NAME, Buffer.from(JSON.stringify(transaction)).toString("base64url"), {
         path: "/api/auth/oidc",
         httpOnly: true,
@@ -333,7 +341,12 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
       });
       const claims = tokens.claims();
       const user = await userForOidcClaims(claims);
-      await createSession(reply, user.id, typeof claims.sid === "string" ? claims.sid : null);
+      const token = await createSession(reply, user.id, typeof claims.sid === "string" ? claims.sid : null);
+      if (transaction.androidChallenge) {
+        const code = crypto.randomBytes(32).toString("base64url");
+        androidHandoffs.set(code, { challenge: transaction.androidChallenge, token, expiresAt: Date.now() + ANDROID_HANDOFF_MS });
+        return reply.redirect(`macrodaddy://auth/callback?code=${encodeURIComponent(code)}`);
+      }
       return reply.redirect("/");
     } catch (error) {
       if (error instanceof AccountBlockedError) {
@@ -343,6 +356,22 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
       req.log.error({ err: error }, "Authentik callback failed");
       return reply.code(401).send("Authentik sign-in failed. Return to MacroDaddy and try again.");
     }
+  });
+
+  app.get<{ Querystring: { code?: string; verifier?: string } }>("/api/auth/android/complete", async (req, reply) => {
+    const code = req.query.code ?? "";
+    const verifier = req.query.verifier ?? "";
+    if (!BASE64URL_256.test(code) || !BASE64URL_256.test(verifier)) return reply.code(400).send({ error: "Invalid or expired Android sign-in" });
+    const handoff = androidHandoffs.get(code);
+    if (!handoff || handoff.expiresAt <= Date.now()) { androidHandoffs.delete(code); return reply.code(400).send({ error: "Invalid or expired Android sign-in" }); }
+    const expected = Buffer.from(handoff.challenge);
+    const actual = Buffer.from(crypto.createHash("sha256").update(verifier, "ascii").digest("base64url"));
+    if (expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) return reply.code(400).send({ error: "Invalid or expired Android sign-in" });
+    androidHandoffs.delete(code);
+    const [session] = await db.select().from(appSessions).where(eq(appSessions.tokenHash, sessionTokenHash(handoff.token)));
+    if (!session || session.expiresAt <= Date.now()) return reply.code(400).send({ error: "Android sign-in session expired" });
+    setSessionCookie(reply, handoff.token);
+    return reply.redirect("/");
   });
 
   app.post("/api/auth/signup", async (req, reply) => {
