@@ -293,11 +293,59 @@
   animation: barcode-scan-line 2.2s ease-in-out infinite;
 }
 
+/* BarcodeScanner's startup state stays visually separate from the operational
+   scan frame: the camera may briefly bootstrap a provisional rear stream to
+   recover this session's salted deviceId, but only this loader is visible
+   until the final 1x physical lens is accepted. */
+@keyframes barcode-camera-loader-glow {
+  0%, 100% { opacity: 0.5; transform: scale(0.96); }
+  50% { opacity: 1; transform: scale(1.04); }
+}
+
+@keyframes barcode-camera-loader-sweep {
+  0%, 100% { top: 24%; opacity: 0.3; }
+  50% { top: 76%; opacity: 1; }
+}
+
+@keyframes barcode-camera-loader-bar {
+  0%, 100% { opacity: 0.35; transform: scaleY(0.78); }
+  50% { opacity: 0.95; transform: scaleY(1); }
+}
+
+.barcode-camera-loader-glow {
+  animation: barcode-camera-loader-glow 2.2s ease-in-out infinite;
+}
+
+.barcode-camera-loader-sweep {
+  animation: barcode-camera-loader-sweep 1.65s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.barcode-camera-loader-bar {
+  transform-origin: center;
+  animation: barcode-camera-loader-bar 1.25s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .barcode-scan-line {
     animation: none;
     top: 50%;
     opacity: 0.45;
+  }
+
+  .barcode-camera-loader-glow,
+  .barcode-camera-loader-sweep,
+  .barcode-camera-loader-bar {
+    animation: none;
+  }
+
+  .barcode-camera-loader-sweep {
+    top: 50%;
+    opacity: 0.65;
+  }
+
+  .barcode-camera-loader-glow {
+    opacity: 0.7;
+    transform: none;
   }
 }
 

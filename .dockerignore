@@ -1,6 +1,7 @@
 data/
 .env
 tailscale-state/
+macrodaddy-tailscale-state/
 frontend/node_modules/
 frontend/dist/
 backend/node_modules/

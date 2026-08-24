@@ -40,6 +40,17 @@ const SCANNER_VIDEO_QUALITY: ExtendedConstraints = {
   frameRate: { ideal: 30, max: 30 },
 };
 
+// Samsung exposes a fused rear-camera stream whose range starts on the
+// ultra-wide lens. Asking for 1x as part of getUserMedia lets the camera
+// pipeline select the regular lens before the first frame is presented. Keep
+// this best-effort (`advanced`) so phones that do not expose zoom constraints
+// simply ignore it instead of rejecting camera access.
+const DEFAULT_REAR_CAMERA_CONSTRAINTS: ExtendedConstraints = {
+  ...SCANNER_VIDEO_QUALITY,
+  facingMode: { ideal: "environment" },
+  advanced: [{ zoom: 1 }],
+};
+
 const LENS_STORAGE_KEY = "macrotrack.barcodeCameraDeviceId";
 
 // The saved lens carries its label as well as its deviceId, because a deviceId
@@ -64,6 +75,51 @@ function readLensPref(): LensPref | null {
 
 function writeLensPref(pref: LensPref) {
   localStorage.setItem(LENS_STORAGE_KEY, JSON.stringify(pref));
+}
+
+function ScannerCameraLoading({ onClose }: { onClose: () => void }) {
+  const bars = [24, 38, 30, 46, 34, 42, 27, 46, 31, 39, 24];
+
+  return (
+    <div className="fixed inset-0 z-[61] overflow-hidden bg-black text-white">
+      <div
+        className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-4 pb-12"
+        style={{ paddingTop: "max(1rem, env(safe-area-inset-top))" }}
+      >
+        <span className="text-base font-semibold">Scan barcode</span>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close scanner"
+          className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white shadow-lg active:bg-white/10"
+        >
+          <X size={21} strokeWidth={2} />
+        </button>
+      </div>
+
+      <div className="absolute inset-0 flex items-center justify-center px-8">
+        <div className="-translate-y-4 text-center" role="status" aria-live="polite">
+          <div className="relative mx-auto h-32 w-32">
+            <div className="barcode-camera-loader-glow absolute -inset-5 rounded-[2.25rem] bg-[radial-gradient(circle,rgba(216,150,255,0.18),transparent_68%)]" />
+            <div className="absolute inset-0 overflow-hidden rounded-[1.65rem] border border-white/10 bg-white/[0.045] shadow-[0_20px_70px_rgba(0,0,0,0.7),inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-xl">
+              <div className="absolute inset-x-5 inset-y-7 flex items-center justify-center gap-[4px]">
+                {bars.map((height, index) => (
+                  <span
+                    key={`${height}-${index}`}
+                    className="barcode-camera-loader-bar w-[3px] rounded-full bg-white/75"
+                    style={{ height, animationDelay: `${index * 55}ms` }}
+                  />
+                ))}
+              </div>
+              <span className="barcode-camera-loader-sweep absolute left-4 right-4 h-px bg-accent shadow-[0_0_14px_2px_rgba(216,150,255,0.65)]" />
+            </div>
+          </div>
+          <p className="mt-7 text-base font-medium tracking-tight">Preparing camera</p>
+          <p className="mt-1.5 text-sm text-white/45">Selecting your 1× lens</p>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // Maps a tap's on-screen (client) coordinates to a normalized [0,1] point in the
@@ -115,6 +171,7 @@ export default function BarcodeScanner({
   const [torchError, setTorchError] = useState<string | null>(null);
   const [showFocusHint, setShowFocusHint] = useState(true);
   const [cameraSession, setCameraSession] = useState(0);
+  const [previewReady, setPreviewReady] = useState(false);
   // Gates the camera effect below until the saved lens preference has been
   // translated into a deviceId that is valid for *this* browsing session.
   const [lensResolved, setLensResolved] = useState(false);
@@ -201,6 +258,7 @@ export default function BarcodeScanner({
     let controls: IScannerControls | null = null;
     let cancelled = false;
     let stopped = false;
+    let streamAccepted = false;
 
     setFocusRange(null);
     trackRef.current = null;
@@ -210,6 +268,7 @@ export default function BarcodeScanner({
     setTorchOn(false);
     setTorchBusy(false);
     setTorchError(null);
+    setPreviewReady(false);
 
     // A saved deviceId (from a manual lens switch) pins the exact physical camera.
     // Otherwise leave lens choice to the browser/OS — on multi-lens phones this
@@ -222,13 +281,13 @@ export default function BarcodeScanner({
     // the Android WebView shell, where this reliably worked in Chrome itself).
     const videoConstraints: ExtendedConstraints = deviceId
       ? { ...SCANNER_VIDEO_QUALITY, deviceId: { exact: deviceId } }
-      : { ...SCANNER_VIDEO_QUALITY, facingMode: { ideal: "environment" } };
+      : DEFAULT_REAR_CAMERA_CONSTRAINTS;
 
     async function start(constraints: ExtendedConstraints | true, isFallback: boolean) {
       let c: IScannerControls;
       try {
         c = await reader.decodeFromConstraints({ video: constraints }, videoRef.current!, (result) => {
-          if (result && !stopped) {
+          if (result && streamAccepted && !stopped) {
             stopped = true;
             controls?.stop();
             onScanRef.current(result.getText());
@@ -266,13 +325,16 @@ export default function BarcodeScanner({
         controls.stop();
         return;
       }
-      scannerControlsRef.current = c;
-      setTorchAvailable(typeof c.switchTorch === "function");
 
       const stream = videoRef.current?.srcObject as MediaStream | undefined;
       const track = stream?.getVideoTracks()[0];
-      if (!track || typeof track.getCapabilities !== "function") return;
-      trackRef.current = track;
+      if (!track) {
+        streamAccepted = true;
+        scannerControlsRef.current = c;
+        setTorchAvailable(typeof c.switchTorch === "function");
+        setPreviewReady(true);
+        return;
+      }
 
       // Report the granted size rather than assuming WebView honoured the ideal
       // request. This makes device-specific quality problems diagnosable via
@@ -283,27 +345,13 @@ export default function BarcodeScanner({
           (settings.frameRate ? ` @ ${Math.round(settings.frameRate)}fps` : ""),
       );
 
-      let caps: ExtendedCapabilities;
-      try {
-        caps = track.getCapabilities() as ExtendedCapabilities;
-      } catch {
-        caps = {} as ExtendedCapabilities;
-      }
-
-      const advanced: Array<Record<string, unknown>> = [];
-
-      if (caps.focusMode?.includes("continuous")) {
-        advanced.push({ focusMode: "continuous" });
-      } else if (caps.focusMode?.includes("manual") && caps.focusDistance) {
-        const range = {
-          min: caps.focusDistance.min,
-          max: Math.min(caps.focusDistance.max, MAX_USEFUL_FOCUS_METERS),
-          step: caps.focusDistance.step || 0.01,
-        };
-        const initial = Math.min(Math.max(0.1, range.min), range.max);
-        setFocusRange(range);
-        setFocusDistance(initial);
-        advanced.push({ focusMode: "manual", focusDistance: initial });
+      let caps = {} as ExtendedCapabilities;
+      if (typeof track.getCapabilities === "function") {
+        try {
+          caps = track.getCapabilities() as ExtendedCapabilities;
+        } catch {
+          // Capability refinement is optional; the stream itself can still be used.
+        }
       }
 
       // Samsung's fused multi-camera "environment" stream reports a zoom
@@ -313,11 +361,12 @@ export default function BarcodeScanner({
       // real autofocus for close-range barcode reading.
       if (!deviceId && caps.zoom && caps.zoom.min < 1) {
         const zoomTarget = Math.min(Math.max(1, caps.zoom.min), caps.zoom.max);
-        advanced.push({ zoom: zoomTarget });
-      }
-
-      if (advanced.length > 0) {
-        track.applyConstraints({ advanced } as MediaTrackConstraints).catch(() => {});
+        const zoomConstraints: ExtendedConstraints = { advanced: [{ zoom: zoomTarget }] };
+        try {
+          await track.applyConstraints(zoomConstraints as MediaTrackConstraints);
+        } catch {
+          // A failed best-effort zoom must not prevent exact-lens recovery.
+        }
       }
 
       if (cancelled) return;
@@ -342,14 +391,55 @@ export default function BarcodeScanner({
             lensLabelRef.current = "";
           } else {
             writeLensPref({ id: match.deviceId, label: match.label });
-            if (!cancelled && match.deviceId !== trackRef.current?.getSettings().deviceId) {
+            if (!cancelled && match.deviceId !== track.getSettings().deviceId) {
+              // This stream was only the permission/enumeration bootstrap. Do
+              // not expose its preview, controls, or manual-focus range; the
+              // deviceId update restarts directly on the saved physical lens.
               setDeviceId(match.deviceId);
+              return;
             }
           }
         }
       } catch {
         // enumerateDevices failing just means no manual switch button — non-fatal.
       }
+
+      if (cancelled) return;
+
+      // Only now is this the final stream. Lens-specific state (especially the
+      // wide lens's manual-focus slider) must never be committed by the
+      // provisional stream used to recover a re-salted saved deviceId.
+      let acceptedFocusRange: { min: number; max: number; step: number } | null = null;
+      let acceptedFocusDistance = 0.1;
+      const focusConstraints: Array<Record<string, unknown>> = [];
+      if (caps.focusMode?.includes("continuous")) {
+        focusConstraints.push({ focusMode: "continuous" });
+      } else if (caps.focusMode?.includes("manual") && caps.focusDistance) {
+        acceptedFocusRange = {
+          min: caps.focusDistance.min,
+          max: Math.min(caps.focusDistance.max, MAX_USEFUL_FOCUS_METERS),
+          step: caps.focusDistance.step || 0.01,
+        };
+        acceptedFocusDistance = Math.min(Math.max(0.1, acceptedFocusRange.min), acceptedFocusRange.max);
+        focusConstraints.push({ focusMode: "manual", focusDistance: acceptedFocusDistance });
+      }
+
+      if (focusConstraints.length > 0) {
+        try {
+          await track.applyConstraints({ advanced: focusConstraints } as MediaTrackConstraints);
+        } catch {
+          // Some camera drivers advertise controls they do not honour.
+        }
+      }
+
+      if (cancelled) return;
+      streamAccepted = true;
+      scannerControlsRef.current = c;
+      trackRef.current = track;
+      setTorchAvailable(typeof c.switchTorch === "function");
+      setFocusRange(acceptedFocusRange);
+      if (acceptedFocusRange) setFocusDistance(acceptedFocusDistance);
+      setPreviewReady(true);
     }
 
     start(videoConstraints, false);
@@ -423,15 +513,24 @@ export default function BarcodeScanner({
     track.applyConstraints(constraints as MediaTrackConstraints).catch(() => {});
   }
 
+  // The operational scanner remains private until the final physical lens has
+  // been accepted. Camera errors reveal it so their recovery message remains visible.
+  const scannerVisible = previewReady || error !== null;
+
   return (
-    <div className="fixed inset-0 z-[60] bg-black overflow-hidden">
+    <>
+      {!scannerVisible && <ScannerCameraLoading onClose={onClose} />}
+      <div
+        className={`fixed inset-0 z-[60] bg-black overflow-hidden ${scannerVisible ? "opacity-100" : "opacity-0"}`}
+        aria-hidden={!scannerVisible}
+      >
       <div className="absolute inset-0" onClick={handleTap}>
         {/* poster: Android WebView (unlike desktop Chrome) renders a large default
             media placeholder icon before the stream's first frame paints. A blank
             poster suppresses it instead of showing that scaled-up play glyph. */}
         <video
           ref={videoRef}
-          className="absolute inset-0 w-full h-full object-cover"
+          className={`absolute inset-0 w-full h-full object-cover ${previewReady ? "opacity-100" : "opacity-0"}`}
           muted
           playsInline
           autoPlay
@@ -548,6 +647,7 @@ export default function BarcodeScanner({
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }
