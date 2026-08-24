@@ -3,12 +3,14 @@ import fs from "node:fs";
 import path from "node:path";
 import bcrypt from "bcrypt";
 import fastifyCookie from "@fastify/cookie";
+import fastifyFormbody from "@fastify/formbody";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { Issuer, generators, type Client } from "openid-client";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
-import { db } from "./db/index.js";
-import { users } from "./db/schema.js";
+import { eq, lt } from "drizzle-orm";
+import { db, sqlite } from "./db/index.js";
+import { appSessions, users } from "./db/schema.js";
+import { createRemoteBackchannelLogoutVerifier, type BackchannelLogoutClaims } from "./backchannelLogout.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -18,11 +20,6 @@ declare module "fastify" {
 
 const COOKIE_NAME = "mt_session";
 const OIDC_COOKIE_NAME = "mt_oidc";
-// Rolling, and long enough to be "permanent" in practice: any request more
-// than SESSION_REFRESH_AFTER_MS past issue re-signs the cookie with a fresh
-// year, so a device that gets used is never signed out — only logging out or
-// reinstalling ends a session. The 1-year ceiling is deliberate rather than an
-// infinite cookie: a device left untouched still ages out on its own.
 const SESSION_MS = 365 * 24 * 60 * 60 * 1000;
 const SESSION_REFRESH_AFTER_MS = 24 * 60 * 60 * 1000;
 const OIDC_ISSUER = process.env.OIDC_ISSUER?.trim() ?? "";
@@ -36,9 +33,9 @@ const secureCookies = process.env.NODE_ENV === "production";
 // opening this account?", so it is written at most once an hour rather than on
 // every authenticated request.
 const LAST_SEEN_THROTTLE_MS = 60 * 60 * 1000;
+let oidcIssuerPromise: ReturnType<typeof Issuer.discover> | null = null;
 let oidcClientPromise: Promise<Client> | null = null;
-let revokedSessionsPath = "";
-const revokedSessions = new Map<string, number>();
+let backchannelVerifierPromise: Promise<(token: string) => Promise<BackchannelLogoutClaims>> | null = null;
 
 // Distinguished from a generic sign-in failure so the callback can say what
 // actually happened. A blocked person retrying forever because the app told
@@ -60,25 +57,27 @@ async function ensureBootstrapAdmin() {
 
 function loadOrCreateSecret(dataDir: string): string {
   const secretPath = path.join(dataDir, ".cookie-secret");
-  if (fs.existsSync(secretPath)) return fs.readFileSync(secretPath, "utf8").trim();
+  if (fs.existsSync(secretPath)) {
+    fs.chmodSync(secretPath, 0o600);
+    return fs.readFileSync(secretPath, "utf8").trim();
+  }
   const secret = crypto.randomBytes(32).toString("hex");
   fs.writeFileSync(secretPath, secret, { mode: 0o600 });
   return secret;
 }
 
-function signSession(reply: import("fastify").FastifyReply, userId: string) {
-  reply.setCookie(COOKIE_NAME, `${userId}.${Date.now() + SESSION_MS}`, {
+function setSessionCookie(reply: import("fastify").FastifyReply, token: string) {
+  reply.setCookie(COOKIE_NAME, token, {
     path: "/",
     httpOnly: true,
     secure: secureCookies,
     sameSite: "lax",
-    signed: true,
     maxAge: SESSION_MS / 1000,
   });
 }
 
 function clearSession(reply: import("fastify").FastifyReply) {
-  // Keep every attribute aligned with signSession(). Android WebView's cookie
+  // Keep every attribute aligned with setSessionCookie(). Android WebView's cookie
   // store can retain a Secure cookie when the clearing Set-Cookie omits the
   // matching security attributes, making a closed/reopened app appear to
   // silently log itself back in after logout.
@@ -90,97 +89,97 @@ function clearSession(reply: import("fastify").FastifyReply) {
   });
 }
 
-interface SessionPayload {
+interface LiveSession {
   userId: string;
-  expiry: number;
-  fingerprint: string;
+  tokenHash: string;
+  expiresAt: number;
+  refreshedAt: number;
+  oidcSid: string | null;
 }
 
-function sessionFingerprint(raw: string): string {
-  return crypto.createHash("sha256").update(raw).digest("hex");
+function sessionTokenHash(raw: string): string {
+  return crypto.createHash("sha256").update(raw).digest("base64url");
 }
 
-function initializeSessionRevocations(dataDir: string) {
-  revokedSessionsPath = path.join(dataDir, ".revoked-sessions.json");
-  revokedSessions.clear();
-  if (!fs.existsSync(revokedSessionsPath)) return;
-  const stored = JSON.parse(fs.readFileSync(revokedSessionsPath, "utf8")) as Record<string, unknown>;
+async function createSession(reply: import("fastify").FastifyReply, userId: string, oidcSid: string | null = null) {
+  const token = crypto.randomBytes(32).toString("base64url");
   const now = Date.now();
-  for (const [fingerprint, expiry] of Object.entries(stored)) {
-    if (/^[a-f0-9]{64}$/.test(fingerprint) && typeof expiry === "number" && expiry > now) {
-      revokedSessions.set(fingerprint, expiry);
-    }
-  }
+  await db.delete(appSessions).where(lt(appSessions.expiresAt, now));
+  await db.insert(appSessions).values({
+    tokenHash: sessionTokenHash(token),
+    userId,
+    oidcSid,
+    expiresAt: now + SESSION_MS,
+    refreshedAt: now,
+    createdAt: now,
+  });
+  setSessionCookie(reply, token);
 }
 
-function persistSessionRevocations() {
-  if (!revokedSessionsPath) throw new Error("Session revocations are not initialized");
-  const now = Date.now();
-  for (const [fingerprint, expiry] of revokedSessions) {
-    if (expiry <= now) revokedSessions.delete(fingerprint);
-  }
-  const temporaryPath = `${revokedSessionsPath}.tmp`;
-  fs.writeFileSync(temporaryPath, JSON.stringify(Object.fromEntries(revokedSessions)), { mode: 0o600 });
-  fs.renameSync(temporaryPath, revokedSessionsPath);
-}
-
-function decodeSession(req: FastifyRequest): SessionPayload | null {
+async function liveSession(req: FastifyRequest, reply?: import("fastify").FastifyReply): Promise<LiveSession | null> {
   const raw = req.cookies[COOKIE_NAME];
   if (!raw) return null;
-  const unsigned = req.unsignCookie(raw);
-  if (!unsigned.valid || !unsigned.value) return null;
-  const dot = unsigned.value.lastIndexOf(".");
-  if (dot === -1) return null;
-  const userId = unsigned.value.slice(0, dot);
-  const expiry = Number(unsigned.value.slice(dot + 1));
-  if (!userId || !Number.isFinite(expiry) || expiry <= Date.now()) return null;
-  return { userId, expiry, fingerprint: sessionFingerprint(raw) };
+  const tokenHash = sessionTokenHash(raw);
+  const [session] = await db.select().from(appSessions).where(eq(appSessions.tokenHash, tokenHash));
+  if (!session) return null;
+  const now = Date.now();
+  if (session.expiresAt <= now) {
+    await db.delete(appSessions).where(eq(appSessions.tokenHash, tokenHash));
+    return null;
+  }
+  if (now - session.refreshedAt >= SESSION_REFRESH_AFTER_MS) {
+    const expiresAt = now + SESSION_MS;
+    await db.update(appSessions).set({ expiresAt, refreshedAt: now }).where(eq(appSessions.tokenHash, tokenHash));
+    if (reply) setSessionCookie(reply, raw);
+    return { ...session, tokenHash, expiresAt, refreshedAt: now };
+  }
+  return { ...session, tokenHash };
 }
 
-function parseSession(req: FastifyRequest): string | null {
-  return liveSession(req)?.userId ?? null;
+async function revokePresentedSession(req: FastifyRequest) {
+  const token = req.cookies[COOKIE_NAME];
+  if (token) await db.delete(appSessions).where(eq(appSessions.tokenHash, sessionTokenHash(token)));
 }
 
-/** The decoded session, or null if it is expired, revoked, or superseded. */
-function liveSession(req: FastifyRequest): SessionPayload | null {
-  const session = decodeSession(req);
-  if (!session || revokedSessions.has(session.fingerprint)) return null;
-  return session;
+export function revokeUserSessions(userId: string): number {
+  return sqlite.prepare("DELETE FROM app_sessions WHERE user_id = ?").run(userId).changes;
 }
 
-/**
- * A session issued before the account's `sessionsValidAfter` mark is dead
- * regardless of how valid its signature is. Issue time is derived, not stored
- * — the cookie only carries its expiry — so the cookie format is unchanged.
- *
- * This is what makes logout real now that sessions renew indefinitely:
- * clearing a cookie asks the browser to cooperate, and WebViews have been
- * observed restoring one afterwards. Rejecting by issue time needs no
- * cooperation at all.
- */
-function sessionSuperseded(session: SessionPayload, validAfter: string | null | undefined): boolean {
-  if (!validAfter) return false;
-  const cutoff = Date.parse(validAfter);
-  return Number.isFinite(cutoff) && session.expiry - SESSION_MS < cutoff;
+export function revokeOidcSessions(subject?: string, sessionId?: string): number {
+  if (!subject && !sessionId) return 0;
+  return sqlite.prepare(`DELETE FROM app_sessions
+    WHERE (? IS NOT NULL AND oidc_sid = ?)
+       OR (? IS NOT NULL AND user_id IN (SELECT id FROM users WHERE oidc_sub = ?))`)
+    .run(sessionId ?? null, sessionId ?? null, subject ?? null, subject ?? null).changes;
 }
 
-function revokeSession(req: FastifyRequest) {
-  const session = decodeSession(req);
-  if (!session) return;
-  revokedSessions.set(session.fingerprint, session.expiry);
-  persistSessionRevocations();
+function getOidcIssuer() {
+  if (!OIDC_ISSUER) throw new Error("Authentik is not configured");
+  oidcIssuerPromise ??= Issuer.discover(OIDC_ISSUER);
+  return oidcIssuerPromise;
 }
 
 function getOidcClient(): Promise<Client> {
-  if (!OIDC_ISSUER) throw new Error("Authentik is not configured");
   if (!oidcClientPromise) {
-    oidcClientPromise = Issuer.discover(OIDC_ISSUER).then((issuer) => new issuer.Client({
+    oidcClientPromise = getOidcIssuer().then((issuer) => new issuer.Client({
       client_id: OIDC_CLIENT_ID,
       token_endpoint_auth_method: "none",
       response_types: ["code"],
     }));
   }
   return oidcClientPromise;
+}
+
+function getBackchannelVerifier() {
+  if (!backchannelVerifierPromise) {
+    backchannelVerifierPromise = getOidcIssuer().then((issuer) => {
+      if (!issuer.metadata.issuer || !issuer.metadata.jwks_uri) {
+        throw new Error("Authentik discovery did not provide logout verification metadata");
+      }
+      return createRemoteBackchannelLogoutVerifier(issuer.metadata.issuer, OIDC_CLIENT_ID, issuer.metadata.jwks_uri);
+    });
+  }
+  return backchannelVerifierPromise;
 }
 
 function requestOrigin(req: FastifyRequest): string {
@@ -278,8 +277,8 @@ const signupSchema = z.object({
 
 export async function registerAuth(app: FastifyInstance, dataDir: string) {
   const secret = process.env.COOKIE_SECRET ?? loadOrCreateSecret(dataDir);
-  initializeSessionRevocations(dataDir);
   await app.register(fastifyCookie, { secret });
+  await app.register(fastifyFormbody);
   app.decorateRequest("userId", undefined);
   await ensureBootstrapAdmin();
 
@@ -332,8 +331,9 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
         nonce: transaction.nonce,
         code_verifier: transaction.codeVerifier,
       });
-      const user = await userForOidcClaims(tokens.claims());
-      signSession(reply, user.id);
+      const claims = tokens.claims();
+      const user = await userForOidcClaims(claims);
+      await createSession(reply, user.id, typeof claims.sid === "string" ? claims.sid : null);
       return reply.redirect("/");
     } catch (error) {
       if (error instanceof AccountBlockedError) {
@@ -356,7 +356,7 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
     const passwordHash = await bcrypt.hash(password, 10);
     const role = (await db.select({ id: users.id }).from(users)).length === 0 ? "admin" : "member";
     await db.insert(users).values({ id, name, passwordHash, role, createdAt: new Date().toISOString() });
-    signSession(reply, id);
+    await createSession(reply, id);
     return reply.code(201).send({ ok: true, user: { id, name, role } });
   });
 
@@ -367,7 +367,7 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
     const allUsers = await db.select().from(users);
     for (const user of allUsers) {
       if (await bcrypt.compare(body.password, user.passwordHash)) {
-        signSession(reply, user.id);
+        await createSession(reply, user.id);
         return { ok: true, user: publicUser(user) };
       }
     }
@@ -375,28 +375,30 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
   });
 
   app.post("/api/auth/logout", async (req, reply) => {
-    // Sessions renew indefinitely now, so a logout the browser can quietly
-    // undo is not a logout. Revoking this exact cookie still happens, but the
-    // account is also stamped, which kills every session it ever issued and
-    // needs no cooperation from the client.
-    //
-    // Deliberate change of behaviour (2026-08-16): this signs the account out
-    // on ALL devices, where it previously left others alone. Consistent with
-    // every other app here, and it is the lever you want for a lost phone.
-    const session = liveSession(req);
-    revokeSession(req);
-    if (session) {
-      await db.update(users).set({ sessionsValidAfter: new Date().toISOString() }).where(eq(users.id, session.userId));
-    }
+    // Delete only the presented server-side session. Administrative account
+    // or Authentik revocation uses the separate subject/session-aware paths.
+    await revokePresentedSession(req);
     clearSession(reply);
     return { ok: true };
   });
 
-  app.get("/api/auth/status", async (req) => {
-    const session = liveSession(req);
+  app.post<{ Body: { logout_token?: unknown } }>("/api/auth/backchannel-logout", async (req, reply) => {
+    if (typeof req.body?.logout_token !== "string" || !req.body.logout_token) {
+      return reply.code(400).send({ error: "Invalid logout token" });
+    }
+    try {
+      const claims = await (await getBackchannelVerifier())(req.body.logout_token);
+      return { ok: true, revoked: revokeOidcSessions(claims.subject, claims.sessionId) };
+    } catch (error) {
+      req.log.warn({ err: error }, "Rejected invalid Authentik back-channel logout token");
+      return reply.code(400).send({ error: "Invalid logout token" });
+    }
+  });
+
+  app.get("/api/auth/status", async (req, reply) => {
+    const session = await liveSession(req, reply);
     if (!session) return { authenticated: false };
     const [user] = await db.select().from(users).where(eq(users.id, session.userId));
-    if (user && sessionSuperseded(session, user.sessionsValidAfter)) return { authenticated: false };
     // A deleted or blocked account reports as signed out rather than as an
     // error, so the client falls through to its normal login screen instead
     // of sitting on a broken session it cannot explain.
@@ -414,28 +416,25 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
       // /api/integrations/tokens management routes are NOT exempt.
       || url === "/api/integrations/recipe-log"
       || url === "/api/integrations/recipe-log/ping") return;
-    const session = liveSession(req);
+    const session = await liveSession(req, reply);
     if (!session) {
       reply.code(401).send({ error: "Not authenticated" });
       return;
     }
     const userId = session.userId;
-    // The session cookie is self-contained and long-lived, so proving
-    // it is authentic is not the same as proving the account still exists or
-    // is still allowed in. Without this lookup, deleting or blocking someone
-    // leaves every route but /auth/status happily serving their stale cookie
-    // until it expires. A primary-key read on better-sqlite3 is measured in
-    // microseconds — cheap enough that caching it would only add staleness.
+    // The session row proves the bearer token is live; this separate lookup
+    // also enforces account deletion and local administrator blocking on every
+    // request. A primary-key read on better-sqlite3 is cheap enough that
+    // caching it would only add staleness.
     const [user] = await db
       .select({
         id: users.id,
         disabledAt: users.disabledAt,
         lastSeenAt: users.lastSeenAt,
-        sessionsValidAfter: users.sessionsValidAfter,
       })
       .from(users)
       .where(eq(users.id, userId));
-    if (!user || sessionSuperseded(session, user.sessionsValidAfter)) {
+    if (!user) {
       reply.code(401).send({ error: "Not authenticated" });
       return;
     }
@@ -443,10 +442,6 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
       reply.code(403).send({ error: "This account has been blocked" });
       return;
     }
-
-    // Rolling renewal, gated on elapsed time rather than done every request so
-    // a Set-Cookie isn't appended to every photo and chart response.
-    if (Date.now() - (session.expiry - SESSION_MS) > SESSION_REFRESH_AFTER_MS) signSession(reply, userId);
 
     const lastSeen = user.lastSeenAt ? Date.parse(user.lastSeenAt) : Number.NaN;
     if (!Number.isFinite(lastSeen) || Date.now() - lastSeen > LAST_SEEN_THROTTLE_MS) {

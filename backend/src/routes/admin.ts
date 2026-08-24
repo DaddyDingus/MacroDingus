@@ -5,6 +5,7 @@ import { db } from "../db/index.js";
 import { logs, photos, users, weights } from "../db/schema.js";
 import { createServerBackup } from "../lib/serverBackups.js";
 import { purgeUserData } from "../lib/userData.js";
+import { revokeUserSessions } from "../auth.js";
 
 const accessSchema = z.object({ disabled: z.boolean() });
 
@@ -89,6 +90,7 @@ export function registerAdminRoutes(app: FastifyInstance, dataDir: string) {
       .update(users)
       .set({ disabledAt: parsed.data.disabled ? new Date().toISOString() : null })
       .where(eq(users.id, id));
+    if (parsed.data.disabled) revokeUserSessions(id);
     return { ok: true };
   });
 

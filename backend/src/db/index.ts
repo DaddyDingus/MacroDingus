@@ -11,6 +11,8 @@ const dbPath = path.join(DATA_DIR, "macrotrack.sqlite");
 
 export const sqlite = new Database(dbPath);
 sqlite.pragma("journal_mode = WAL");
+sqlite.pragma("synchronous = NORMAL");
+sqlite.pragma("busy_timeout = 5000");
 sqlite.pragma("foreign_keys = ON");
 
 export const db = drizzle(sqlite, { schema });

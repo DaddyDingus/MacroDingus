@@ -1,0 +1,18 @@
+{
+  "kind": "mobile-pwa",
+  "version": 2,
+  "specification": "/home/daddydingus/stacks/daddysvibe/docs/MOBILE_APP_FOUNDATION.md",
+  "verifiedAt": "2026-08-24",
+  "intentionalDeviations": [
+    {
+      "requirement": "private-tailnet-reachability",
+      "implementation": "Retain the existing Tailscale Serve configuration with AllowFunnel=true while Authentik protects application access.",
+      "reason": "This preserves the household's established off-Tailnet install and access path; changing reachability requires an explicit household decision."
+    },
+    {
+      "requirement": "focused-and-full-tests",
+      "implementation": "Use disposable production-image integration checks, cryptographic cases, package builds, signed Android build, real Authentik dispatch, and live verification.",
+      "reason": "MacroDaddy has no existing test or lint suite, and its canonical repository instructions prohibit inventing one as part of unrelated work."
+    }
+  ]
+}

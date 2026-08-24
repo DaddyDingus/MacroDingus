@@ -19,12 +19,29 @@ export const users = sqliteTable("users", {
   // auth.ts). Deliberately distinct from "last logged food": it answers "is
   // anyone still opening this account?" for an account that never logs.
   lastSeenAt: text("last_seen_at"),
-  // Sessions are rolling and effectively permanent (auth.ts), so logout can't
-  // rely on the browser dropping a cookie — WebViews have been seen restoring
-  // one. Any session issued before this instant is refused.
+  // Retained for forward compatibility with migration 0038. Foundation v2
+  // sessions are individually revocable rows in app_sessions; this legacy
+  // all-device cutoff remains nullable and is no longer written.
   sessionsValidAfter: text("sessions_valid_after"),
   createdAt: text("created_at").notNull(),
 });
+
+// Browser cookies carry only a random bearer token. Its one-way SHA-256 hash
+// is the lookup key here, so a database disclosure does not reveal a usable
+// session cookie. Authentik's OIDC session ID enables targeted administrative
+// back-channel logout; immutable subject revocation joins through users.
+export const appSessions = sqliteTable("app_sessions", {
+  tokenHash: text("token_hash").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  oidcSid: text("oidc_sid"),
+  expiresAt: integer("expires_at").notNull(),
+  refreshedAt: integer("refreshed_at").notNull(),
+  createdAt: integer("created_at").notNull(),
+}, (table) => ({
+  expiryIdx: index("app_sessions_expiry_idx").on(table.expiresAt),
+  oidcSidIdx: index("app_sessions_oidc_sid_idx").on(table.oidcSid),
+  userIdx: index("app_sessions_user_idx").on(table.userId),
+}));
 
 // Nutrient fields that appear on essentially every real-world label live as
 // first-class columns since Phase 1 UI and Phase 6 analytics both need to

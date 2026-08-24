@@ -140,6 +140,19 @@ class MainActivity : ComponentActivity() {
                     return true
                 }
             }
+            // WebView does not download attachment responses on its own. Hand
+            // HTTPS downloads to the system handler (normally the browser or
+            // package installer), which provides a visible, user-controlled
+            // download flow without granting arbitrary file access here.
+            setDownloadListener { url, _, _, _, _ ->
+                val uri = runCatching { Uri.parse(url) }.getOrNull()
+                if (uri?.scheme != "https") {
+                    showUpdateError("MacroDaddy blocked an unsafe download link.")
+                    return@setDownloadListener
+                }
+                runCatching { startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+                    .onFailure { showUpdateError("Android couldn't open that download.") }
+            }
             loadUrl(APP_ORIGIN)
         }
 
