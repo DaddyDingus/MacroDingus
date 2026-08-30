@@ -56,6 +56,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(readStoredTheme);
 
   useEffect(() => {
+    if (window.MacroTrackAndroid?.isNativeApp?.()) document.documentElement.dataset.nativeApp = "true";
     document.documentElement.dataset.theme = theme;
     document.querySelector('meta[name="theme-color"]')?.setAttribute("content", THEME_COLOR[theme]);
     // The Android shell can't read meta theme-color — it paints the status/nav

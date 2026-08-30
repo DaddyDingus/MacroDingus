@@ -1,0 +1,24 @@
+{
+  "foundationVersion": 8,
+  "appName": "MacroDaddy",
+  "slug": "macrodaddy",
+  "origin": "https://macrodaddy.tail984e80.ts.net",
+  "android": {
+    "releaseManifest": "android/release.json",
+    "stateFile": "android/.release-state.json",
+    "gradleFile": "android/app/build.gradle.kts",
+    "gradle": "./android/gradlew",
+    "artifact": "android/app/build/outputs/apk/release/app-release.apk",
+    "keystore": "android/macrotrack-release.jks",
+    "passwordFile": "android/.signing-password",
+    "keyAlias": "macrotrack",
+    "inputPaths": ["android/app/src", "android/app/build.gradle.kts", "android/build.gradle.kts", "frontend/public"],
+    "publishCopies": []
+  },
+  "data": { "databasePath": "data/macrotrack.sqlite", "backupDir": "foundation-backups", "retention": 14 },
+  "live": { "healthPath": "/api/health", "versionPath": "/api/android/version", "versionEnvelope": [] },
+  "publish": {
+    "checkCommands": [["npm", "run", "build", "--prefix", "frontend"], ["docker", "compose", "build", "macrotrack"]],
+    "deployCommands": [["docker", "compose", "up", "-d", "macrodaddy-tailscale"], ["docker", "compose", "up", "-d", "--force-recreate", "macrotrack"]]
+  }
+}

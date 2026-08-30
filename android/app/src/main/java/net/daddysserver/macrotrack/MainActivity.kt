@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -29,9 +30,11 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.core.graphics.ColorUtils
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import java.io.File
 import android.util.Base64
 import java.security.MessageDigest
@@ -51,6 +54,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var webView: WebView
     private lateinit var rootContainer: FrameLayout
+    private var currentSystemBarColor = Color.BLACK
     private val downloadManager by lazy { getSystemService(DownloadManager::class.java) }
     private var awaitingInstallPermission = false
     private var pendingWebPermission: PermissionRequest? = null
@@ -99,8 +103,9 @@ class MainActivity : ComponentActivity() {
         // One UI was observed reporting a top inset shorter than the real
         // cutout, so the WebView's manual padding below undershot it.
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = Color.BLACK
         window.attributes = window.attributes.apply {
-            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
         }
 
         ContextCompat.registerReceiver(
@@ -378,6 +383,39 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
+    private fun applySystemBarColor(color: Int) {
+        currentSystemBarColor = color
+        if (::rootContainer.isInitialized) rootContainer.setBackgroundColor(color)
+        window.statusBarColor = color
+        WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars =
+            ColorUtils.calculateLuminance(color) > 0.5
+    }
+
+    private fun setSystemBarColor(value: String) {
+        val target = runCatching { Color.parseColor(value) }.getOrNull() ?: return
+        applySystemBarColor(target)
+    }
+
+    private fun setSystemBarColorFromBridge(value: String) {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            setSystemBarColor(value)
+            return
+        }
+        val applied = java.util.concurrent.CountDownLatch(1)
+        runOnUiThread {
+            try {
+                setSystemBarColor(value)
+            } finally {
+                applied.countDown()
+            }
+        }
+        try {
+            applied.await()
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+    }
+
     inner class NativeBridge {
         @JavascriptInterface fun getVersionName(): String = BuildConfig.VERSION_NAME
         @JavascriptInterface fun openUpdate(url: String) = runOnUiThread { startNativeUpdate(url) }
@@ -386,10 +424,6 @@ class MainActivity : ComponentActivity() {
         // Called by the web app whenever its theme changes (and on load), so the
         // status/navigation bar strips match the page instead of a fixed black.
         @JavascriptInterface
-        fun setThemeColor(color: String) = runOnUiThread {
-            val parsed = runCatching { android.graphics.Color.parseColor(color) }.getOrNull() ?: return@runOnUiThread
-            rootContainer.setBackgroundColor(parsed)
-            webView.setBackgroundColor(parsed)
-        }
+        fun setThemeColor(color: String) = setSystemBarColorFromBridge(color)
     }
 }

@@ -1,6 +1,8 @@
 # MacroDaddy deployment and recovery
 
-MacroDaddy adopts DaddysVibe Mobile App Foundation v2. Its PWA and Android WebView use the same live Fastify deployment at `https://macrodaddy.tail984e80.ts.net`.
+MacroDaddy adopts DaddysVibe Mobile App Foundation v8. Its PWA and Android WebView use the same live Fastify deployment at `https://macrodaddy.tail984e80.ts.net`.
+
+This checklist is agent-owned. At the beginning of every task, inspect `.daddysvibe/setup.json` and automatically finish every available pending step. Ask the owner only for an unavailable credential, permission, off-server signing backup destination, or real-device confirmation. Use `npm run publish` for every user-facing release; never manually copy an APK into the runtime image.
 
 ## Protected identity and secrets
 

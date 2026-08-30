@@ -11,6 +11,48 @@
 @tailwind utilities;
 
 @layer components {
+  .app-pull-refresh {
+    position: fixed;
+    z-index: 30;
+    top: max(8px, env(safe-area-inset-top, 0px));
+    left: 50%;
+    display: grid;
+    grid-template-columns: auto auto;
+    align-items: center;
+    gap: 7px;
+    max-width: min(calc(100% - 24px), 430px);
+    min-height: 32px;
+    padding: 5px 9px;
+    overflow: hidden;
+    border: 1px solid rgb(var(--color-divider));
+    border-radius: 10px;
+    background: rgb(var(--color-card-raised) / .96);
+    color: #8a8f98;
+    box-shadow: 0 14px 40px rgb(0 0 0 / .5);
+    font-size: .6875rem;
+    font-weight: 650;
+    white-space: nowrap;
+    pointer-events: none;
+    will-change: transform;
+  }
+
+  :root[data-native-app="true"] .app-pull-refresh { top: 8px; }
+  .app-pull-refresh__icon { display: grid; width: 20px; height: 20px; place-items: center; border-radius: 6px; background: rgb(216 150 255 / .13); color: #d896ff; }
+  .app-pull-refresh.phase-pulling .app-pull-refresh__icon svg,
+  .app-pull-refresh.phase-armed .app-pull-refresh__icon svg { transform: rotate(var(--pull-refresh-turn)); }
+  .app-pull-refresh.phase-armed { color: #ecedee; border-color: rgb(216 150 255 / .48); }
+  .app-pull-refresh.phase-refreshing .app-pull-refresh__icon svg { animation: app-pull-refresh-spin .75s linear infinite; }
+  .app-pull-refresh.phase-error { color: #ef6969; border-color: rgb(239 105 105 / .48); white-space: normal; }
+  .app-pull-refresh.phase-error .app-pull-refresh__icon { color: #ef6969; background: rgb(239 105 105 / .13); }
+  .app-pull-refresh__progress { position: absolute; right: 0; bottom: 0; left: 0; display: block; width: 100%; height: 2px; overflow: hidden; background: rgb(var(--color-divider)); }
+  .app-pull-refresh__progress b { display: block; height: 100%; background: #d896ff; }
+  @keyframes app-pull-refresh-spin { to { transform: rotate(360deg); } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .app-pull-refresh { transform: translate3d(-50%, 0, 0) !important; transition: none !important; will-change: auto; }
+    .app-pull-refresh .app-pull-refresh__icon svg { animation: none !important; transform: none !important; }
+  }
+
   /* Shared top geometry for Plate Preview and Food Detail. The native WebView
      is already inset by Android system chrome, so it gets the field-tuned
      placement that previously lived as three unrelated Tailwind offsets in
@@ -347,6 +389,19 @@
     opacity: 0.7;
     transform: none;
   }
+}
+
+.android-update-dot,
+.android-update-waiting {
+  display: none;
+}
+
+:root[data-android-update="ready"] .android-update-dot {
+  display: block;
+}
+
+:root[data-android-update="ready"] .android-update-waiting {
+  display: inline;
 }
 
 /* CheckInFlow's headline reveal — the check-in's Calorie delta is dropped

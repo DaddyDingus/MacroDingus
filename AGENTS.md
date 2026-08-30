@@ -1,5 +1,9 @@
 # MacroDaddy agent guide
 
+## Automatic Foundation v8 workflow
+
+At the beginning of every task, inspect `.daddysvibe/setup.json` and automatically complete all available work in `SETUP.md`. For every user-facing change run `npm run publish`; it owns native/icon change detection, APK versioning and permanent signing, required builds and checks, a verified SQLite backup, forced container recreation, health waiting, and exact live APK verification. Never hand-edit an APK version outside `android/release.json` or manually copy a stale APK into the image.
+
 This is the canonical operational guide for agents working in this repository.
 
 ## What this is
@@ -14,9 +18,9 @@ Keep historical internal `macrotrack` package, signing, database, export,
 storage, and Docker identifiers unchanged so existing installs and data upgrade
 in place. The repository directory itself is `stacks/macrodaddy`.
 
-## DaddysVibe Mobile App Foundation v2
+## DaddysVibe Mobile App Foundation v8
 
-MacroDaddy implements version 2 of
+MacroDaddy implements version 8 of
 `/home/daddydingus/stacks/daddysvibe/docs/MOBILE_APP_FOUNDATION.md`; the verified
 adoption record is `FOUNDATION.md`. Do not update
 `.daddysvibe/foundation.json` merely because a migration was requested: the
@@ -104,7 +108,8 @@ bar bottom and the app's own CSS header padding supplies the visual gap — a
 buffer here is additive with that CSS and visibly overshoots. `env(safe-area-inset-top)`
 is `0px` in this WebView, so CSS cannot do this job. Also note the app renders
 edge-to-edge only because `onCreate` sets `setDecorFitsSystemWindows(false)` +
-`LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES`.
+`LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS`; the padded wrapper paints the reserved
+status strip so page content never appears behind the system icons.
 
 **Barcode scanner camera constraints**: request `facingMode: { ideal: "environment" }`,
 never the bare string — Android WebView's Chromium resolves a bare value as

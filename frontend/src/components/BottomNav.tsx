@@ -36,6 +36,9 @@ function Tab({ to, label, icon: Icon, attention = false }: { to: string; label: 
                 style={{ background: "#D95926" }}
               />
             )}
+            {to === "/more" && (
+              <span aria-hidden="true" className="android-update-dot absolute -right-1 -top-0.5 w-2 h-2 rounded-full bg-accent ring-2 ring-dashboardBg" />
+            )}
           </span>
           <span className="text-[10px] font-medium leading-none mt-0.5">{label}</span>
         </>

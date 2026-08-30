@@ -7,6 +7,24 @@ import { get, set, del } from "idb-keyval";
 import App from "./App";
 import "./index.css";
 
+// Barcode scanning is a core quick action, but its decoder is intentionally a
+// separate ~400kB chunk. Load/parse it and enumerate camera labels once the
+// initial UI is idle, so a cold Scan tap normally has only the physical camera
+// startup left to wait for. enumerateDevices does not activate the camera.
+function prewarmBarcodeScanner() {
+  void import("./components/BarcodeScanner")
+    .then((module) => module.prewarmBarcodeCamera())
+    .catch(() => {
+      // Speculative only; the scanner's normal mount remains the retry path.
+    });
+}
+
+if ("requestIdleCallback" in window) {
+  window.requestIdleCallback(prewarmBarcodeScanner, { timeout: 2500 });
+} else {
+  globalThis.setTimeout(prewarmBarcodeScanner, 1000);
+}
+
 // Without this, the browser's own native scroll restoration on back/forward
 // navigation runs *in addition to* (and racing against) the app's own
 // explicit window.scrollTo calls (see App.tsx's AppRoutes and

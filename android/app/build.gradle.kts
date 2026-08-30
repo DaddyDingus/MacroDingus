@@ -1,3 +1,5 @@
+import groovy.json.JsonSlurper
+
 plugins {
     id("com.android.application")
 }
@@ -8,6 +10,9 @@ require(releaseKeystore.isFile && releasePasswordFile.isFile) {
     "Missing permanent MacroTrack signing files; restore android/macrotrack-release.jks and android/.signing-password from backup."
 }
 val releasePassword = releasePasswordFile.readText().trim()
+val releaseMetadata = JsonSlurper().parseText(rootProject.file("release.json").readText()) as Map<*, *>
+val releaseVersionCode = (releaseMetadata["versionCode"] as Number).toInt()
+val releaseVersionName = releaseMetadata["versionName"] as String
 
 android {
     namespace = "net.daddysserver.macrotrack"
@@ -21,8 +26,8 @@ android {
         applicationId = "net.daddysserver.macrotrack"
         minSdk = 26
         targetSdk = 36
-        versionCode = 13
-        versionName = "1.12"
+        versionCode = releaseVersionCode
+        versionName = releaseVersionName
     }
 
     signingConfigs {

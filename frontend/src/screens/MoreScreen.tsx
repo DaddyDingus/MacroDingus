@@ -469,7 +469,10 @@ export default function MoreScreen() {
                 <Download size={14} strokeWidth={2} className="text-muted" />
                 Check for app update
               </span>
-              <span className="text-xs text-muted">v{window.MacroTrackAndroid.getVersionName()}</span>
+              <span className="text-xs text-muted">
+                <span className="android-update-waiting mr-2 font-semibold text-accent">Update waiting</span>
+                v{window.MacroTrackAndroid.getVersionName()}
+              </span>
             </button>
           </section>
         )}

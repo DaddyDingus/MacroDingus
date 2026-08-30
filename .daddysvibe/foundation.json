@@ -1,8 +1,8 @@
 {
   "kind": "mobile-pwa",
-  "version": 2,
+  "version": 8,
   "specification": "/home/daddydingus/stacks/daddysvibe/docs/MOBILE_APP_FOUNDATION.md",
-  "verifiedAt": "2026-08-24",
+  "verifiedAt": "2026-08-26",
   "intentionalDeviations": [
     {
       "requirement": "private-tailnet-reachability",

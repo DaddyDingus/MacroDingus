@@ -31,10 +31,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 3000);
 const STATIC_DIR = path.join(__dirname, "..", "public");
 const DATA_DIR = process.env.DATA_DIR ?? path.join(__dirname, "..", "..", "data");
-const ANDROID_RELEASE = {
-  versionCode: 13,
-  versionName: "1.12",
-  downloadUrl: "/api/android/apk?v=1.12",
+const ANDROID_RELEASE_PATH = process.env.ANDROID_RELEASE_PATH ?? path.join(STATIC_DIR, "android-release.json");
+const androidRelease = () => {
+  const release = JSON.parse(fs.readFileSync(ANDROID_RELEASE_PATH, "utf8")) as { versionCode: number; versionName: string };
+  return { ...release, published: true, downloadUrl: `/api/android/apk?v=${encodeURIComponent(release.versionName)}` };
 };
 const HEALTH_CONNECT_RELEASE = {
   versionCode: 10915,
@@ -49,6 +49,17 @@ configureAiProviderStore(DATA_DIR);
 runMigrations();
 
 const app = Fastify({ logger: true });
+app.addHook("onSend", async (_request, reply) => {
+  reply.header("content-security-policy", "default-src 'self'; base-uri 'self'; connect-src 'self' https: wss:; font-src 'self' data:; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob: https:; manifest-src 'self'; media-src 'self' blob: https:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'");
+  reply.header("strict-transport-security", "max-age=31536000; includeSubDomains");
+  // Barcode scanning needs the camera in this top-level origin (including the
+  // Android WebView shell). `camera=()` rejects getUserMedia before
+  // WebChromeClient can even ask for Android's runtime permission.
+  reply.header("permissions-policy", "camera=(self), geolocation=(), microphone=(), payment=(), usb=()");
+  reply.header("referrer-policy", "no-referrer");
+  reply.header("x-content-type-options", "nosniff");
+  reply.header("x-frame-options", "DENY");
+});
 startAutomaticServerBackups(DATA_DIR, app.log);
 
 await registerAuth(app, DATA_DIR);
@@ -92,7 +103,11 @@ await app.register(fastifyStatic, {
   // deterministic manual fix regardless of root cause.
   setHeaders: (reply, filePath) => {
     const name = path.basename(filePath);
-    if (name === "sw.js" || name === "registerSW.js" || name === "manifest.webmanifest" || name === "index.html") {
+    if (name === "macrotrack.apk" || name === "health-connect-webhook.apk") {
+      reply.header("Cache-Control", "no-store, no-cache, must-revalidate, private");
+      reply.header("Pragma", "no-cache");
+      reply.header("Expires", "0");
+    } else if (name === "sw.js" || name === "registerSW.js" || name === "manifest.webmanifest" || name === "index.html") {
       reply.header("Cache-Control", "no-cache");
     }
   },
@@ -100,11 +115,12 @@ await app.register(fastifyStatic, {
 
 app.get("/api/android/version", async (_req, reply) => {
   reply.header("cache-control", "no-store");
-  return ANDROID_RELEASE;
+  return androidRelease();
 });
 
 app.get("/api/android/apk", async (_req, reply) => {
-  reply.header("content-disposition", `attachment; filename="MacroDaddy-v${ANDROID_RELEASE.versionName}.apk"`);
+  const release = androidRelease();
+  reply.header("content-disposition", `attachment; filename="MacroDaddy-v${release.versionName}.apk"`);
   reply.header("cache-control", "no-store, no-cache, must-revalidate, private");
   reply.header("pragma", "no-cache");
   reply.header("expires", "0");

@@ -1,0 +1,12 @@
+{
+  "name": "macrodaddy-foundation",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "foundation:verify": "node ../daddysvibe/scripts/app-foundation.mjs verify",
+    "android:release": "node ../daddysvibe/scripts/app-foundation.mjs android-release",
+    "publish": "node ../daddysvibe/scripts/app-foundation.mjs publish",
+    "data:backup": "node ../daddysvibe/scripts/app-foundation.mjs backup",
+    "data:restore": "node ../daddysvibe/scripts/app-foundation.mjs restore"
+  }
+}

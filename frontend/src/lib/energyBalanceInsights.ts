@@ -20,13 +20,16 @@ export interface DailyBalancePoint {
 // means unreported" rule the rest of this app follows.
 export function buildDailyBalance(
   history: { date: string; calories: number; logged: boolean; incomplete: boolean }[],
-  compareValueForDate: (date: string) => number | null
+  compareValueForDate: (date: string) => number | null,
+  inProgressDate?: string
 ): DailyBalancePoint[] {
   const points: DailyBalancePoint[] = [];
   for (const d of history) {
     // A dense history gap means "not logged", not "ate nothing". Including
     // it would fabricate a full-day deficit equal to expenditure/target.
-    if (!d.logged || d.incomplete) continue;
+    // Today's intake is a running total, not a completed daily value, so it
+    // cannot contribute to a chart or average of daily energy balance.
+    if (!d.logged || d.incomplete || d.date === inProgressDate) continue;
     const compare = compareValueForDate(d.date);
     if (compare === null) continue;
     points.push({ date: d.date, calories: d.calories, compare, balance: d.calories - compare });
@@ -35,8 +38,8 @@ export function buildDailyBalance(
 }
 
 // Trailing-window average daily balance, anchored to the latest point in
-// `points` (logs history is dense/zero-filled through today, so that's
-// always "today"). Used both for the range-scoped summary stat (windowDays
+// `points` (the Energy Balance screen excludes today's partial entry, so this
+// is normally the most recent completed day). Used both for the range-scoped summary stat (windowDays
 // = whatever the range toggle picked) and the fixed 3/7/14/30/90-day
 // Insights card — same math, different window.
 export function averageBalanceOverDays(points: DailyBalancePoint[], windowDays: number): number | null {

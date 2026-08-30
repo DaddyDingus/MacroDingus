@@ -64,7 +64,11 @@ export default function EnergyBalanceDetailScreen() {
     tab === "expenditure"
       ? (date: string) => activeCheckinForDate(checkinsAsc, date)?.tdee ?? null
       : (date: string) => targetsForDate(programList, date)?.calories ?? null;
-  const allBalance = buildDailyBalance(fullHistory.data ?? [], compareValueForDate);
+  // Today is still in progress, so its running intake is not a daily energy
+  // balance. Keeping it out here means the chart, every trailing insight,
+  // and the history list all use completed days only.
+  const today = localDateString();
+  const allBalance = buildDailyBalance(fullHistory.data ?? [], compareValueForDate, today);
 
   const earliestTs = useMemo(
     () => (allBalance.length ? dayIndex(allBalance[0].date) : dayIndex(localDateString())),
@@ -84,7 +88,6 @@ export default function EnergyBalanceDetailScreen() {
 
   const chartData = chartBalance.map((p) => ({ date: p.date, calories: p.calories, compare: p.compare }));
 
-  const today = localDateString();
   const monthGroups = new Map<string, { label: string; entries: typeof allBalance }>();
   [...allBalance].forEach((p) => {
     const key = p.date.slice(0, 7);

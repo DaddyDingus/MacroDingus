@@ -27,7 +27,7 @@ import { scaleNutrition, sumNutrition, subtractNutrition } from "../lib/nutritio
 import { localTimeString, localIsoNoTz, formatLogTime, loggedAtTimeString, buildLoggedAt, formatDayLabel } from "../lib/date";
 import { usePlateState, type PlateItem } from "../lib/quickAddPlate";
 import { useEnergyUnit, kcalToUnit, unitToKcal, energyUnitLabel, formatEnergy, type EnergyUnit } from "../lib/energyUnit";
-import { useVisualViewportMetrics } from "../lib/useVisualViewportMetrics";
+import { useVisualViewportMetrics, type VisualViewportMetrics } from "../lib/useVisualViewportMetrics";
 import { useBackDismissDepth } from "../lib/useBackDismiss";
 import { lockBodyScroll, unlockBodyScroll } from "../lib/bodyScrollLock";
 import FoodIconAvatar from "./FoodIconAvatar";
@@ -46,10 +46,21 @@ import { foodMeasures } from "../lib/foodMeasures";
 import DecimalInput from "./DecimalInput";
 import SwipeToDeleteRow from "./SwipeToDeleteRow";
 
-// zxing's decoder is ~400kB and only ever needed for the occasional barcode
-// scan, not the everyday search-and-log path — split it into its own chunk
-// so it doesn't weigh down the initial load.
-const BarcodeScanner = lazy(() => import("./BarcodeScanner"));
+// Keep the decoder out of the initial app bundle, but begin loading/parsing it
+// as soon as Add Food opens. In the usual browse-then-scan path this overlaps
+// the otherwise cold ~400kB scanner chunk with the time spent in Plate View
+// instead of putting that work after the Scan tap.
+const loadBarcodeScanner = () => import("./BarcodeScanner");
+const BarcodeScanner = lazy(loadBarcodeScanner);
+
+function prewarmBarcodeScanner() {
+  void loadBarcodeScanner()
+    .then((module) => module.prewarmBarcodeCamera())
+    .catch(() => {
+      // Lazy rendering still owns the visible error/retry path if preloading
+      // fails; speculative warm-up should never disrupt Add Food itself.
+    });
+}
 
 type Step = "browse" | "create" | "scan" | "recipe" | "recipeChoice" | "recipeImportUrl" | "recipeImportPhoto" | "detail";
 // Where a hardware/gesture back press from each sub-step should land — reads
@@ -233,6 +244,10 @@ export default function AddFoodSheet({
   commitLabel?: string;
 }) {
   const [step, setStep] = useState<Step>("browse");
+
+  useEffect(() => {
+    if (open) prewarmBarcodeScanner();
+  }, [open]);
   // Mirrors `step` so requestClose (handed to useBackDismiss) always reads
   // the current value — see requestClose's own comment.
   const stepRef = useRef<Step>(step);
@@ -364,20 +379,102 @@ export default function AddFoodSheet({
   // explicit entry path, so it focuses consistently with the other search
   // buttons. Consumed (and cleared) by the effect below once the search tab's
   // input has actually mounted.
-  const [pendingSearchFocus, setPendingSearchFocus] = useState(false);
+  const [pendingSearchFocus, setPendingSearchFocus] = useState<"open" | "return" | null>(null);
+  // Lock in layout phase, before the viewport hook's own layout listener and
+  // resting-offset capture below. This modal is portaled rather than built on
+  // BottomSheet, so it owns this lock itself; otherwise drags in its internal
+  // lists can chain into the page's rubber-band scroll. Doing it before paint
+  // also makes a QuickActionsSheet -> AddFoodSheet swap atomic. The incoming
+  // lock raises the shared ref count before the outgoing BottomSheet's passive
+  // cleanup, preventing a transient unlock/window.scrollTo/relock cycle from
+  // changing visualViewport geometry under the Search shortcut's autofocus.
+  useLayoutEffect(() => {
+    if (!open) return;
+    lockBodyScroll();
+    return unlockBodyScroll;
+  }, [open]);
   // Real visual-viewport metrics (not vh/%) so the full-screen modal and the
   // sheet-height math below stay correct as iOS Safari's on-screen keyboard
   // opens/closes — see the shared hook's own comment for why vh doesn't work
   // here. This component used to get this for free from BottomSheet; now
   // that Layer 1/Layer 2 need their own geometry, it's read directly.
   const { height: viewportHeight, offsetTop: viewportOffsetTop } = useVisualViewportMetrics();
+  const isNativeApp = window.MacroTrackAndroid?.isNativeApp?.() === true;
   // The native shell already lays the WebView out inside Android's status-bar
   // inset, and fixed elements are relative to that visible WebView. Chromium
   // nevertheless reports the same inset again as visualViewport.offsetTop;
   // applying it here double-counts the top inset (84 physical px on the S24+)
-  // and shifts BrowseHeader/FoodDetailScreen below TodayScreen's header. Web
-  // Safari still needs the real offset while its keyboard pans the viewport.
-  const modalViewportTop = window.MacroTrackAndroid?.isNativeApp?.() ? 0 : viewportOffsetTop;
+  // and shifts BrowseHeader/FoodDetailScreen below TodayScreen's header.
+  // Capture that resting value once per open, before the search-focus effect
+  // opens the keyboard, so it can be separated from any later IME pan.
+  const nativeRestingViewportOffsetRef = useRef(
+    window.visualViewport?.offsetTop ?? viewportOffsetTop
+  );
+  useLayoutEffect(() => {
+    if (!open || !isNativeApp) return;
+    nativeRestingViewportOffsetRef.current = window.visualViewport?.offsetTop ?? viewportOffsetTop;
+  }, [open, isNativeApp]);
+  const nativeKeyboardPan = isNativeApp
+    ? Math.max(0, viewportOffsetTop - nativeRestingViewportOffsetRef.current)
+    : 0;
+  // Keep the complete modal inside the *visible* keyboard-open viewport.
+  // Moving its top by only the dynamic pan (the resting status-bar inset was
+  // already applied by the native FrameLayout) keeps BrowseHeader and the
+  // Search/Scan/etc. row on screen. Using top:0 + height:viewport+pan reached
+  // the keyboard, but left the modal's top above the panned viewport — the
+  // food list then appeared to replace the fixed header/tabs. With this
+  // ordinary top + height rectangle, only the list's flex area gets shorter.
+  const modalViewportTop = isNativeApp ? nativeKeyboardPan : viewportOffsetTop;
+  const modalViewportHeight = viewportHeight;
+  // Android reports the IME's final visualViewport height before Samsung
+  // Keyboard has physically finished sliding there. Animate only the footer
+  // between its old and new keyboard edge; the macro header, sheet grabber,
+  // tabs, and list viewport must never receive this transform. Transforming
+  // the whole browse body made the sheet top lift on keyboard close and let a
+  // still-finishing close animation paint over the macro header on the next
+  // focus, which read as the alternating rubber-band bounce.
+  const actionBarRef = useRef<HTMLDivElement>(null);
+  const actionBarViewportAnimationRef = useRef<Animation | null>(null);
+  const previousViewportHeightRef = useRef(viewportHeight);
+  useLayoutEffect(() => {
+    const previousHeight = previousViewportHeightRef.current;
+    previousViewportHeightRef.current = viewportHeight;
+    const actionBar = actionBarRef.current;
+
+    if (!open || !isNativeApp || step !== "browse" || !actionBar) {
+      actionBarViewportAnimationRef.current?.cancel();
+      actionBarViewportAnimationRef.current = null;
+      return;
+    }
+
+    const layoutDelta = previousHeight - viewportHeight;
+    if (Math.abs(layoutDelta) < 24) return;
+
+    let paintedTranslateY = 0;
+    const transform = getComputedStyle(actionBar).transform;
+    if (transform !== "none") {
+      try {
+        paintedTranslateY = new DOMMatrixReadOnly(transform).m42;
+      } catch {
+        // A malformed/unsupported matrix should degrade to a fresh animation,
+        // never prevent the sheet from adopting the correct final geometry.
+      }
+    }
+    actionBarViewportAnimationRef.current?.cancel();
+    const startTranslateY = paintedTranslateY + layoutDelta;
+    const animation = actionBar.animate(
+      [
+        { transform: `translateY(${startTranslateY}px)` },
+        { transform: "translateY(0)" },
+      ],
+      { duration: 280, easing: "cubic-bezier(0.2, 0, 0, 1)" }
+    );
+    actionBarViewportAnimationRef.current = animation;
+    animation.addEventListener("finish", () => {
+      if (actionBarViewportAnimationRef.current === animation) actionBarViewportAnimationRef.current = null;
+    }, { once: true });
+  }, [viewportHeight, open, isNativeApp, step]);
+  useEffect(() => () => actionBarViewportAnimationRef.current?.cancel(), []);
   // The pinned header's real rendered height, measured rather than guessed —
   // it isn't a fixed single row (budget badges only show once targets have
   // loaded, the avatar stack only once something's staged), and Layer
@@ -423,7 +520,6 @@ export default function AddFoodSheet({
   // tracked wrapper, so ordinary flex flow keeps it correctly above the
   // iOS keyboard for free, and its height just needs to be subtracted from
   // Layer 1/Layer 2's own budget the same way the header's is.
-  const actionBarRef = useRef<HTMLDivElement>(null);
   const [actionBarHeight, setActionBarHeight] = useState(84);
   // Same useLayoutEffect + `open`-dependency reasoning as headerHeight above.
   // Ignores a 0px reading — ActionBar's own slot visually collapses (grid-
@@ -452,7 +548,7 @@ export default function AddFoodSheet({
     observer.observe(el);
     return () => observer.disconnect();
   }, [step, open]);
-  const contentHeight = Math.max(0, viewportHeight - headerHeight - actionBarHeight);
+  const contentHeight = Math.max(0, modalViewportHeight - headerHeight - actionBarHeight);
   // The expanded sheet always takes the full contentHeight now — no Layer-1
   // peek strip, regardless of keyboard state. This used to collapse to 0
   // only while the keyboard was up and restore a 96px Plate View sliver once
@@ -483,7 +579,7 @@ export default function AddFoodSheet({
       setStep(initialStep === "scan" ? "scan" : initialStep === "create" ? "create" : initialStep === "recipe" ? "recipeChoice" : "browse");
     setActiveTab(initialStep === "describe" ? "describe" : initialStep === "library" ? "library" : "search");
       if (initialStep === "library") setLibraryView("recipes");
-      setPendingSearchFocus(initialStep === "search");
+      setPendingSearchFocus(initialStep === "search" ? "open" : null);
       setQuickLogInitialFood(false);
     }
     setQuery("");
@@ -576,9 +672,55 @@ export default function AddFoodSheet({
 
   useEffect(() => {
     if (!pendingSearchFocus || step !== "browse" || activeTab !== "search") return;
-    searchInputRef.current?.focus();
-    setPendingSearchFocus(false);
-  }, [pendingSearchFocus, step, activeTab]);
+
+    // QuickActionFlow creates this component already open, unlike the
+    // permanently-mounted Food Log instance. On that cold path Android can
+    // still be delivering the outgoing sheet/body-lock scroll restoration
+    // while this effect is preparing to open the IME. Focusing immediately
+    // lets the first keyboard pan become indistinguishable from that settling
+    // motion; if it is then captured as the native resting offset, the modal
+    // under-compensates the pan and its macro header is clipped upward.
+    //
+    // Sample two matching closed-keyboard animation frames before focusing.
+    // This also gives the freshly-mounted snap sheet one real layout frame.
+    // `preventScroll` stops focus itself from scrolling the layout viewport;
+    // the ensuing IME resize/pan is still tracked normally by
+    // useVisualViewportMetrics.
+    let frame = 0;
+    let attempts = 0;
+    let previous: VisualViewportMetrics | null = null;
+    const focusAfterStableViewport = () => {
+      const vv = window.visualViewport;
+      const current = {
+        height: vv?.height ?? window.innerHeight,
+        offsetTop: vv?.offsetTop ?? 0,
+      };
+      attempts += 1;
+
+      const stable = previous !== null
+        && Math.abs(current.height - previous.height) < 1
+        && Math.abs(current.offsetTop - previous.offsetTop) < 1;
+
+      if (stable || attempts >= 8) {
+        if (isNativeApp && pendingSearchFocus === "open") {
+          nativeRestingViewportOffsetRef.current = current.offsetTop;
+          // The footer's keyboard-edge animation must also start from this
+          // settled closed height, not from any first-mount metric that was
+          // rendered before the handoff finished.
+          previousViewportHeightRef.current = current.height;
+        }
+        searchInputRef.current?.focus({ preventScroll: true });
+        setPendingSearchFocus(null);
+        return;
+      }
+
+      previous = current;
+      frame = requestAnimationFrame(focusAfterStableViewport);
+    };
+
+    frame = requestAnimationFrame(focusAfterStableViewport);
+    return () => cancelAnimationFrame(frame);
+  }, [pendingSearchFocus, step, activeTab, isNativeApp]);
 
   // Only the online OFF leg is debounced now. The local SQLite leg follows
   // `query` directly (see useFoodSearch) so a known food appears immediately;
@@ -616,37 +758,6 @@ export default function AddFoodSheet({
   const customFoods = useCustomFoods();
   const addFavorite = useAddFavorite();
   const removeFavorite = useRemoveFavorite();
-
-  // Same reasoning as BottomSheet.tsx's own lock: without it, the page
-  // underneath this full-screen modal is still what useRubberBandScroll's
-  // window-level touch listeners see. This modal isn't built on BottomSheet
-  // (it's its own fixed full-screen createPortal, positioned against
-  // visual-viewport metrics instead), so it never got that lock for free —
-  // scrolling within e.g. CreateFoodForm's own internal list could get
-  // hijacked mid-gesture into a rubber-band pull on `document.body` (which,
-  // being `position: fixed`, doesn't even visually move), silently eating
-  // the touch and making the reverse-scroll direction feel dead.
-  // `overflow: hidden` alone doesn't reliably block touch-driven scroll of
-  // the document on mobile Chrome/Safari (it stops wheel/keyboard scroll,
-  // but a finger drag can still walk the document a few px per event even
-  // with the ancestor `overflow: hidden`) — pinning body to the current
-  // scroll offset via `position: fixed` is what actually prevents it, since
-  // there's then no scrollable box left for the touch to move at all. Losing
-  // this lock is what let the real background document scroll behind this
-  // full-screen modal, which (via useVisualViewportMetrics reacting to the
-  // resulting browser-chrome show/hide) made this modal's own
-  // viewport-tracked top/height jitter in step with it. Goes through the
-  // shared lockBodyScroll/unlockBodyScroll (not a local save/restore)
-  // because this sheet can have its own BottomSheet-based children open on
-  // top of it (ConfirmDeleteSheet, DiscardWarningSheet, ...) — a local
-  // save/restore in each instance stomps on the other's snapshot when both
-  // are briefly mounted together, eventually stranding the page permanently
-  // unscrollable. See bodyScrollLock.ts.
-  useEffect(() => {
-    if (!open) return;
-    lockBodyScroll();
-    return unlockBodyScroll;
-  }, [open]);
 
   // Fires once the id set by requestRecipeAction above actually resolves to
   // a full ingredient breakdown (FoodDetailScreen only ever has the
@@ -762,7 +873,7 @@ export default function AddFoodSheet({
     setStep(next);
     if (next === "browse" && returnFocusToSearchRef.current) {
       returnFocusToSearchRef.current = false;
-      setPendingSearchFocus(true);
+      setPendingSearchFocus("return");
     }
   }
 
@@ -1064,6 +1175,13 @@ export default function AddFoodSheet({
   // question regardless of call site.
   return createPortal(
     <>
+    {/* The visual viewport can jump to its final keyboard-open size before
+        the IME animation reaches it. Keep the routed page fully covered
+        behind the animated modal body so that transient space is the modal's
+        own background, never live Dashboard cards/nav showing through. */}
+    {!(step === "browse" && onPickItems) && (
+      <div aria-hidden="true" className="fixed inset-0 z-[49] bg-dashboardBg" />
+    )}
     {/* The parent Logging Modal — genuinely full-screen (not a bottom sheet
         shell), positioned against real visual-viewport metrics rather than
         vh/inset-0 for the same iOS-keyboard reasons BottomSheet.tsx documents.
@@ -1071,13 +1189,13 @@ export default function AddFoodSheet({
         below; quantity/create/recipe are focused single-purpose steps that
         just fill this same full-screen container with their own header. */}
     <div
-      // page-enter: same transform-free opacity fade App.tsx uses for routed
-      // screens (see its own comment — a transform here would make this div a
-      // new containing block for every position:fixed descendant it renders,
-      // e.g. the barcode scanner). This component returns null while closed
-      // and only renders this subtree once `open` flips true, so it's a fresh
-      // DOM node — and therefore a fresh animation — on every open, regardless
-      // of which step (browse/search/scan/create) it lands on.
+      // The Plate Preview fades in while DraggableSnapSheet independently
+      // rises from the bottom. page-enter is deliberately opacity-only: a
+      // transform here would create a containing block for fixed descendants
+      // such as the scanner, while animating top/height would fight the live
+      // visualViewport geometry during keyboard opening. The solid z-49
+      // underlay above remains immediate, so Dashboard cards cannot flash
+      // through the fade.
       //
       // Recipe-picker mode's own "browse" step goes without the opaque
       // background here (and re-adds it explicitly on the header/Layer 2
@@ -1093,7 +1211,7 @@ export default function AddFoodSheet({
       className={`fixed inset-x-0 z-50 flex flex-col pb-[env(safe-area-inset-bottom)] page-enter ${
         step === "browse" && onPickItems ? "" : "bg-dashboardBg"
       }`}
-      style={{ top: modalViewportTop, height: viewportHeight }}
+      style={{ top: modalViewportTop, height: modalViewportHeight }}
     >
         {step === "browse" && (
           <>
@@ -1110,6 +1228,8 @@ export default function AddFoodSheet({
                 pickedFoods={onPickItems ? stagedPlate.map((i) => i.food) : undefined}
               />
             </div>
+
+            <div className="relative flex flex-1 min-h-0 flex-col">
 
             {/* Layer 1 (background) + Layer 2 (foreground) both live in this
                 relative region, sized to exactly what's left below the header. */}
@@ -1212,34 +1332,14 @@ export default function AddFoodSheet({
 
                     {/* pb-4, not pb-2 — there's no longer an in-sheet search
                         footer sitting right below this to lean on for
-                        breathing room; the last row needs its own.
-                        onTouchStart blurs the search input (or Quick
-                        Add/Describe's own field) the moment a touch lands
-                        here — traced 2026-08-03: with the keyboard open and
-                        this list short enough to have nothing to natively
-                        scroll (e.g. an empty query with only a couple of
-                        Recent items), Android Chrome was interpreting the
-                        drag as a visual-viewport *pan* instead of a content
-                        scroll — `visualViewport.offsetTop` climbing every
-                        touchmove even though `window.scrollY` and this
-                        modal's own body-scroll lock never moved. This
-                        modal's outer wrapper deliberately tracks that same
-                        offsetTop (needed for real iOS keyboard transitions),
-                        so it was faithfully following the pan and jittering
-                        up and down in lockstep. Dismissing the keyboard
-                        before the drag can be reinterpreted that way is what
-                        actually stops it — same "scroll list closes
-                        keyboard" behavior most apps already have, not just a
-                        workaround. */}
-                    <div
-                      className="flex-1 overflow-y-auto pb-4"
-                      onTouchStart={() => {
-                        const active = document.activeElement;
-                        if (active instanceof HTMLElement && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) {
-                          active.blur();
-                        }
-                      }}
-                    >
+                        breathing room; the last row needs its own. This is
+                        deliberately the sole scroll owner inside the sheet:
+                        the grabber/tab row above and action bar below stay
+                        pinned while the keyboard merely shortens this pane.
+                        overscroll containment keeps a short result list from
+                        chaining its drag into Android's visual viewport, so
+                        scrolling no longer has to blur/close the keyboard. */}
+                    <div className="flex-1 overflow-y-auto overscroll-y-contain pb-4">
                       {activeTab === "search" && (
                         <div>
                           {!!favorites.data?.length && (
@@ -1427,7 +1527,8 @@ export default function AddFoodSheet({
                     />
                   </div>
                 </div>
-              )}
+                )}
+            </div>
             </div>
           </>
         )}
@@ -2256,6 +2357,11 @@ function ActionBar({
             autoComplete="off"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            // Mark the query ready to replace without `select()`: Android
+            // treats that convenience method as an explicit text-selection
+            // action and immediately opens its Cut/Copy/Paste toolbar.
+            // A second, deliberate tap still positions the caret normally.
+            onFocus={(e) => e.currentTarget.setSelectionRange(0, e.currentTarget.value.length)}
             placeholder="Search for a food"
             className="flex-1 min-w-0 bg-transparent text-sm text-white placeholder:text-muted focus:outline-none"
           />
@@ -2573,8 +2679,9 @@ function QuickAddTab({
           <span className="block text-xs text-muted mb-1">Name</span>
           {/* Deliberately not autoFocus — the Search tab's own input never
               auto-focuses on tab switch either (see AddFoodSheet's
-              pendingSearchFocus, gated to only the dedicated "Search"
-              shortcut). Switching tabs *to* Quick Add while the keyboard was
+              pendingSearchFocus, gated to an explicit Search open or
+              restoring focus after a sub-screen). Switching tabs *to* Quick
+              Add while the keyboard was
               already open on Search (its input just unmounted/blurred) used
               to immediately autoFocus this field, forcing the keyboard to
               close and reopen back-to-back — two abrupt visualViewport

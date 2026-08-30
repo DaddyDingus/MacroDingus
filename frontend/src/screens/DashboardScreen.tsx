@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { RefreshCw, CalendarClock } from "lucide-react";
@@ -125,6 +125,9 @@ export default function DashboardScreen() {
   const daysOverdue = isCheckinDue ? daysBetween(nextCheckinDueDate!, checkinToday) : 0;
   const hasActiveGoal = status.data?.activeGoal != null;
   const hasWeightHistory = status.data?.trendWeightKg != null;
+  const directPullProgress = Math.min(pullProgress, 1.4);
+  const pullParked = refreshing || Boolean(refreshError);
+  const pullPhase = refreshError ? "error" : refreshing ? "refreshing" : pullProgress >= 1 ? "armed" : "pulling";
 
   function goToNewGoal() {
     if (hasWeightHistory) navigate("/strategy/new-goal");
@@ -134,30 +137,21 @@ export default function DashboardScreen() {
   return (
     <>
       {createPortal(<div
-        className="fixed left-1/2 z-30 pointer-events-none flex items-center gap-2 rounded-full border border-line bg-dashboardCard px-3 py-2 shadow-lg"
+        className={`app-pull-refresh phase-${pullPhase}`}
         style={{
-          // The pill's resting place while it spins. Deliberately well clear of
-          // the top edge: `env(safe-area-inset-top)` resolves to a literal 0 in
-          // the installed PWA on this device, so a small offset here put the
-          // pill hard against the top of the viewport. The transform below
-          // moves it -18px→+4px across the pull, so this is the floor for all
-          // three states, not just the refreshing one.
-          top: "env(safe-area-inset-top)",
-          opacity: refreshing || pullProgress > 0.05 ? 1 : 0,
-          transform: `translate(-50%, ${refreshing ? 0 : -18 + pullProgress * 22}px) scale(${0.9 + pullProgress * 0.1})`,
-          transition: pullProgress === 0 || refreshing ? "opacity 160ms ease, transform 160ms ease" : "none",
-        }}
+          "--pull-refresh-turn": `${directPullProgress * 220}deg`,
+          opacity: refreshing || pullProgress > 0.05 || refreshError ? 1 : 0,
+          transform: `translate3d(-50%, ${pullParked ? 0 : -6.5 + directPullProgress * 10.5}px, 0) scale(${pullParked ? 1 : 0.9 + Math.min(pullProgress, 1) * 0.1})`,
+          transition: pullParked ? "opacity 160ms ease, transform 160ms ease" : "none",
+        } as CSSProperties}
         role="status"
         aria-live="polite"
       >
-        <RefreshCw
-          className={`w-4 h-4 ${refreshing ? "animate-spin" : ""} ${pullProgress >= 1 ? "text-accent" : "text-muted"}`}
-          strokeWidth={2}
-          style={!refreshing ? { transform: `rotate(${pullProgress * 220}deg)` } : undefined}
-        />
-        <span className="text-xs font-medium whitespace-nowrap">
-          {refreshing ? "Refreshing…" : pullProgress >= 1 ? "Release to refresh" : "Pull to refresh"}
+        <span className="app-pull-refresh__icon"><RefreshCw size={14} strokeWidth={2} /></span>
+        <span>
+          {refreshError ?? (refreshing ? "Refreshing…" : pullProgress >= 1 ? "Release to refresh" : "Pull to refresh")}
         </span>
+        {!refreshError && !refreshing && <i className="app-pull-refresh__progress" aria-hidden="true"><b style={{ width: `${Math.min(pullProgress, 1) * 100}%` }} /></i>}
       </div>, document.body)}
       <div
         data-rubber-band-surface
@@ -171,12 +165,6 @@ export default function DashboardScreen() {
           <h1 className="text-2xl font-semibold tracking-tight mt-0.5">Dashboard</h1>
         </div>
       </header>
-      {refreshError && (
-        <p className="px-4 -mt-1 pb-2 text-right text-xs text-protein" role="status">
-          {refreshError}
-        </p>
-      )}
-
       <main className="px-4 space-y-4 max-w-md mx-auto">
         {/* Reuses the exact same illustration the New Goal wizard's own
             intro screen uses (WizardIllustration variant="goal") — tapping

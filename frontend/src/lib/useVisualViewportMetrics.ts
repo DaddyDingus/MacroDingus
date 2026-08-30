@@ -45,18 +45,20 @@ export interface VisualViewportMetrics {
 // correctly tracking `offsetTop`, the input to it was just wrong on that
 // device for a moment.
 export function useVisualViewportMetrics(): VisualViewportMetrics {
-  const [metrics, setMetrics] = useState<VisualViewportMetrics>(() => ({
-    height: typeof window !== "undefined" ? window.innerHeight : 0,
-    offsetTop: 0,
-  }));
+  const [metrics, setMetrics] = useState<VisualViewportMetrics>(() => {
+    if (typeof window === "undefined") return { height: 0, offsetTop: 0 };
+    const vv = window.visualViewport;
+    return {
+      height: vv?.height ?? window.innerHeight,
+      offsetTop: vv?.offsetTop ?? 0,
+    };
+  });
 
-  // useLayoutEffect, not useEffect — this corrects the initial window.innerHeight
-  // guess to the real visualViewport.height synchronously before paint, same
-  // reasoning as AddFoodSheet's own header/action-bar height measurements:
-  // consumers of this hook (AddFoodSheet's full-screen modal, BottomSheet)
-  // animate height/position off these values, so a post-paint correction
-  // would animate away from a briefly-wrong first frame instead of never
-  // rendering it at all.
+  // useLayoutEffect, not useEffect — listeners need to be attached before the
+  // first paint can hand control back to an autofocusing overlay. The state
+  // initializer already reads visualViewport directly (rather than briefly
+  // inventing `{ innerHeight, 0 }`), so a freshly-mounted AddFoodSheet cannot
+  // build its native keyboard-pan baseline from a value that was never true.
   useLayoutEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;

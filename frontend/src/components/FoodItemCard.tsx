@@ -156,18 +156,18 @@ export default function FoodItemCard({
             <FoodIconAvatar name={entry.food.name} icon={entry.food.icon} />
           )}
           <span className="flex-1 min-w-0">
-            <span className="block text-sm text-white leading-tight truncate">{entry.food.name}</span>
-            {/* Macros before serving size (was serving size first) — the
-                three macros are what's actually being compared entry to
-                entry, so they lead; the gram weight is supporting detail. */}
-            <span className="block text-xs tabular leading-tight truncate -mt-0.5 text-white/80">
+            <span className="block text-sm font-medium text-white leading-tight truncate">{entry.food.name}</span>
+            <span className="block text-[11px] tabular leading-tight truncate -mt-0.5 text-white/70">
+              <span className="text-muted">{fmt(entry.quantityGrams)} g · </span>
               <span className="text-protein">P</span>{fmt(entry.nutrition.protein)}{" "}
               <span className="text-fat">F</span>{fmt(entry.nutrition.fat)}{" "}
-              <span className="text-carbs">C</span>{fmt(entry.nutrition.carbs)} <span className="text-muted">·{" "}
-              {fmt(entry.quantityGrams)} g</span>
+              <span className="text-carbs">C</span>{fmt(entry.nutrition.carbs)}
             </span>
           </span>
-          <span className="flex items-center gap-1 tabular text-sm shrink-0">
+          {/* One calorie cue is enough. The coloured flame keeps the value
+              scannable without turning every calorie number into another
+              competing accent or repeating the already-known unit. */}
+          <span className="flex items-center justify-end gap-1 tabular text-sm shrink-0">
             <Flame className="w-3.5 h-3.5 text-calories" strokeWidth={2.5} />
             <span className="text-white">{fmt(kcalToUnit(entry.nutrition.calories, energyUnit))}</span>
           </span>

@@ -1,6 +1,8 @@
 # MacroDaddy foundation adoption
 
-MacroDaddy implements DaddysVibe Mobile App Foundation version 2 as specified by `/home/daddydingus/stacks/daddysvibe/docs/MOBILE_APP_FOUNDATION.md`.
+MacroDaddy implements DaddysVibe Mobile App Foundation version 8 as specified by `/home/daddydingus/stacks/daddysvibe/docs/MOBILE_APP_FOUNDATION.md`.
+
+Foundation v8 preserves the exact live top-edge colour across focus and applies native and web colours immediately so neither surface can lag and expose a transient seam. The compact app-themed APK update banner, shared publish gate, signing, backup, and exact live-APK verification remain mandatory. MacroDaddy's health integrations remain product-specific.
 
 ## Preserved identity
 

@@ -53,6 +53,23 @@ const DEFAULT_REAR_CAMERA_CONSTRAINTS: ExtendedConstraints = {
 
 const LENS_STORAGE_KEY = "macrotrack.barcodeCameraDeviceId";
 
+// Device enumeration does not open the camera or show a privacy indicator.
+// Warm it in parallel with ordinary app use so a saved physical-lens label is
+// already translated when the scanner mounts instead of adding another await
+// before getUserMedia on the cold path.
+let warmedCameraDevices: Promise<MediaDeviceInfo[]> | null = null;
+
+export function prewarmBarcodeCamera(): Promise<MediaDeviceInfo[]> {
+  if (!navigator.mediaDevices?.enumerateDevices) return Promise.resolve([]);
+  if (!warmedCameraDevices) {
+    warmedCameraDevices = navigator.mediaDevices.enumerateDevices().catch((error) => {
+      warmedCameraDevices = null;
+      throw error;
+    });
+  }
+  return warmedCameraDevices;
+}
+
 // The saved lens carries its label as well as its deviceId, because a deviceId
 // alone does not survive an app restart: Chromium salts media device ids per
 // browsing session, and the Android WebView shell re-salts on every launch. The
@@ -206,7 +223,7 @@ export default function BarcodeScanner({
     let cancelled = false;
     void (async () => {
       try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
+        const devices = await prewarmBarcodeCamera();
         const match = devices.find((d) => d.kind === "videoinput" && d.label && d.label === pref.label);
         if (!cancelled && match) {
           // Consumes the one recovery attempt the stream effect would
@@ -315,8 +332,12 @@ export default function BarcodeScanner({
           if (!cancelled) start(true, true);
           return;
         }
-        const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-        setError(`Couldn't access the camera. Check camera permission for this site. (${detail})`);
+        if (name === "NotAllowedError" || name === "SecurityError") {
+          setError("Camera access is off. Allow camera access for MacroDaddy, then reopen the scanner.");
+        } else {
+          const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+          setError(`Couldn't start the camera. Close other camera apps and try again. (${detail})`);
+        }
         return;
       }
 
@@ -370,6 +391,15 @@ export default function BarcodeScanner({
       }
 
       if (cancelled) return;
+      // At this point the video is playing and the requested/adjusted physical
+      // lens is final unless this is the rare first-permission bootstrap for a
+      // saved label. Reveal that final stream now; enumerating switchable lenses
+      // and applying optional focus controls below must not hold a usable camera
+      // behind the loading screen.
+      const mayStillRecoverSavedLens =
+        !deviceId && !!lensLabelRef.current && !lensRecoveryDoneRef.current;
+      if (!mayStillRecoverSavedLens) setPreviewReady(true);
+
       try {
         const all = await navigator.mediaDevices.enumerateDevices();
         const videoInputs = all.filter((d) => d.kind === "videoinput");

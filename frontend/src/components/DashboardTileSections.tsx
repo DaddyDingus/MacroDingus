@@ -76,7 +76,8 @@ export default function DashboardTileSections() {
   const checkin = coachStatus.data?.latestCheckin ?? null;
   const trendWeightKg = coachStatus.data?.trendWeightKg ?? null;
   const activeGoal = coachStatus.data?.activeGoal ?? null;
-  const todayTargets = targetsForDate(programs.data ?? [], localDateString());
+  const today = localDateString();
+  const todayTargets = targetsForDate(programs.data ?? [], today);
 
   const trendPoints = weightTrend.data ?? [];
   const latestTrend = trendPoints[trendPoints.length - 1];
@@ -130,7 +131,10 @@ export default function DashboardTileSections() {
   const history = history7.data ?? [];
 
   const balanceDays = history
-    .filter((d) => d.logged && !d.incomplete)
+    // Today's intake is still in progress, so comparing it with a full day's
+    // expenditure would manufacture a large deficit until late in the day.
+    // Match the Energy Balance detail screen by using completed days only.
+    .filter((d) => d.logged && !d.incomplete && d.date !== today)
     .map((d) => ({ calories: d.calories, tdee: activeCheckinForDate(checkinsAsc, d.date)?.tdee ?? null }))
     .filter((d): d is { calories: number; tdee: number } => d.tdee !== null);
   const balanceSparkValues = balanceDays.map((d) => d.calories - d.tdee);

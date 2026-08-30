@@ -63,14 +63,17 @@ export default function AndroidUpdatePrompt() {
         const installed = bridge.getVersionName();
         lastCheckedAt.current = Date.now();
         if (isNewer(available.versionName, installed)) {
+          document.documentElement.dataset.androidUpdate = "ready";
           if (manual || sessionStorage.getItem("macrotrack-dismissed-update") !== available.versionName) {
             setNotice({ kind: "available", release: available });
           } else if (manual) {
             setNotice(null);
           }
         } else if (manual) {
+          delete document.documentElement.dataset.androidUpdate;
           setNotice({ kind: "upToDate", version: installed });
         } else {
+          delete document.documentElement.dataset.androidUpdate;
           setNotice(null);
         }
       } catch {
@@ -86,9 +89,11 @@ export default function AndroidUpdatePrompt() {
     };
     window.addEventListener(ANDROID_UPDATE_CHECK_EVENT, onManualCheck);
     document.addEventListener("visibilitychange", onVisible);
-    const timer = window.setTimeout(() => void check(false), 1_000);
+    const first = window.setTimeout(() => void check(false), 1_000);
+    const interval = window.setInterval(() => void check(false), 6 * 60 * 60_000);
     return () => {
-      window.clearTimeout(timer);
+      window.clearTimeout(first);
+      window.clearInterval(interval);
       window.removeEventListener(ANDROID_UPDATE_CHECK_EVENT, onManualCheck);
       document.removeEventListener("visibilitychange", onVisible);
     };
@@ -106,13 +111,13 @@ export default function AndroidUpdatePrompt() {
 
   return (
     <div
-      className="fixed inset-x-3 top-3 z-[100] mx-auto max-w-md rounded-2xl border border-line bg-surface-raised/95 p-3 shadow-2xl backdrop-blur-xl"
+      className="fixed inset-x-3 top-2 z-[100] mx-auto max-w-md rounded-2xl border border-line bg-surface-raised/95 p-2 shadow-2xl backdrop-blur-xl"
       role="status"
       aria-live="polite"
     >
-      <div className="flex items-start gap-3">
+      <div className="flex items-center gap-2.5">
         <span
-          className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
+          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
             notice.kind === "failed" ? "bg-protein/15 text-protein" : "bg-accent/15 text-accent"
           }`}
         >
@@ -145,30 +150,29 @@ export default function AndroidUpdatePrompt() {
           )}
           {notice.kind === "available" && (
             <>
-              <p className="text-sm font-semibold">MacroDaddy {notice.release.versionName} is available</p>
-              <p className="mt-0.5 text-xs leading-relaxed text-muted">
-                Download it here, then Android will ask you to confirm the update.
-              </p>
-              <button
-                type="button"
-                className="mt-2 rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-black active:opacity-75"
-                onClick={() => {
-                  window.MacroTrackAndroid?.openUpdate(
-                    new URL(notice.release.downloadUrl, window.location.href).toString(),
-                  );
-                  setNotice(null);
-                }}
-              >
-                Download update
-              </button>
+              <p className="truncate text-sm font-semibold">MacroDaddy {notice.release.versionName} is ready</p>
+              <p className="truncate text-xs text-muted">Android update waiting</p>
             </>
           )}
         </div>
 
+        {notice.kind === "available" && (
+          <button
+            type="button"
+            className="min-h-9 rounded-full bg-accent px-3 text-xs font-semibold text-black active:opacity-75"
+            onClick={() => {
+              window.MacroTrackAndroid?.openUpdate(
+                new URL(notice.release.downloadUrl, window.location.href).toString(),
+              );
+              setNotice(null);
+            }}
+          >Update</button>
+        )}
+
         {notice.kind !== "checking" && (
           <button
             type="button"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted active:bg-white/10"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted active:bg-white/10"
             aria-label="Dismiss"
             onClick={() => {
               if (notice.kind === "available") {
