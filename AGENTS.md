@@ -111,6 +111,8 @@ edge-to-edge only because `onCreate` sets `setDecorFitsSystemWindows(false)` +
 `LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS`; the padded wrapper paints the reserved
 status strip so page content never appears behind the system icons.
 
+**Scanner startup mark** (`ScannerCameraLoading` + `.barcode-boot-*` in `index.css`): the mark is a barcode, so it varies bar *width* at uniform height with taller EAN guard bars, and the beam reads *across* — the old equaliser did the opposite of all three. It is deliberately concentric with the live reticle (verified within 0.5px at 360/412/480 widths) and its exit scales 1.45 into it, so **moving either the mark's `translate-y` or the reticle's breaks the handoff**. Each bar's flare delay is derived from its own x-offset against `SWEEP_TRAVEL_START/END`, which mirror `@keyframes barcode-boot-beam` — change the keyframe fractions and the constants together or the flares desync from the beam. The loader is held `LOADER_EXIT_MS` past `previewReady` and fades over an *already-live* camera, so it never delays readiness.
+
 **Barcode scanner camera constraints**: request `facingMode: { ideal: "environment" }`,
 never the bare string — Android WebView's Chromium resolves a bare value as
 mandatory and throws `OverconstrainedError` where desktop Chrome succeeds.

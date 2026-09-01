@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { BrowserMultiFormatReader } from "@zxing/browser";
 import type { IScannerControls } from "@zxing/browser";
 import { BarcodeFormat, DecodeHintType } from "@zxing/library";
@@ -94,11 +95,61 @@ function writeLensPref(pref: LensPref) {
   localStorage.setItem(LENS_STORAGE_KEY, JSON.stringify(pref));
 }
 
-function ScannerCameraLoading({ onClose }: { onClose: () => void }) {
-  const bars = [24, 38, 30, 46, 34, 42, 27, 46, 31, 39, 24];
+// The startup mark is a barcode, not an equaliser: 1D symbologies vary bar
+// *width* at a uniform height, and EAN-13 extends its start/centre/end guard
+// bars below the rest. Module widths and gaps are in px so the sweep delays
+// below can be derived from real geometry.
+const BARCODE_MODULES: Array<{ w: number; guard?: boolean }> = [
+  { w: 4, guard: true }, { w: 4, guard: true },
+  { w: 6 }, { w: 12 }, { w: 4 }, { w: 8 }, { w: 6 }, { w: 14 }, { w: 4 },
+  { w: 4, guard: true }, { w: 4, guard: true },
+  { w: 10 }, { w: 4 }, { w: 6 }, { w: 12 }, { w: 4 }, { w: 8 }, { w: 6 },
+  { w: 4, guard: true }, { w: 4, guard: true },
+];
 
+const BAR_GAP = 3;
+const BAR_HEIGHT = 44;
+const GUARD_HEIGHT = 56;
+const APERTURE_PAD_X = 28;
+const PRINT_STAGGER_MS = 16;
+// Every looping animation shares this cycle so the beam, the bar flares and
+// the frame's read-acknowledgement pulse cannot drift apart.
+const SWEEP_CYCLE_MS = 2400;
+// Matches @keyframes barcode-boot-beam: the beam is in motion between these
+// two fractions of the cycle, which is what makes a bar's flare land exactly
+// as the beam reaches it.
+const SWEEP_TRAVEL_START = 0.06;
+const SWEEP_TRAVEL_END = 0.62;
+// Starts once the last bar has finished printing.
+const SWEEP_DELAY_MS = 720;
+// The loader is held for one beat after the camera is revealed so the mark can
+// open outward into the live reticle rather than hard-cutting. It fades *over*
+// an already-live scanner, so this never delays camera readiness.
+const LOADER_EXIT_MS = 320;
+
+const BARCODE_CONTENT_WIDTH =
+  BARCODE_MODULES.reduce((sum, m) => sum + m.w, 0) + BAR_GAP * (BARCODE_MODULES.length - 1);
+const APERTURE_WIDTH = BARCODE_CONTENT_WIDTH + APERTURE_PAD_X * 2;
+
+const BARCODE_BARS = (() => {
+  let cursor = 0;
+  return BARCODE_MODULES.map((module, index) => {
+    const centre = APERTURE_PAD_X + cursor + module.w / 2;
+    cursor += module.w + BAR_GAP;
+    const passedAt = SWEEP_TRAVEL_START + (centre / APERTURE_WIDTH) * (SWEEP_TRAVEL_END - SWEEP_TRAVEL_START);
+    return {
+      ...module,
+      printDelayMs: index * PRINT_STAGGER_MS,
+      readDelayMs: Math.round(SWEEP_DELAY_MS + passedAt * SWEEP_CYCLE_MS),
+    };
+  });
+})();
+
+function ScannerCameraLoading({ onClose, exiting }: { onClose: () => void; exiting: boolean }) {
   return (
-    <div className="fixed inset-0 z-[61] overflow-hidden bg-black text-white">
+    <div
+      className={`barcode-boot-shell fixed inset-0 z-[61] overflow-hidden bg-black text-white ${exiting ? "is-exiting" : ""}`}
+    >
       <div
         className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-4 pb-12"
         style={{ paddingTop: "max(1rem, env(safe-area-inset-top))" }}
@@ -114,25 +165,64 @@ function ScannerCameraLoading({ onClose }: { onClose: () => void }) {
         </button>
       </div>
 
-      <div className="absolute inset-0 flex items-center justify-center px-8">
-        <div className="-translate-y-4 text-center" role="status" aria-live="polite">
-          <div className="relative mx-auto h-32 w-32">
-            <div className="barcode-camera-loader-glow absolute -inset-5 rounded-[2.25rem] bg-[radial-gradient(circle,rgba(216,150,255,0.18),transparent_68%)]" />
-            <div className="absolute inset-0 overflow-hidden rounded-[1.65rem] border border-white/10 bg-white/[0.045] shadow-[0_20px_70px_rgba(0,0,0,0.7),inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-xl">
-              <div className="absolute inset-x-5 inset-y-7 flex items-center justify-center gap-[4px]">
-                {bars.map((height, index) => (
-                  <span
-                    key={`${height}-${index}`}
-                    className="barcode-camera-loader-bar w-[3px] rounded-full bg-white/75"
-                    style={{ height, animationDelay: `${index * 55}ms` }}
-                  />
-                ))}
-              </div>
-              <span className="barcode-camera-loader-sweep absolute left-4 right-4 h-px bg-accent shadow-[0_0_14px_2px_rgba(216,150,255,0.65)]" />
+      <div className="absolute inset-0 flex items-center justify-center px-6">
+        {/* Nudged down so the mark's centre sits on the live reticle's centre:
+            the exit scales this block up by roughly the reticle's own size
+            ratio, so the two have to be concentric for the handoff to land. */}
+        <div className="translate-y-2 text-center" role="status" aria-live="polite">
+          {/* Same corner brackets, accent and 2.35:1 aperture as the live scan
+              frame, so revealing the camera reads as this object resolving
+              rather than as one screen replacing another. */}
+          <div
+            className="barcode-boot-stage relative mx-auto"
+            style={{ width: APERTURE_WIDTH, height: 100 }}
+            aria-hidden="true"
+          >
+            <div className="barcode-boot-glow pointer-events-none absolute -inset-x-10 -inset-y-8 bg-[radial-gradient(ellipse_at_center,rgba(216,150,255,0.13),transparent_70%)]" />
+
+            <div className="barcode-boot-frame absolute inset-0">
+              <span className="absolute left-0 top-0 h-5 w-5 rounded-tl-[10px] border-l-2 border-t-2 border-accent" />
+              <span className="absolute right-0 top-0 h-5 w-5 rounded-tr-[10px] border-r-2 border-t-2 border-accent" />
+              <span className="absolute bottom-0 left-0 h-5 w-5 rounded-bl-[10px] border-b-2 border-l-2 border-accent" />
+              <span className="absolute bottom-0 right-0 h-5 w-5 rounded-br-[10px] border-b-2 border-r-2 border-accent" />
             </div>
+
+            {/* Bars are top-aligned, not centred: guard bars overhang downward
+                the way they do on a printed symbol. */}
+            <div
+              className="absolute inset-x-0 flex items-start justify-center"
+              style={{ top: (100 - GUARD_HEIGHT) / 2, gap: BAR_GAP }}
+            >
+              {BARCODE_BARS.map((bar, index) => (
+                <span
+                  key={index}
+                  className="barcode-boot-bar relative block rounded-[1px] bg-white/45"
+                  style={{
+                    width: bar.w,
+                    height: bar.guard ? GUARD_HEIGHT : BAR_HEIGHT,
+                    animationDelay: `${bar.printDelayMs}ms`,
+                  }}
+                >
+                  <span
+                    className="barcode-boot-bar-read absolute inset-0 block rounded-[1px] bg-accent shadow-[0_0_10px_1px_rgba(216,150,255,0.55)]"
+                    style={{ animationDelay: `${bar.readDelayMs}ms` }}
+                  />
+                </span>
+              ))}
+            </div>
+
+            <span
+              className="barcode-boot-beam absolute inset-y-0 left-0 w-[2px] rounded-full bg-accent shadow-[0_0_18px_3px_rgba(216,150,255,0.5)]"
+              style={{ "--beam-travel": `${APERTURE_WIDTH - 2}px` } as CSSProperties}
+            />
           </div>
-          <p className="mt-7 text-base font-medium tracking-tight">Preparing camera</p>
-          <p className="mt-1.5 text-sm text-white/45">Selecting your 1× lens</p>
+
+          <div className="barcode-boot-caption">
+            <p className="mt-9 text-[0.9375rem] font-medium tracking-tight text-white">Preparing camera</p>
+            <p className="mt-2 font-mono text-[0.6875rem] uppercase tracking-[0.2em] text-white/40">
+              Selecting 1&times; lens
+            </p>
+          </div>
         </div>
       </div>
     </div>
@@ -189,6 +279,7 @@ export default function BarcodeScanner({
   const [showFocusHint, setShowFocusHint] = useState(true);
   const [cameraSession, setCameraSession] = useState(0);
   const [previewReady, setPreviewReady] = useState(false);
+  const [loaderPresent, setLoaderPresent] = useState(true);
   // Gates the camera effect below until the saved lens preference has been
   // translated into a deviceId that is valid for *this* browsing session.
   const [lensResolved, setLensResolved] = useState(false);
@@ -197,6 +288,22 @@ export default function BarcodeScanner({
     const id = window.setTimeout(() => setShowFocusHint(false), 2400);
     return () => window.clearTimeout(id);
   }, []);
+
+  // The operational scanner remains private until the final physical lens has
+  // been accepted. Camera errors reveal it so their recovery message stays visible.
+  const scannerVisible = previewReady || error !== null;
+
+  // Hold the loader for its exit beat once the scanner is revealed. The camera
+  // is already live underneath by then, so this is purely the handoff, never a
+  // delay — and it re-arms if a lens switch takes the preview away again.
+  useEffect(() => {
+    if (!scannerVisible) {
+      setLoaderPresent(true);
+      return;
+    }
+    const id = window.setTimeout(() => setLoaderPresent(false), LOADER_EXIT_MS);
+    return () => window.clearTimeout(id);
+  }, [scannerVisible]);
 
   // Re-pin the saved lens BEFORE opening any stream. Chromium salts media
   // deviceIds per browsing session and the WebView shell re-salts on every
@@ -543,15 +650,11 @@ export default function BarcodeScanner({
     track.applyConstraints(constraints as MediaTrackConstraints).catch(() => {});
   }
 
-  // The operational scanner remains private until the final physical lens has
-  // been accepted. Camera errors reveal it so their recovery message remains visible.
-  const scannerVisible = previewReady || error !== null;
-
   return (
     <>
-      {!scannerVisible && <ScannerCameraLoading onClose={onClose} />}
+      {loaderPresent && <ScannerCameraLoading onClose={onClose} exiting={scannerVisible} />}
       <div
-        className={`fixed inset-0 z-[60] bg-black overflow-hidden ${scannerVisible ? "opacity-100" : "opacity-0"}`}
+        className={`fixed inset-0 z-[60] bg-black overflow-hidden transition-opacity duration-300 motion-reduce:transition-none ${scannerVisible ? "opacity-100" : "opacity-0"}`}
         aria-hidden={!scannerVisible}
       >
       <div className="absolute inset-0" onClick={handleTap}>

@@ -338,33 +338,149 @@
 /* BarcodeScanner's startup state stays visually separate from the operational
    scan frame: the camera may briefly bootstrap a provisional rear stream to
    recover this session's salted deviceId, but only this loader is visible
-   until the final 1x physical lens is accepted. */
-@keyframes barcode-camera-loader-glow {
-  0%, 100% { opacity: 0.5; transform: scale(0.96); }
-  50% { opacity: 1; transform: scale(1.04); }
+   until the final 1x physical lens is accepted.
+
+   The mark is a real barcode, not an equaliser — 1D symbologies vary bar
+   *width* at a uniform height, with taller guard bars at the start, centre and
+   end, and a laser reads them *across*, not down. It shares the live reticle's
+   corner brackets and accent so opening the camera reads as the same object
+   resolving rather than as one screen replacing another. Sequence is
+   print (left to right) then read (a sweeping beam lighting each bar as it
+   passes), which is also why every bar carries two delays. */
+@keyframes barcode-boot-stage-in {
+  from { opacity: 0; transform: translate3d(0, 8px, 0); }
+  to { opacity: 1; transform: none; }
 }
 
-@keyframes barcode-camera-loader-sweep {
-  0%, 100% { top: 24%; opacity: 0.3; }
-  50% { top: 76%; opacity: 1; }
+@keyframes barcode-boot-caption-in {
+  from { opacity: 0; transform: translate3d(0, 5px, 0); }
+  to { opacity: 1; transform: none; }
 }
 
-@keyframes barcode-camera-loader-bar {
-  0%, 100% { opacity: 0.35; transform: scaleY(0.78); }
-  50% { opacity: 0.95; transform: scaleY(1); }
+@keyframes barcode-boot-frame-in {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 0.62; transform: none; }
 }
 
-.barcode-camera-loader-glow {
-  animation: barcode-camera-loader-glow 2.2s ease-in-out infinite;
+/* Fires as the beam clears the last bar — a read acknowledgement, not a loop. */
+@keyframes barcode-boot-frame-pulse {
+  0%, 68% { opacity: 0.62; }
+  76% { opacity: 1; }
+  92%, 100% { opacity: 0.62; }
 }
 
-.barcode-camera-loader-sweep {
-  animation: barcode-camera-loader-sweep 1.65s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+@keyframes barcode-boot-bar-in {
+  from { opacity: 0; transform: scaleY(0); }
+  to { opacity: 1; transform: none; }
 }
 
-.barcode-camera-loader-bar {
-  transform-origin: center;
-  animation: barcode-camera-loader-bar 1.25s ease-in-out infinite;
+@keyframes barcode-boot-beam {
+  0% { opacity: 0; transform: translate3d(0, 0, 0); }
+  6% { opacity: 1; }
+  62% { opacity: 1; transform: translate3d(var(--beam-travel, 0px), 0, 0); }
+  72%, 100% { opacity: 0; transform: translate3d(var(--beam-travel, 0px), 0, 0); }
+}
+
+/* Percentages are of the 2400ms sweep cycle, so the lit window is ~70ms up
+   and ~430ms down — a bar flares as the beam crosses it, then decays. */
+@keyframes barcode-boot-bar-read {
+  0% { opacity: 0; }
+  3% { opacity: 1; }
+  21% { opacity: 0; }
+  100% { opacity: 0; }
+}
+
+@keyframes barcode-boot-glow {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+.barcode-boot-stage {
+  animation: barcode-boot-stage-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.barcode-boot-caption {
+  animation: barcode-boot-caption-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.16s both;
+}
+
+.barcode-boot-glow {
+  animation: barcode-boot-glow 3.2s ease-in-out infinite;
+}
+
+.barcode-boot-frame {
+  opacity: 0.62;
+  animation:
+    barcode-boot-frame-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both,
+    barcode-boot-frame-pulse 2400ms linear 720ms infinite;
+}
+
+.barcode-boot-bar {
+  transform-origin: top center;
+  animation: barcode-boot-bar-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.barcode-boot-beam {
+  animation: barcode-boot-beam 2400ms linear 720ms infinite;
+}
+
+.barcode-boot-bar-read {
+  opacity: 0;
+  animation: barcode-boot-bar-read 2400ms ease-out infinite;
+}
+
+/* Handoff to the live camera. The mark opens outward toward the operational
+   reticle's larger aperture and every bar flares at once — the read landing —
+   while the shell fades off an already-running preview. */
+@keyframes barcode-boot-shell-exit {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes barcode-boot-stage-exit {
+  from { transform: scale(1); }
+  to { transform: scale(1.45); }
+}
+
+@keyframes barcode-boot-capture {
+  0% { opacity: 0; }
+  22% { opacity: 0.9; }
+  100% { opacity: 0; }
+}
+
+@keyframes barcode-boot-caption-exit {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translate3d(0, 6px, 0); }
+}
+
+.barcode-boot-shell.is-exiting {
+  animation: barcode-boot-shell-exit 320ms cubic-bezier(0.55, 0, 1, 0.45) both;
+}
+
+.barcode-boot-shell.is-exiting .barcode-boot-stage {
+  animation: barcode-boot-stage-exit 320ms cubic-bezier(0.32, 0, 0.67, 0) both;
+}
+
+.barcode-boot-shell.is-exiting .barcode-boot-bar {
+  animation: none;
+}
+
+.barcode-boot-shell.is-exiting .barcode-boot-bar-read {
+  animation: barcode-boot-capture 300ms ease-out both;
+}
+
+.barcode-boot-shell.is-exiting .barcode-boot-frame {
+  animation: none;
+  opacity: 1;
+}
+
+.barcode-boot-shell.is-exiting .barcode-boot-beam,
+.barcode-boot-shell.is-exiting .barcode-boot-glow {
+  animation: none;
+  opacity: 0;
+}
+
+.barcode-boot-shell.is-exiting .barcode-boot-caption {
+  animation: barcode-boot-caption-exit 200ms ease-in both;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -374,21 +490,36 @@
     opacity: 0.45;
   }
 
-  .barcode-camera-loader-glow,
-  .barcode-camera-loader-sweep,
-  .barcode-camera-loader-bar {
+  .barcode-boot-stage,
+  .barcode-boot-caption,
+  .barcode-boot-glow,
+  .barcode-boot-frame,
+  .barcode-boot-bar,
+  .barcode-boot-beam,
+  .barcode-boot-bar-read {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .barcode-boot-glow { opacity: 0.7; }
+  .barcode-boot-frame { opacity: 0.62; }
+  .barcode-boot-bar-read { opacity: 0; }
+
+  /* Parked mid-aperture so the mark still reads as a scanner at rest. */
+  .barcode-boot-beam {
+    opacity: 0.55;
+    transform: translate3d(calc(var(--beam-travel, 0px) / 2), 0, 0);
+  }
+
+  .barcode-boot-shell.is-exiting,
+  .barcode-boot-shell.is-exiting .barcode-boot-stage,
+  .barcode-boot-shell.is-exiting .barcode-boot-bar-read,
+  .barcode-boot-shell.is-exiting .barcode-boot-caption {
     animation: none;
   }
 
-  .barcode-camera-loader-sweep {
-    top: 50%;
-    opacity: 0.65;
-  }
-
-  .barcode-camera-loader-glow {
-    opacity: 0.7;
-    transform: none;
-  }
+  .barcode-boot-shell.is-exiting { opacity: 0; }
 }
 
 .android-update-dot,
