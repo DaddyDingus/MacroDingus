@@ -37,6 +37,22 @@ export function expandFoodQuery(value: string): string[] {
       }
     }
   }
+  // Composition databases describe an ordinary low-and-slow smoked meat as
+  // roasted/cooked and never include the appliance or a requested quantity in
+  // the food name. Add a deliberately narrower ingredient-first variant so
+  // "100 grams pellet smoked lamb shoulder" can find AFCD's "Lamb, roasting
+  // piece, shoulder ... roasted" without treating all cooking methods as
+  // interchangeable in the displayed result itself.
+  const words = normalized.split(" ");
+  const hadCookedMeatPreparation = words.some((word) => ["smoked", "smoking", "cooked"].includes(word));
+  const stripped = words.filter((word) =>
+    !["pellet", "pellets", "smoker", "smoked", "smoking", "cooked", "cook", "gram", "grams", "g", "per"].includes(word)
+    && !/^\d+(?:\.\d+)?$/.test(word)
+  );
+  if (stripped.length > 0 && stripped.length < words.length) {
+    expanded.add(stripped.join(" "));
+    if (hadCookedMeatPreparation) expanded.add(`${stripped.join(" ")} roasted`);
+  }
   return [...expanded].filter(Boolean);
 }
 
@@ -48,14 +64,23 @@ function textTier(text: string, query: string): number {
   return 0;
 }
 
+function unorderedTokenScore(text: string, query: string): number {
+  const tokens = query.split(" ").filter(Boolean);
+  if (tokens.length < 2 || !tokens.every((token) => text.includes(token))) return 0;
+  // Below a contiguous whole-query match (20), above a generic substring
+  // match (10). This is what composition-database names need: meaningful
+  // qualifiers are often comma-separated in a different order.
+  return 15;
+}
+
 export function foodTextRelevance(name: string, brand: string | null, query: string): number {
   const direct = normalizeFoodQuery(query);
   const nameText = normalizeFoodQuery(name);
   const brandText = normalizeFoodQuery(brand ?? "");
-  let best = textTier(nameText, direct) * 10 + (brandText.includes(direct) ? 1 : 0);
+  let best = Math.max(textTier(nameText, direct) * 10, unorderedTokenScore(nameText, direct)) + (brandText.includes(direct) ? 1 : 0);
   for (const alias of expandFoodQuery(direct).slice(1)) {
     // Alias matches sit just below an equally-shaped literal match.
-    best = Math.max(best, textTier(nameText, alias) * 10 - 1);
+    best = Math.max(best, Math.max(textTier(nameText, alias) * 10, unorderedTokenScore(nameText, alias)) - 1);
   }
   return best;
 }

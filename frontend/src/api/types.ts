@@ -3,7 +3,7 @@ export interface Food {
   name: string;
   brand: string | null;
   barcode: string | null;
-  source: "custom" | "openfoodfacts" | "recipe" | "ai_estimate" | "afcd";
+  source: "custom" | "openfoodfacts" | "recipe" | "ai_estimate" | "ai_sourced" | "afcd";
   servingSizeGrams: number | null;
   servingName: string | null;
   measuresJson?: string | null;
@@ -29,6 +29,7 @@ export interface Food {
   // Curated subset of carb subtypes (fructose/glucose/sucrose/lactose/
   // maltose/galactose/starch) — also AFCD-sourced, same sparse convention.
   carbDetailJson: string | null;
+  provenanceJson?: string | null;
   icon: string | null;
   // Non-null means this food is "deleted" (or an ai_estimate Describe row) —
   // kept alive server-side only to back existing log entries; the backend
@@ -131,6 +132,18 @@ export interface DescribedMealItem {
   quantityGrams: number;
   servingDescription: string | null;
 }
+
+export type AiFoodLookupResult =
+  | { status: "clarification"; question: string; options: string[] }
+  | {
+      status: "resolved";
+      food: Food;
+      quantityGrams: number;
+      confidence: "high" | "medium" | "low";
+      assumptions: string[];
+      sourceDatabase: "AFCD" | "USDA FoodData Central";
+      sourceFoodName: string;
+    };
 
 // Response shape of POST /api/recipes/import-url (backend/src/engine/recipeImport.ts).
 // Same "already-real foods rows" contract as DescribedMealItem above — never

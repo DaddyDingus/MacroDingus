@@ -750,6 +750,21 @@ export default function FoodDetailScreen({
   const omega3 = scaleOptional(food.omega3Per100g);
   const omega6 = scaleOptional(food.omega6Per100g);
   const transFat = scaleOptional(food.transFatPer100g);
+  const provenance = (() => {
+    if (food.source !== "ai_sourced" || !food.provenanceJson) return null;
+    try {
+      const value = JSON.parse(food.provenanceJson) as Record<string, unknown>;
+      return {
+        database: typeof value.database === "string" ? value.database : "authoritative food data",
+        sourceFoodName: typeof value.sourceFoodName === "string" ? value.sourceFoodName : null,
+        sourceUrl: typeof value.sourceUrl === "string" && /^https:\/\//.test(value.sourceUrl) ? value.sourceUrl : null,
+        confidence: typeof value.confidence === "string" ? value.confidence : null,
+        assumptions: Array.isArray(value.assumptions) ? value.assumptions.filter((item): item is string => typeof item === "string") : [],
+      };
+    } catch {
+      return null;
+    }
+  })();
 
   const ringData = RING_METRICS.map((m) => {
     const consumed = totals?.[m.key] ?? 0;
@@ -896,6 +911,30 @@ export default function FoodDetailScreen({
           )}
           {onDeleteFood && <ActionIconButton icon={<Trash2 className="w-4 h-4" strokeWidth={2.5} />} label="Delete" onClick={() => setConfirmingDelete(true)} />}
         </div>
+
+        {provenance && (
+          <div className="mx-4 mb-3 rounded-xl border border-accent/25 bg-accent/[0.07] px-3 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-white">AI-sourced nutrition</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-muted">
+                  Matched to {provenance.sourceFoodName ?? "a generic food record"} in {provenance.database}
+                  {provenance.confidence ? ` · ${provenance.confidence} match confidence` : ""}.
+                </p>
+              </div>
+              {provenance.sourceUrl && (
+                <a href={provenance.sourceUrl} target="_blank" rel="noreferrer" className="shrink-0 text-[11px] font-semibold text-accent">
+                  Source
+                </a>
+              )}
+            </div>
+            {provenance.assumptions.length > 0 && (
+              <p className="mt-2 border-t border-white/10 pt-2 text-[11px] leading-relaxed text-white/70">
+                {provenance.assumptions.join(" · ")}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Impact on Targets — skipped entirely in recipe-picker mode, not
             just the rings: a recipe has no daily target to show impact

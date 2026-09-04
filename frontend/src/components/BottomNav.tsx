@@ -3,6 +3,7 @@ import { LayoutDashboard, UtensilsCrossed, Target, Menu, type LucideIcon } from 
 import QuickActionsButton from "./QuickActionsSheet";
 import { useNavVisibility } from "../lib/navVisibility";
 import { useCoachStatus } from "../api/coach";
+import { useAiModelUpdates } from "../api/settings";
 
 const TABS_LEFT = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -13,12 +14,24 @@ const TABS_RIGHT = [
   { to: "/more", label: "More", icon: Menu },
 ];
 
-function Tab({ to, label, icon: Icon, attention = false }: { to: string; label: string; icon: LucideIcon; attention?: boolean }) {
+function Tab({
+  to,
+  label,
+  icon: Icon,
+  attention = false,
+  attentionLabel = "attention needed",
+}: {
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  attention?: boolean;
+  attentionLabel?: string;
+}) {
   return (
     <NavLink
       to={to}
       end={to === "/"}
-      aria-label={attention ? `${label}, check-in due` : label}
+      aria-label={attention ? `${label}, ${attentionLabel}` : label}
       className={({ isActive }) =>
         `flex-1 py-2 flex flex-col items-center gap-0.5 transition-colors duration-150 ${
           isActive ? "text-accent font-semibold" : "text-muted hover:text-white/80"
@@ -51,6 +64,7 @@ export default function BottomNav() {
   const location = useLocation();
   const { hidden, shortcutsHidden, dockedBarScrollVisible } = useNavVisibility();
   const coachStatus = useCoachStatus();
+  const aiModelUpdates = useAiModelUpdates();
   const nextCheckinDueDate = coachStatus.data?.nextCheckinDueDate ?? null;
   // The attention dot is a reminder, so an ignored check-in clears it —
   // same rule as the Dashboard's banner (see CoachStatus.checkinIgnored).
@@ -92,7 +106,12 @@ export default function BottomNav() {
       ))}
       <QuickActionsButton />
       {TABS_RIGHT.map((t) => (
-        <Tab key={t.to} {...t} attention={t.to === "/strategy" && checkinDue} />
+        <Tab
+          key={t.to}
+          {...t}
+          attention={t.to === "/strategy" ? checkinDue : t.to === "/more" && !!aiModelUpdates.data?.hasUpdates}
+          attentionLabel={t.to === "/strategy" ? "check-in due" : "new AI models available"}
+        />
       ))}
     </nav>
   );

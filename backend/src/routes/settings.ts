@@ -7,16 +7,19 @@ import {
   AI_PROVIDER_CATALOG,
   AI_PROVIDERS,
   AI_TASKS,
+  aiNewProviderModels,
   aiProviderKeyStatus,
   aiProviderModelCatalog,
   aiTaskAssignments,
   aiTaskFallbackAssignments,
+  markAiProviderModelsSeen,
   removeAiProviderKey,
   recommendedModelsForTask,
   saveAiProviderKey,
   saveAiTaskAssignment,
   saveAiTaskFallbackAssignment,
   type AiProvider,
+  type AiProviderModels,
   type AiTask,
 } from "../engine/aiProvider.js";
 
@@ -35,24 +38,53 @@ const taskAssignmentInput = z.object({
   model: z.string().trim().min(1).max(120).regex(/^[A-Za-z0-9._:/-]+$/, "Invalid model ID"),
 });
 
-async function aiSettingsStatus(userId: string) {
-  const assignments = await aiTaskAssignments(userId);
-  const fallbackAssignments = await aiTaskFallbackAssignments(userId);
-  const legacyAnthropicStatus = aiProviderKeyStatus(userId, "anthropic");
+async function aiProviderStatuses(userId: string, refreshModels = false) {
   const providerEntries = await Promise.all(AI_PROVIDERS.map(async (provider) => [
     provider,
     {
       ...AI_PROVIDER_CATALOG[provider],
-      ...await aiProviderModelCatalog(userId, provider),
+      ...await aiProviderModelCatalog(userId, provider, refreshModels),
       ...aiProviderKeyStatus(userId, provider),
     },
   ] as const));
+  return Object.fromEntries(providerEntries) as Record<AiProvider, (typeof providerEntries)[number][1]>;
+}
+
+function availableProviderModels(providers: Awaited<ReturnType<typeof aiProviderStatuses>>): AiProviderModels {
+  return Object.fromEntries(AI_PROVIDERS.map((provider) => [provider, providers[provider].availableModels])) as AiProviderModels;
+}
+
+async function aiModelUpdatesStatus(userId: string, refreshModels = false) {
+  const providers = await aiProviderStatuses(userId, refreshModels);
+  const current = availableProviderModels(providers);
+  const updates = await aiNewProviderModels(userId, current);
+  // The always-mounted nav calls this endpoint, so it owns the quiet first-run
+  // baseline even if the user has never opened AI settings. Without this, an
+  // absent baseline would continue suppressing every future release forever.
+  if (!updates.initialized) {
+    await markAiProviderModelsSeen(userId, current);
+    return { initialized: true, hasUpdates: false, count: 0, newModels: { anthropic: [], openai: [], gemini: [] } };
+  }
+  const count = AI_PROVIDERS.reduce((total, provider) => total + updates.newModels[provider].length, 0);
+  return { initialized: updates.initialized, hasUpdates: count > 0, count, newModels: updates.newModels };
+}
+
+async function aiSettingsStatus(userId: string, refreshModels = false) {
+  const assignments = await aiTaskAssignments(userId);
+  const fallbackAssignments = await aiTaskFallbackAssignments(userId);
+  const legacyAnthropicStatus = aiProviderKeyStatus(userId, "anthropic");
+  const providers = await aiProviderStatuses(userId, refreshModels);
+  const updates = await aiNewProviderModels(userId, availableProviderModels(providers));
   return {
     // Top-level fields preserve the old response contract for a cached app
     // shell during a rolling deploy. The new UI reads `providers` below.
     configured: legacyAnthropicStatus.configured,
     source: legacyAnthropicStatus.source,
-    providers: Object.fromEntries(providerEntries),
+    providers: Object.fromEntries(AI_PROVIDERS.map((provider) => [provider, {
+      ...providers[provider],
+      newModels: updates.newModels[provider],
+    }])),
+    hasNewModels: AI_PROVIDERS.some((provider) => updates.newModels[provider].length > 0),
     tasks: AI_TASKS.map((task) => {
       const assignment = assignments[task.id];
       const fallback = fallbackAssignments[task.id] ?? null;
@@ -75,7 +107,18 @@ async function aiSettingsStatus(userId: string) {
 }
 
 export function registerSettingsRoutes(app: FastifyInstance) {
-  app.get("/api/settings/ai", async (req) => aiSettingsStatus(req.userId!));
+  app.get("/api/settings/ai/model-updates", async (req) => aiModelUpdatesStatus(req.userId!));
+
+  app.post("/api/settings/ai/model-updates/seen", async (req) => {
+    const providers = await aiProviderStatuses(req.userId!);
+    await markAiProviderModelsSeen(req.userId!, availableProviderModels(providers));
+    return { initialized: true, hasUpdates: false, count: 0, newModels: { anthropic: [], openai: [], gemini: [] } };
+  });
+
+  app.get("/api/settings/ai", async (req) => {
+    const refreshModels = (req.query as { refreshModels?: string }).refreshModels === "1";
+    return aiSettingsStatus(req.userId!, refreshModels);
+  });
 
   // Keep these two legacy endpoints working for a cached pre-deploy frontend.
   app.put("/api/settings/ai", async (req, reply) => {

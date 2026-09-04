@@ -486,7 +486,17 @@ export default function PhotosScreen() {
                   </div>
 
                   {groupPhotos.length > 0 && (
-                    <div className="flex gap-2 mb-3 overflow-x-auto no-scrollbar">
+                    // A history row is a horizontal photo carousel, not a
+                    // competing vertical page-scroll target. On Android a
+                    // real left/right gesture naturally has a few pixels of
+                    // vertical wobble; without this axis hint, that wobble
+                    // lets the page take ownership before the carousel can
+                    // begin scrolling.
+                    <div
+                      data-no-rubber-band
+                      className="flex gap-2 mb-3 overflow-x-auto no-scrollbar overscroll-x-contain select-none"
+                      style={{ touchAction: "pan-x" }}
+                    >
                       {groupPhotos.map((photo) => (
                         <div key={photo.id} className="relative shrink-0">
                           <button

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronUp, ExternalLink, Trash2 } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, ExternalLink, RefreshCw, Trash2 } from "lucide-react";
 import BottomSheet from "./BottomSheet";
 import { ApiError } from "../api/client";
 import {
   useAiSettings,
+  useMarkAiModelsSeen,
+  useRefreshAiModels,
   useRemoveAiKey,
   useSaveAiKey,
   useSaveAiTask,
@@ -93,7 +95,7 @@ function SelectionSheet({
   onClose,
 }: {
   title: string;
-  options: { value: string; label: string; recommended?: boolean; discovered?: boolean }[];
+  options: { value: string; label: string; recommended?: boolean; discovered?: boolean; isNew?: boolean }[];
   selected: string;
   allowCustom?: boolean;
   onSelect: (value: string) => void;
@@ -121,10 +123,13 @@ function SelectionSheet({
                 >
                   <span className="min-w-0 flex items-center gap-2">
                     <span className={`text-sm truncate ${option.value === selected ? "text-accent" : ""}`}>{option.label}</span>
+                    {option.isNew && (
+                      <span className="text-[9px] uppercase tracking-wide text-accent border border-accent/50 rounded-full px-1.5 py-0.5 shrink-0">New</span>
+                    )}
                     {option.recommended && (
                       <span className="text-[9px] uppercase tracking-wide text-muted bg-line/30 rounded-full px-1.5 py-0.5 shrink-0">Recommended</span>
                     )}
-                    {!option.recommended && option.discovered && (
+                    {!option.isNew && !option.recommended && option.discovered && (
                       <span className="text-[9px] uppercase tracking-wide text-muted/80 border border-line rounded-full px-1.5 py-0.5 shrink-0">Available</span>
                     )}
                   </span>
@@ -184,6 +189,8 @@ function UnsavedChangesSheet({ onClose, onDiscard }: { onClose: () => void; onDi
 
 export default function AiSettingsSheet({ onClose }: { onClose: () => void }) {
   const status = useAiSettings();
+  const markModelsSeen = useMarkAiModelsSeen();
+  const refreshModels = useRefreshAiModels();
   const saveKey = useSaveAiKey();
   const removeKey = useRemoveAiKey();
   const saveTask = useSaveAiTask();
@@ -199,7 +206,9 @@ export default function AiSettingsSheet({ onClose }: { onClose: () => void }) {
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [savingAll, setSavingAll] = useState(false);
   const [savedAll, setSavedAll] = useState(false);
+  const [newModels, setNewModels] = useState<Partial<Record<AiProvider, string[]>>>({});
   const draftsInitialized = useRef(false);
+  const acknowledgedCatalog = useRef("");
   const allowClose = useRef(false);
 
   useEffect(() => {
@@ -211,6 +220,22 @@ export default function AiSettingsSheet({ onClose }: { onClose: () => void }) {
       task.fallbackProvider && task.fallbackModel ? { provider: task.fallbackProvider, model: task.fallbackModel } : null,
     ])) as Record<AiTaskId, FallbackDraft>);
   }, [status.data]);
+
+  useEffect(() => {
+    // Wait for this mount's live response rather than acknowledging from the
+    // persisted query cache. Otherwise the global notifier may already know
+    // about a new model while this sheet snapshots an older catalogue, clears
+    // the dot, and never gets a chance to label the actual model as New.
+    if (!status.data || !status.isFetchedAfterMount || status.isFetching) return;
+    const signature = JSON.stringify(PROVIDERS.map((provider) => status.data?.providers[provider].availableModels ?? []));
+    if (signature === acknowledgedCatalog.current) return;
+    acknowledgedCatalog.current = signature;
+    setNewModels((current) => Object.fromEntries(PROVIDERS.map((provider) => [
+      provider,
+      [...new Set([...(current[provider] ?? []), ...(status.data?.providers[provider].newModels ?? [])])],
+    ])));
+    markModelsSeen.mutate();
+  }, [status.data, status.isFetchedAfterMount, status.isFetching]);
 
   const changedTasks = status.data?.tasks.filter((task) => {
     const draft = drafts[task.id];
@@ -424,9 +449,20 @@ export default function AiSettingsSheet({ onClose }: { onClose: () => void }) {
             </section>
 
             <section className="space-y-2">
-              <div>
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">Models by task</h3>
-                <p className="text-[11px] text-muted mt-1">Available models refresh automatically from configured providers about once a day.</p>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">Models by task</h3>
+                  <p className="text-[11px] text-muted mt-1">Available models are checked when this screen opens and refresh automatically every hour.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => refreshModels.mutate()}
+                  disabled={refreshModels.isPending}
+                  className="shrink-0 flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1.5 text-[11px] text-muted active:bg-surface-raised disabled:opacity-50"
+                >
+                  <RefreshCw size={12} className={refreshModels.isPending ? "animate-spin" : ""} />
+                  {refreshModels.isPending ? "Checking…" : "Refresh"}
+                </button>
               </div>
               {status.data?.tasks.map((task) => {
                 const draft = drafts[task.id];
@@ -582,6 +618,7 @@ export default function AiSettingsSheet({ onClose }: { onClose: () => void }) {
                     label: model,
                     recommended: model === task.recommendedModels?.[draft.provider],
                     discovered: status.data.providers[draft.provider].discoveredModels?.includes(model),
+                    isNew: newModels[draft.provider]?.includes(model),
                   }))}
                   selected={draft.model}
                   allowCustom
@@ -622,6 +659,7 @@ export default function AiSettingsSheet({ onClose }: { onClose: () => void }) {
                   label: model,
                   recommended: model === task.recommendedModels?.[fallbackDraft.provider],
                   discovered: status.data.providers[fallbackDraft.provider].discoveredModels?.includes(model),
+                  isNew: newModels[fallbackDraft.provider]?.includes(model),
                 }))}
                 selected={fallbackDraft.model}
                 onSelect={(model) => updateFallbackModelDraft(task.id, model)}

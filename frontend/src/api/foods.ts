@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
-import type { CreateFoodInput, DescribedMealItem, Food, LabelScanResult } from "./types";
+import type { AiFoodLookupResult, CreateFoodInput, DescribedMealItem, Food, LabelScanResult } from "./types";
 
 export function useFoodSearch(query: string, debouncedRemoteQuery: string) {
   const normalizedQuery = query.trim();
@@ -75,6 +75,24 @@ export function useCustomFoods() {
   return useQuery({
     queryKey: ["foods", "source", "custom"],
     queryFn: () => apiFetch<Food[]>("/foods?source=custom&limit=50"),
+  });
+}
+
+export function useAiSourcedFoods() {
+  return useQuery({
+    queryKey: ["foods", "source", "ai_sourced"],
+    queryFn: () => apiFetch<Food[]>("/foods?source=ai_sourced&limit=50"),
+  });
+}
+
+export function useAiFoodLookup() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { description: string; clarification?: string }) =>
+      apiFetch<AiFoodLookupResult>("/foods/ai-lookup", { method: "POST", body: JSON.stringify(input) }),
+    onSuccess: (result) => {
+      if (result.status === "resolved") qc.invalidateQueries({ queryKey: ["foods"] });
+    },
   });
 }
 

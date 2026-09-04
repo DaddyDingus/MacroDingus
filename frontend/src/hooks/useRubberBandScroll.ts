@@ -348,18 +348,10 @@ export function useRubberBandScroll() {
     function onTouchStart(e: TouchEvent) {
       if (e.touches.length !== 1) return;
       // A sheet/modal owns scrolling right now — this touch belongs to
-      // whatever's on top, not the page underneath it. Two independent lock
-      // producers, two signals: PhotoAlignerModal sets body overflow:hidden
-      // directly; BottomSheet's shared lib/bodyScrollLock.ts instead pins
-      // body via position:fixed (not overflow — overflow:hidden on body
-      // specifically is what makes Android Chrome restore its collapsed
-      // address bar mid-open, resizing the visual viewport and shifting any
-      // position:sticky header on the screen underneath). Both must be
-      // checked, or removing/changing either producer's own flag silently
-      // stops this guard from tripping and the pull-to-refresh gesture keeps
-      // firing (via this hook's window-level touchmove listener) right
-      // through whatever sheet is on top.
-      if (document.body.style.overflow === "hidden" || document.body.style.position === "fixed") return;
+      // whatever's on top, not the page underneath it. Every full-screen
+      // sheet/editor now uses the shared body-scroll lock, whose fixed body
+      // is both the actual lock and this hook's reliable ownership signal.
+      if (document.body.style.position === "fixed") return;
       // A touch starting inside an element with this attribute owns its own
       // horizontal drag gesture (e.g. the Compare screen's before/after
       // slider) — a real finger swipe is never perfectly horizontal, and

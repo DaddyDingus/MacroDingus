@@ -15,8 +15,8 @@ export const AI_TASKS = [
     id: "labelScan",
     label: "Nutrition label scan",
     description: "Reads nutrition panels from photos.",
-    defaultProvider: "anthropic",
-    defaultModel: "claude-haiku-4-5",
+    defaultProvider: "gemini",
+    defaultModel: "gemini-3.8-flash",
   },
   {
     id: "mealDescription",
@@ -24,6 +24,13 @@ export const AI_TASKS = [
     description: "Identifies foods and estimates portions from text or a photo.",
     defaultProvider: "anthropic",
     defaultModel: "claude-sonnet-5",
+  },
+  {
+    id: "foodLookup",
+    label: "Generic food lookup",
+    description: "Matches a plain-language food to sourced AFCD or USDA nutrition.",
+    defaultProvider: "gemini",
+    defaultModel: "gemini-3.8-flash",
   },
   {
     id: "recipeImport",
@@ -50,8 +57,8 @@ export const AI_TASKS = [
     id: "checkinNarrative",
     label: "Check-in summary",
     description: "Writes the short factual check-in narrative.",
-    defaultProvider: "anthropic",
-    defaultModel: "claude-sonnet-5",
+    defaultProvider: "gemini",
+    defaultModel: "gemini-3.8-flash",
   },
 ] as const satisfies readonly {
   id: string;
@@ -84,7 +91,7 @@ export const AI_PROVIDER_CATALOG = {
     label: "Google Gemini",
     keyPlaceholder: "AIza…",
     keyUrl: "https://aistudio.google.com/app/apikey",
-    models: ["gemini-3.6-flash", "gemini-3.1-pro-preview", "gemini-2.5-flash"],
+    models: ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.1-pro-preview", "gemini-2.5-flash"],
   },
 } as const;
 
@@ -97,12 +104,17 @@ const AI_TASK_RECOMMENDED_MODELS: Record<AiTask, Record<AiProvider, string>> = {
   labelScan: {
     anthropic: "claude-haiku-4-5",
     openai: "gpt-5.6-luna",
-    gemini: "gemini-3.6-flash",
+    gemini: "gemini-3.8-flash",
   },
   mealDescription: {
     anthropic: "claude-sonnet-5",
     openai: "gpt-5.6-sol",
     gemini: "gemini-3.1-pro-preview",
+  },
+  foodLookup: {
+    anthropic: "claude-haiku-4-5",
+    openai: "gpt-5.6-luna",
+    gemini: "gemini-3.8-flash",
   },
   recipeImport: {
     anthropic: "claude-sonnet-5",
@@ -122,7 +134,7 @@ const AI_TASK_RECOMMENDED_MODELS: Record<AiTask, Record<AiProvider, string>> = {
   checkinNarrative: {
     anthropic: "claude-sonnet-5",
     openai: "gpt-5.6-sol",
-    gemini: "gemini-3.1-pro-preview",
+    gemini: "gemini-3.8-flash",
   },
 };
 
@@ -132,7 +144,11 @@ export function recommendedModelsForTask(task: AiTask): Record<AiProvider, strin
 
 const SETTINGS_KEY = "aiTaskModels";
 const FALLBACK_SETTINGS_KEY = "aiTaskFallbackModels";
-const MODEL_CATALOG_CACHE_MS = 24 * 60 * 60 * 1000;
+// Provider catalogues are cheap metadata requests and new model releases can
+// land between app releases. Keep a short per-key cache so opening AI settings
+// normally shows a current list without repeatedly hitting all three provider
+// APIs; the settings screen also offers an explicit cache-bypassing refresh.
+const MODEL_CATALOG_CACHE_MS = 60 * 60 * 1000;
 let dataRoot: string | undefined;
 const anthropicClients = new Map<string, { apiKey: string; client: Anthropic }>();
 const modelCatalogCache = new Map<string, {
@@ -199,6 +215,11 @@ export function aiProviderKeyStatus(userId: string, provider: AiProvider): { con
 
 export interface AiProviderModelCatalog {
   models: string[];
+  // Every compatible model the configured key can currently access, including
+  // curated models. `discoveredModels` below is only the UI's "Available"
+  // badge subset (live models not already in the curated fallback list), so it
+  // cannot by itself drive reliable new-model notifications.
+  availableModels: string[];
   discoveredModels: string[];
   modelCatalogSource: "live" | "cache" | "fallback";
   modelsRefreshedAt: string | null;
@@ -242,7 +263,7 @@ async function discoverProviderModels(provider: AiProvider, apiKey: string): Pro
     }) as { data?: unknown };
     return stringIds(body.data, "id").filter((id) =>
       /^(gpt-|o[1-9])/.test(id)
-      && !/(audio|realtime|transcribe|tts|image|search|embedding|moderation|codex|instruct)/i.test(id)
+      && !/(audio|realtime|transcribe|tts|image|search|embedding|moderation|codex|instruct|chat)/i.test(id)
       && !id.startsWith("ft:")
     );
   }
@@ -261,19 +282,24 @@ async function discoverProviderModels(provider: AiProvider, apiKey: string): Pro
   });
 }
 
-export async function aiProviderModelCatalog(userId: string, provider: AiProvider): Promise<AiProviderModelCatalog> {
+export async function aiProviderModelCatalog(
+  userId: string,
+  provider: AiProvider,
+  forceRefresh = false
+): Promise<AiProviderModelCatalog> {
   const curated: string[] = [...AI_PROVIDER_CATALOG[provider].models];
   const resolved = resolvedKey(userId, provider);
   if (!resolved) {
-    return { models: curated, discoveredModels: [], modelCatalogSource: "fallback", modelsRefreshedAt: null };
+    return { models: curated, availableModels: [], discoveredModels: [], modelCatalogSource: "fallback", modelsRefreshedAt: null };
   }
 
   const cacheKey = modelCacheKey(userId, provider);
   const keyFingerprint = fingerprintKey(resolved.apiKey);
   const cached = modelCatalogCache.get(cacheKey);
-  if (cached?.keyFingerprint === keyFingerprint && cached.expiresAt > Date.now()) {
+  if (!forceRefresh && cached?.keyFingerprint === keyFingerprint && cached.expiresAt > Date.now()) {
     return {
       models: [...curated, ...cached.models.filter((model) => !curated.includes(model))],
+      availableModels: cached.models,
       discoveredModels: cached.models.filter((model) => !curated.includes(model)),
       modelCatalogSource: "cache",
       modelsRefreshedAt: cached.refreshedAt,
@@ -292,6 +318,7 @@ export async function aiProviderModelCatalog(userId: string, provider: AiProvide
     });
     return {
       models: [...curated, ...discovered.filter((model) => !curated.includes(model))],
+      availableModels: discovered,
       discoveredModels: discovered.filter((model) => !curated.includes(model)),
       modelCatalogSource: "live",
       modelsRefreshedAt: refreshedAt,
@@ -300,13 +327,68 @@ export async function aiProviderModelCatalog(userId: string, provider: AiProvide
     if (cached?.keyFingerprint === keyFingerprint) {
       return {
         models: [...curated, ...cached.models.filter((model) => !curated.includes(model))],
+        availableModels: cached.models,
         discoveredModels: cached.models.filter((model) => !curated.includes(model)),
         modelCatalogSource: "cache",
         modelsRefreshedAt: cached.refreshedAt,
       };
     }
-    return { models: curated, discoveredModels: [], modelCatalogSource: "fallback", modelsRefreshedAt: null };
+    return { models: curated, availableModels: [], discoveredModels: [], modelCatalogSource: "fallback", modelsRefreshedAt: null };
   }
+}
+
+const SEEN_PROVIDER_MODELS_KEY = "aiSeenProviderModels";
+
+export type AiProviderModels = Record<AiProvider, string[]>;
+
+function emptyProviderModels(): AiProviderModels {
+  return { anthropic: [], openai: [], gemini: [] };
+}
+
+function parseProviderModels(value: unknown): AiProviderModels | null {
+  if (!value || typeof value !== "object") return null;
+  const source = value as Record<string, unknown>;
+  const parsed = emptyProviderModels();
+  for (const provider of AI_PROVIDERS) {
+    if (!Array.isArray(source[provider])) continue;
+    parsed[provider] = [...new Set(source[provider].filter((model): model is string => typeof model === "string" && model.length > 0))];
+  }
+  return parsed;
+}
+
+// Provider catalogues commonly expose a stable alias and one or more dated
+// snapshots for the same release. Notify for the human-meaningful release,
+// not every immutable build identifier, or one launch becomes several dots.
+function isNotifiableModel(model: string): boolean {
+  return !(/-\d{4}-\d{2}-\d{2}$/.test(model) || /-\d{8}$/.test(model));
+}
+
+export async function aiNewProviderModels(userId: string, current: AiProviderModels): Promise<{
+  initialized: boolean;
+  newModels: AiProviderModels;
+}> {
+  const { settings } = await readSettings(userId);
+  const seen = parseProviderModels(settings[SEEN_PROVIDER_MODELS_KEY]);
+  if (!seen) return { initialized: false, newModels: emptyProviderModels() };
+
+  const newModels = emptyProviderModels();
+  for (const provider of AI_PROVIDERS) {
+    const seenModels = new Set(seen[provider]);
+    newModels[provider] = current[provider].filter((model) => isNotifiableModel(model) && !seenModels.has(model));
+  }
+  return { initialized: true, newModels };
+}
+
+export async function markAiProviderModelsSeen(userId: string, current: AiProviderModels): Promise<void> {
+  const { settings } = await readSettings(userId);
+  const previous = parseProviderModels(settings[SEEN_PROVIDER_MODELS_KEY]) ?? emptyProviderModels();
+  const next = emptyProviderModels();
+  for (const provider of AI_PROVIDERS) {
+    // Retain vanished models so a temporary provider-catalogue omission does
+    // not announce the same model again when it reappears.
+    next[provider] = [...new Set([...previous[provider], ...current[provider].filter(isNotifiableModel)])].sort((a, b) => a.localeCompare(b));
+  }
+  await writeSettingsPatch(userId, { [SEEN_PROVIDER_MODELS_KEY]: next });
 }
 
 async function validateOpenAiKey(apiKey: string): Promise<void> {

@@ -50,7 +50,11 @@ runMigrations();
 
 const app = Fastify({ logger: true });
 app.addHook("onSend", async (_request, reply) => {
-  reply.header("content-security-policy", "default-src 'self'; base-uri 'self'; connect-src 'self' https: wss:; font-src 'self' data:; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob: https:; manifest-src 'self'; media-src 'self' blob: https:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'");
+  // MediaPipe's local pose model compiles its self-hosted WebAssembly module
+  // when Match Pose is tapped. `wasm-unsafe-eval` permits that narrowly; do
+  // not broaden this to `unsafe-eval`, which would also permit string-based
+  // JavaScript evaluation.
+  reply.header("content-security-policy", "default-src 'self'; base-uri 'self'; connect-src 'self' https: wss:; font-src 'self' data:; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob: https:; manifest-src 'self'; media-src 'self' blob: https:; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'");
   reply.header("strict-transport-security", "max-age=31536000; includeSubDomains");
   // Barcode scanning needs the camera in this top-level origin (including the
   // Android WebView shell). `camera=()` rejects getUserMedia before

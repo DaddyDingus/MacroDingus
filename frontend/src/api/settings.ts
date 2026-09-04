@@ -26,14 +26,16 @@ export function useUpdateSettings() {
 }
 
 export type AiProvider = "anthropic" | "openai" | "gemini";
-export type AiTaskId = "labelScan" | "mealDescription" | "recipeImport" | "recipePhotoImport" | "photoComparison" | "checkinNarrative";
+export type AiTaskId = "labelScan" | "mealDescription" | "foodLookup" | "recipeImport" | "recipePhotoImport" | "photoComparison" | "checkinNarrative";
 
 export interface AiProviderStatus {
   label: string;
   keyPlaceholder: string;
   keyUrl: string;
   models: string[];
+  availableModels?: string[];
   discoveredModels?: string[];
+  newModels?: string[];
   modelCatalogSource?: "live" | "cache" | "fallback";
   modelsRefreshedAt?: string | null;
   configured: boolean;
@@ -58,6 +60,33 @@ export interface AiTaskStatus {
 export interface AiSettingsStatus {
   providers: Record<AiProvider, AiProviderStatus>;
   tasks: AiTaskStatus[];
+  hasNewModels?: boolean;
+}
+
+export interface AiModelUpdates {
+  initialized: boolean;
+  hasUpdates: boolean;
+  count: number;
+  newModels: Record<AiProvider, string[]>;
+}
+
+export function useAiModelUpdates() {
+  const auth = useAuthStatus();
+  return useQuery({
+    queryKey: ["settings", "ai", "model-updates"],
+    queryFn: () => apiFetch<AiModelUpdates>("/settings/ai/model-updates"),
+    enabled: !!auth.data?.authenticated,
+    refetchOnMount: "always",
+    refetchInterval: 60 * 60 * 1000,
+  });
+}
+
+export function useMarkAiModelsSeen() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiFetch<AiModelUpdates>("/settings/ai/model-updates/seen", { method: "POST" }),
+    onSuccess: (data) => qc.setQueryData(["settings", "ai", "model-updates"], data),
+  });
 }
 
 export function useAiSettings() {
@@ -66,6 +95,16 @@ export function useAiSettings() {
     queryKey: ["settings", "ai"],
     queryFn: () => apiFetch<AiSettingsStatus>("/settings/ai"),
     enabled: !!auth.data?.authenticated,
+    refetchOnMount: "always",
+    refetchInterval: 60 * 60 * 1000,
+  });
+}
+
+export function useRefreshAiModels() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiFetch<AiSettingsStatus>("/settings/ai?refreshModels=1"),
+    onSuccess: (data) => qc.setQueryData(["settings", "ai"], data),
   });
 }
 

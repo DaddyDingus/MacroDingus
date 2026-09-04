@@ -58,7 +58,7 @@ export const foods = sqliteTable("foods", {
   name: text("name").notNull(),
   brand: text("brand"),
   barcode: text("barcode"),
-  source: text("source").notNull().default("custom"), // 'custom' | 'openfoodfacts' | 'recipe' | 'ai_estimate' | 'afcd'
+  source: text("source").notNull().default("custom"), // 'custom' | 'openfoodfacts' | 'recipe' | 'ai_estimate' | 'ai_sourced' | 'afcd'
   servingSizeGrams: real("serving_size_grams"),
   servingName: text("serving_name"),
   // Optional verified household measures beyond the single primary serving,
@@ -93,6 +93,11 @@ export const foods = sqliteTable("foods", {
   // AFCD only lab-tested amino acids for a subset of its foods.
   aminoAcidsJson: text("amino_acids_json"),
   carbDetailJson: text("carb_detail_json"),
+  // Present only on durable AI-sourced foods. The nutrition itself is copied
+  // from the cited AFCD/USDA record rather than invented by the model; this
+  // JSON keeps that source id/name plus the user's description, resolution
+  // confidence, and disclosed assumptions attached to the reusable row.
+  provenanceJson: text("provenance_json"),
   // A user-picked emoji for a custom food or recipe — null means "no
   // override", so FoodIconAvatar falls back to its keyword-based guess
   // (see lib/foodEmoji.ts's getFoodIcon). OpenFoodFacts imports never set

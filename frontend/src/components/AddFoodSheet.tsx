@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import type { Food, LogEntry, Nutrition } from "../api/types";
 import type { MacroTargets } from "./MacroSummaryBar";
-import { useFoodSearch, useCreateFood, useCustomFoods, useBarcodeLookup, useDeleteFood, useDescribeMeal, recordFoodSearchSelection } from "../api/foods";
+import { useFoodSearch, useCreateFood, useCustomFoods, useAiSourcedFoods, useAiFoodLookup, useBarcodeLookup, useDeleteFood, useDescribeMeal, recordFoodSearchSelection } from "../api/foods";
 import { useFavorites, useAddFavorite, useRemoveFavorite } from "../api/favorites";
 import { useRecipes, useRecipeDetail, useCreateRecipe, useUpdateRecipe, useDeleteRecipe, useImportRecipeUrl, useImportRecipePhoto, type RecipeSummary } from "../api/recipes";
 import { useAddLog, useBulkAddLog, useUpdateLogQuantity, useDeleteLog, useSmartHistory } from "../api/logs";
@@ -104,7 +104,14 @@ const SHEET_SUB_STEP_BACK: Partial<Record<Step, Step>> = {
   recipeImportPhoto: "recipeChoice",
 };
 type Tab = "search" | "quickAdd" | "describe" | "library";
-type LibraryView = "recipes" | "foods" | "favorites";
+type LibraryView = "recipes" | "foods" | "ai" | "favorites";
+
+interface AiLookupNotice {
+  key: string;
+  foodName: string;
+  sourceDatabase: string;
+  assumptions: string[];
+}
 
 interface DescribeAction {
   canSubmit: boolean;
@@ -259,6 +266,9 @@ export default function AddFoodSheet({
   const [libraryView, setLibraryView] = useState<LibraryView>("recipes");
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [aiLookupClarification, setAiLookupClarification] = useState<{ question: string; options: string[] } | null>(null);
+  const [aiLookupError, setAiLookupError] = useState<string | null>(null);
+  const [aiLookupNotice, setAiLookupNotice] = useState<AiLookupNotice | null>(null);
   const [selectedFood, setSelectedFood] = useState<Food | null>(null);
   // True only for the initialFood open path (QuickActionFlow's recipe
   // picker) — Food Detail's "Add" commits immediately there instead of
@@ -584,6 +594,9 @@ export default function AddFoodSheet({
     }
     setQuery("");
     setDebouncedQuery("");
+    setAiLookupClarification(null);
+    setAiLookupError(null);
+    setAiLookupNotice(null);
     setScannedBarcode(undefined);
     setCreatePrefillFood(null);
     setRecipeImportUrlInput("");
@@ -615,6 +628,11 @@ export default function AddFoodSheet({
     // this effect (and re-clear the plate) on every render instead of only
     // on an actual open/step transition.
   }, [open, editingEntry, initialFood, initialStep, date]);
+
+  useEffect(() => {
+    setAiLookupClarification(null);
+    setAiLookupError(null);
+  }, [query]);
 
   useEffect(() => {
     return () => {
@@ -756,6 +774,8 @@ export default function AddFoodSheet({
   const recipes = useRecipes();
   const pendingRecipeDetail = useRecipeDetail(pendingRecipeAction?.recipeId ?? null);
   const customFoods = useCustomFoods();
+  const aiSourcedFoods = useAiSourcedFoods();
+  const aiFoodLookup = useAiFoodLookup();
   const addFavorite = useAddFavorite();
   const removeFavorite = useRemoveFavorite();
 
@@ -898,6 +918,42 @@ export default function AddFoodSheet({
     if (activeTab === "search") recordFoodSearchSelection(query, food);
     addToPlate(food);
     changeStep("browse");
+  }
+
+  function runAiFoodLookup(clarification?: string) {
+    const description = query.trim();
+    if (description.length < 2 || aiFoodLookup.isPending) return;
+    dismissNativeKeyboard();
+    setAiLookupError(null);
+    aiFoodLookup.mutate({ description, clarification }, {
+      onSuccess: (result) => {
+        if (result.status === "clarification") {
+          setAiLookupClarification({ question: result.question, options: result.options });
+          return;
+        }
+        const key = addToPlate(result.food, result.quantityGrams);
+        setAiLookupClarification(null);
+        setAiLookupNotice({
+          key,
+          foodName: result.food.name,
+          sourceDatabase: result.sourceDatabase,
+          assumptions: result.assumptions,
+        });
+        setSheetExpanded(false);
+      },
+      onError: (error) => setAiLookupError(error instanceof Error ? error.message : "Couldn't look up that food"),
+    });
+  }
+
+  function startAiFoodCreation() {
+    setActiveTab("search");
+    setQuery("");
+    setAiLookupClarification(null);
+    setAiLookupError(null);
+    setSheetExpanded(true);
+    // Reuses the Search shortcut's stable-viewport focus path so the Library
+    // AI Foods "+" lands ready to type without racing Android's keyboard.
+    setPendingSearchFocus("open");
   }
 
   // Tapping a search result's row body (as opposed to its "+" quick-add
@@ -1247,18 +1303,53 @@ export default function AddFoodSheet({
                 style={{ paddingBottom: SHEET_COLLAPSED_PEEK_PX }}
               >
                 {!onPickItems ? (
-                  <StagedPlateSection
-                    stagedPlate={stagedPlate}
-                    plateTotals={plateTotals}
-                    totals={totals}
-                    targets={targets}
-                    nutritionView={nutritionView}
-                    setNutritionView={setNutritionView}
-                    editingPlateKey={editingPlateKey}
-                    setEditingPlateKey={setEditingPlateKey}
-                    updatePlateItemQuantity={updatePlateItemQuantity}
-                    removeFromPlate={removeFromPlate}
-                  />
+                  <>
+                    {aiLookupNotice && stagedPlate.some((item) => item.key === aiLookupNotice.key) && (
+                      <div className="mx-4 mt-3 rounded-xl border border-accent/35 bg-accent/10 px-3 py-3">
+                        <div className="flex items-start gap-3">
+                          <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-accent" strokeWidth={2.4} />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-white">{aiLookupNotice.foodName} staged</p>
+                            <p className="mt-0.5 text-[11px] text-muted">Nutrition sourced from {aiLookupNotice.sourceDatabase}.</p>
+                            {aiLookupNotice.assumptions.length > 0 && (
+                              <p className="mt-1 text-[11px] leading-relaxed text-white/70">{aiLookupNotice.assumptions.join(" · ")}</p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="mt-2 flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              removeFromPlate(aiLookupNotice.key);
+                              setAiLookupNotice(null);
+                            }}
+                            className="rounded-full px-3 py-1.5 text-xs font-semibold text-muted active:bg-white/10"
+                          >
+                            Undo
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingPlateKey(aiLookupNotice.key)}
+                            className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-black"
+                          >
+                            Adjust amount
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    <StagedPlateSection
+                      stagedPlate={stagedPlate}
+                      plateTotals={plateTotals}
+                      totals={totals}
+                      targets={targets}
+                      nutritionView={nutritionView}
+                      setNutritionView={setNutritionView}
+                      editingPlateKey={editingPlateKey}
+                      setEditingPlateKey={setEditingPlateKey}
+                      updatePlateItemQuantity={updatePlateItemQuantity}
+                      removeFromPlate={removeFromPlate}
+                    />
+                  </>
                 ) : null}
               </div>
 
@@ -1365,13 +1456,40 @@ export default function AddFoodSheet({
                           )}
                           <div className="px-4 pt-3 pb-1 flex items-center justify-between gap-3">
                             <p className="text-[11px] tracking-widest uppercase text-muted">{suggestionsLabel}</p>
-                            {query.trim() && search.isFetchingRemote && (
-                              <span className="flex items-center gap-1 text-[10px] text-muted">
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                                Searching online
-                              </span>
-                            )}
+                            <div className="flex items-center gap-2">
+                              {query.trim() && search.isFetchingRemote && (
+                                <Loader2 className="h-3 w-3 animate-spin text-muted" aria-label="Searching online" />
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => runAiFoodLookup()}
+                                disabled={query.trim().length < 2 || aiFoodLookup.isPending}
+                                className="flex items-center gap-1 rounded-full border border-white/10 px-2.5 py-1.5 text-[10px] font-medium text-muted transition-colors active:bg-white/10 disabled:opacity-35"
+                              >
+                                {aiFoodLookup.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                                {aiFoodLookup.isPending ? "Checking…" : "AI food"}
+                              </button>
+                            </div>
                           </div>
+                          {aiLookupClarification && (
+                            <div className="mx-4 my-2 rounded-xl border border-white/10 bg-dashboardCard px-3 py-3">
+                              <p className="text-xs font-medium text-white">{aiLookupClarification.question}</p>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {aiLookupClarification.options.map((option) => (
+                                  <button
+                                    key={option}
+                                    type="button"
+                                    disabled={aiFoodLookup.isPending}
+                                    onClick={() => runAiFoodLookup(option)}
+                                    className="rounded-full border border-white/15 px-3 py-2 text-xs font-medium text-white active:bg-white/10 disabled:opacity-50"
+                                  >
+                                    {option}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {aiLookupError && <p className="mx-4 my-2 text-xs leading-relaxed text-protein">{aiLookupError}</p>}
                           {query.trim().length === 1 && (
                             <p className="px-4 py-3 text-sm text-muted">Type at least 2 characters to search.</p>
                           )}
@@ -1408,10 +1526,12 @@ export default function AddFoodSheet({
                           setView={setLibraryView}
                           recipes={recipes.data}
                           customFoods={customFoods.data}
+                          aiSourcedFoods={aiSourcedFoods.data}
                           favorites={favorites.data}
                           onOpen={openFoodDetail}
                           onQuickAdd={pickFood}
                           onCreateFood={() => changeStep("create")}
+                          onCreateAiFood={startAiFoodCreation}
                           onCreateRecipe={() => changeStep("recipeChoice")}
                           onRequestDelete={setPendingLibraryDelete}
                         />
@@ -1598,7 +1718,7 @@ export default function AddFoodSheet({
             }
             onDeleteFood={
               !editingEntry
-                ? selectedFood.source === "custom" || selectedFood.source === "ai_estimate" || selectedFood.source === "afcd"
+                ? selectedFood.source === "custom" || selectedFood.source === "ai_estimate" || selectedFood.source === "ai_sourced" || selectedFood.source === "afcd"
                   ? () => deleteFood.mutate(selectedFood.id, { onSuccess: () => changeStep("browse") })
                   : selectedFood.source === "recipe" && recipeIdForFood(selectedFood.id)
                     ? () => deleteRecipe.mutate(recipeIdForFood(selectedFood.id)!, { onSuccess: () => changeStep("browse") })
@@ -2029,7 +2149,7 @@ function FoodRow({
   const n = scaleNutrition(food, refGrams);
   const { unit: energyUnit } = useEnergyUnit();
   const originLabel = food.brand?.trim()
-    || (food.source === "afcd" ? "Generic" : food.source === "recipe" ? "Recipe" : food.source === "custom" ? "Custom food" : null);
+    || (food.source === "afcd" ? "Generic" : food.source === "ai_sourced" ? "AI sourced" : food.source === "recipe" ? "Recipe" : food.source === "custom" ? "Custom food" : null);
   const rowClassName = "w-full flex items-center gap-3 px-4 py-2.5 bg-dashboardBg border-b border-dashboardDivider/60";
   const content = (
     <>
@@ -2062,7 +2182,7 @@ function FoodRow({
 }
 
 // The Library tab — inspired by MacroFactor's own Library pane (a rounded
-// segmented control for Recipes/Foods/Favourites plus a "+" shortcut into
+// segmented control for Recipes/Foods/AI/Favourites plus a "+" shortcut into
 // whichever create-flow matches the active view, a plain list of rows
 // below). Recipes and Foods are both just `foods` rows under the hood
 // (source: 'recipe' / 'custom' respectively — see schema.ts), and Favourites
@@ -2074,10 +2194,12 @@ function LibraryTab({
   setView,
   recipes,
   customFoods,
+  aiSourcedFoods,
   favorites,
   onOpen,
   onQuickAdd,
   onCreateFood,
+  onCreateAiFood,
   onCreateRecipe,
   onRequestDelete,
 }: {
@@ -2085,17 +2207,25 @@ function LibraryTab({
   setView: (v: LibraryView) => void;
   recipes: RecipeSummary[] | undefined;
   customFoods: Food[] | undefined;
+  aiSourcedFoods: Food[] | undefined;
   favorites: Food[] | undefined;
   onOpen: (food: Food) => void;
   onQuickAdd: (food: Food) => void;
   onCreateFood: () => void;
+  onCreateAiFood: () => void;
   onCreateRecipe: () => void;
   // Recipes/Foods only — see FoodRow's own comment on why Favourites/Search
   // don't get this. Opens a confirm sheet, doesn't delete straight away.
   onRequestDelete: (food: Food) => void;
 }) {
   const [libraryQuery, setLibraryQuery] = useState("");
-  const items = view === "recipes" ? recipes?.map((r) => r.food) : view === "foods" ? customFoods : favorites;
+  const items = view === "recipes"
+    ? recipes?.map((r) => r.food)
+    : view === "foods"
+      ? customFoods
+      : view === "ai"
+        ? aiSourcedFoods
+        : favorites;
   // Filters whichever list `view` is currently showing — not a query against
   // the wider food database the Search tab hits (OFF included), just a
   // plain client-side name filter over the small, already-fetched list this
@@ -2110,6 +2240,8 @@ function LibraryTab({
       ? "No recipes yet — the + button starts one."
       : view === "foods"
         ? "No custom foods yet — the + button creates one."
+        : view === "ai"
+          ? "No AI-sourced foods yet — create one from a food search."
         : "No favourites yet — tap the heart on any food's detail view.";
 
   return (
@@ -2120,13 +2252,14 @@ function LibraryTab({
             [
               { id: "recipes" as const, label: "Recipes" },
               { id: "foods" as const, label: "Foods" },
+              { id: "ai" as const, label: "AI Foods" },
               { id: "favorites" as const, label: "Favourites" },
             ] as const
           ).map((t) => (
             <button
               key={t.id}
               onClick={() => setView(t.id)}
-              className={`flex-1 py-1.5 rounded-full text-xs font-medium transition-colors ${
+              className={`flex-1 py-1.5 rounded-full text-[11px] font-medium transition-colors ${
                 view === t.id ? "bg-white text-black" : "text-muted"
               }`}
             >
@@ -2136,8 +2269,8 @@ function LibraryTab({
         </div>
         {view !== "favorites" && (
           <button
-            onClick={view === "recipes" ? onCreateRecipe : onCreateFood}
-            aria-label={view === "recipes" ? "Create recipe" : "Create custom food"}
+            onClick={view === "recipes" ? onCreateRecipe : view === "ai" ? onCreateAiFood : onCreateFood}
+            aria-label={view === "recipes" ? "Create recipe" : view === "ai" ? "Create AI-sourced food" : "Create custom food"}
             className="shrink-0 w-8 h-8 rounded-full bg-dashboardChip flex items-center justify-center text-white active:bg-white/20"
           >
             <Plus className="w-4 h-4" strokeWidth={2.5} />
@@ -2153,7 +2286,7 @@ function LibraryTab({
             autoComplete="off"
             value={libraryQuery}
             onChange={(e) => setLibraryQuery(e.target.value)}
-            placeholder={view === "recipes" ? "Search recipes" : view === "foods" ? "Search custom foods" : "Search favourites"}
+            placeholder={view === "recipes" ? "Search recipes" : view === "foods" ? "Search custom foods" : view === "ai" ? "Search AI-sourced foods" : "Search favourites"}
             className="flex-1 min-w-0 bg-transparent text-sm text-white placeholder:text-muted focus:outline-none"
           />
         </div>
@@ -2169,7 +2302,7 @@ function LibraryTab({
           food={food}
           onOpen={onOpen}
           onQuickAdd={onQuickAdd}
-          onDelete={view === "recipes" || view === "foods" ? onRequestDelete : undefined}
+          onDelete={view === "recipes" || view === "foods" || view === "ai" ? onRequestDelete : undefined}
         />
       ))}
     </div>

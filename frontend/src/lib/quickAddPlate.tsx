@@ -23,7 +23,7 @@ export interface PlateState {
   // still just want the food's own default (serving size, or 100g), while
   // FoodDetailScreen's "Add to Plate" passes the specific amount the user
   // dialed in there (and the unit it was dialed in with).
-  addToPlate: (food: Food, quantityGrams?: number, unit?: { unitType: string; unitMeasureName?: string }) => void;
+  addToPlate: (food: Food, quantityGrams?: number, unit?: { unitType: string; unitMeasureName?: string }) => string;
   removeFromPlate: (key: string) => void;
   updatePlateItemQuantity: (key: string, quantityGrams: number) => void;
   clearPlate: () => void;
@@ -48,16 +48,18 @@ export function usePlateState(): PlateState {
   const [nutritionView, setNutritionView] = useState<"plate" | "day">("plate");
 
   function addToPlate(food: Food, quantityGrams?: number, unit?: { unitType: string; unitMeasureName?: string }) {
+    const key = crypto.randomUUID();
     setStagedPlate((prev) => [
       ...prev,
       {
-        key: crypto.randomUUID(),
+        key,
         food,
         quantityGrams: quantityGrams ?? food.servingSizeGrams ?? 100,
         unitType: unit?.unitType,
         unitMeasureName: unit?.unitMeasureName,
       },
     ]);
+    return key;
   }
 
   function removeFromPlate(key: string) {

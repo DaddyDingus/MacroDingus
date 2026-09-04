@@ -1,8 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import Cropper, { type Area } from "react-easy-crop";
 import { X, Grid3x3, FlipHorizontal, Wand2, Loader2 } from "lucide-react";
 import { PHOTO_POSE_LABEL, type PhotoPose } from "../api/photos";
 import { useHideBottomNav } from "../lib/navVisibility";
+import { lockBodyScroll, unlockBodyScroll } from "../lib/bodyScrollLock";
+import { useVisualViewportMetrics } from "../lib/useVisualViewportMetrics";
 
 // A side pose only shows one shoulder/hip clearly, which doesn't give
 // lib/poseAlign.ts's shoulder/hip-based method anything usable to match —
@@ -133,6 +136,7 @@ export default function PhotoAlignerModal({
   const [mediaSize, setMediaSize] = useState<{ width: number; height: number } | null>(null);
   const [cropSize, setCropSize] = useState<{ width: number; height: number } | null>(null);
   const [isMatchingPose, setIsMatchingPose] = useState(false);
+  const { height: viewportHeight, offsetTop: viewportOffsetTop } = useVisualViewportMetrics();
 
   useHideBottomNav(true);
 
@@ -140,27 +144,16 @@ export default function PhotoAlignerModal({
     return () => URL.revokeObjectURL(imageUrl);
   }, [imageUrl]);
 
-  // Without this, the sliders below could be tapped (a single point, no
-  // movement) but not dragged: this modal is its own fixed full-screen div,
-  // not built on BottomSheet, so it never got BottomSheet's own body-scroll
-  // lock for free. useRubberBandScroll's window-level touchmove listener
-  // only bails out when document.body.style.overflow === "hidden" (see its
-  // own onTouchStart guard) — without that, any downward drag starting on a
-  // slider (anywhere on screen, since the page underneath can't actually
-  // scroll while this covers it, so scrollY is always 0 and instantly "at
-  // the top edge") gets armed as a pull-to-refresh gesture and preventDefault
-  // is called on every subsequent touchmove, which stops the browser's own
-  // range-thumb-follow dead after the first point. Same fix AddFoodSheet's
-  // own full-screen modal needed for the same reason.
-  useEffect(() => {
-    const prevBody = document.body.style.overflow;
-    const prevHtml = document.documentElement.style.overflow;
-    document.body.style.overflow = "hidden";
-    document.documentElement.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prevBody;
-      document.documentElement.style.overflow = prevHtml;
-    };
+  // This full-screen modal needs the same shared lock as every sheet. Besides
+  // keeping the page behind it still, the lock's `position: fixed` signal
+  // tells useRubberBandScroll to leave the editor's sliders and crop gestures
+  // alone. Using the shared reference-counted lock is important here: the
+  // source-picker sheet can still be finishing its exit while this editor
+  // mounts, and independent style save/restore can otherwise strand the page
+  // in its locked state after consecutive captures.
+  useLayoutEffect(() => {
+    lockBodyScroll();
+    return unlockBodyScroll;
   }, []);
 
   // Pre-fills zoom/rotation/crop from a detected pose match — an assist,
@@ -202,8 +195,17 @@ export default function PhotoAlignerModal({
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-[70] bg-black flex flex-col">
+  // The native camera/file-picker handoff can leave Android's layout and
+  // visual viewports at different heights for a frame (and WebKit does the
+  // same around keyboard/browser-chrome changes). A bare `fixed inset-0`
+  // follows the layout viewport in that state, which put the editor's footer
+  // below the visible screen. Portal it above the route tree and size it from
+  // the actual visual viewport so Confirm always remains reachable.
+  return createPortal(
+    <div
+      className="fixed inset-x-0 z-[70] bg-black flex flex-col"
+      style={{ top: viewportOffsetTop, height: viewportHeight }}
+    >
       <div className="flex items-center gap-3 px-4 py-4 shrink-0">
         <button
           type="button"
@@ -219,7 +221,7 @@ export default function PhotoAlignerModal({
         </div>
       </div>
 
-      <div className="relative flex-1 overflow-hidden">
+      <div className="relative flex-1 min-h-0 overflow-hidden">
         {/* restrictPosition={false}: react-easy-crop's default behavior
             re-clamps the crop box's position every time zoom changes (even
             with no panning), purely to guarantee it can never reveal blank
@@ -395,6 +397,7 @@ export default function PhotoAlignerModal({
           {isProcessing ? "Processing…" : "Confirm alignment"}
         </button>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

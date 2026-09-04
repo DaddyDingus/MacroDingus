@@ -18,6 +18,7 @@ import RestoreAccountDataSheet from "../components/RestoreAccountDataSheet";
 import { useExportAccountData, useRunServerBackup, useServerBackupStatus } from "../api/account";
 import { localDateString } from "../lib/date";
 import { ANDROID_UPDATE_CHECK_EVENT } from "../components/AndroidUpdatePrompt";
+import { useAiModelUpdates } from "../api/settings";
 
 const ENERGY_UNITS: EnergyUnit[] = ["kcal", "kj"];
 const WEIGHT_UNITS: WeightUnit[] = ["kg", "lb"];
@@ -42,6 +43,7 @@ export default function MoreScreen() {
   const saveProfile = useSaveProfile();
   const exportAccount = useExportAccountData();
   const backupStatus = useServerBackupStatus();
+  const aiModelUpdates = useAiModelUpdates();
   const runBackup = useRunServerBackup();
   const { theme, setTheme } = useTheme();
   const { unit: energyUnit, setUnit: setEnergyUnit } = useEnergyUnit();
@@ -393,6 +395,13 @@ export default function MoreScreen() {
           >
             <Sparkles size={15} strokeWidth={2} className="text-muted shrink-0" />
             <span className="text-sm font-medium flex-1 min-w-0">AI features</span>
+            {aiModelUpdates.data?.hasUpdates && (
+              <span
+                aria-label={`${aiModelUpdates.data.count} new AI model${aiModelUpdates.data.count === 1 ? "" : "s"} available`}
+                className="w-2 h-2 rounded-full shrink-0"
+                style={{ background: "#D95926" }}
+              />
+            )}
             <ChevronRight size={16} strokeWidth={2.5} className="text-muted shrink-0" />
           </button>
         </section>

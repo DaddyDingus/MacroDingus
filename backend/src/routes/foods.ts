@@ -7,6 +7,7 @@ import { foods, logs, foodSearchStats } from "../db/schema.js";
 import { fetchOffProduct, mapOffProduct, offCaloriesPer100g, searchOffProducts } from "../engine/openfoodfacts.js";
 import { scanNutritionLabel } from "../engine/labelScan.js";
 import { describeMeal } from "../engine/describeMeal.js";
+import { lookupSourcedFood } from "../engine/aiFoodLookup.js";
 import { aiTaskConfigured } from "../engine/aiProvider.js";
 import { toBoundedJpeg } from "../engine/imagePrep.js";
 import { expandFoodQuery, foodTextRelevance, normalizeFoodQuery } from "../engine/foodSearch.js";
@@ -361,6 +362,27 @@ export function registerFoodRoutes(app: FastifyInstance) {
       req.log.error(err);
       reply.code(502);
       return { error: err instanceof Error ? err.message : "Couldn't make sense of that meal" };
+    }
+  });
+
+  // Turns a plain-language request into a durable, reusable generic food by
+  // selecting an authoritative AFCD/USDA composition record. Unlike Describe
+  // meal's intentionally hidden ai_estimate rows, this never asks a model to
+  // invent nutrient numbers: the model only resolves among supplied records.
+  app.post("/api/foods/ai-lookup", async (req, reply) => {
+    if (!(await aiTaskConfigured(req.userId!, "foodLookup"))) {
+      return reply.code(503).send({ error: "Generic food lookup isn't configured yet — choose a provider in AI features" });
+    }
+    const parsed = z.object({
+      description: z.string().trim().min(2).max(240),
+      clarification: z.string().trim().min(1).max(160).optional(),
+    }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Describe the food in 240 characters or fewer" });
+    try {
+      return await lookupSourcedFood(req.userId!, parsed.data.description, parsed.data.clarification);
+    } catch (err) {
+      req.log.error(err);
+      return reply.code(502).send({ error: err instanceof Error ? err.message : "Couldn't look up that food" });
     }
   });
 
