@@ -251,7 +251,7 @@ export async function generateAiText(
 ): Promise<string> {
   const capability = input.images?.length
     ? "vision"
-    : task === "checkinNarrative"
+    : task === "checkinNarrative" || task === "foodLookup"
       ? "general"
       : "complex_reasoning";
   const text = input.jsonSchema ? structuredPrompt(input.prompt, input.jsonSchema) : input.prompt;
