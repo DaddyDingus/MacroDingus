@@ -33,9 +33,8 @@ interface RawDescribedItem {
 // also sets matchedFoodId — that estimate is what a match falls back to if
 // the id turns out to be hallucinated or stale (see the id-validation step
 // in describeMeal below), so there's never a "matched but nothing to fall
-// back on" gap. Hand-written JSON Schema for the same reason as
-// labelScan.ts: the SDK's zodOutputFormat helper wants zod's `zod/v4`
-// subpath, not the classic `zod` v3 namespace every route already uses.
+// back on" gap. This app-specific schema travels with the gateway prompt and
+// the normalized result is still checked locally before it is used.
 const ITEM_SCHEMA = {
   type: "object",
   properties: {
@@ -168,7 +167,7 @@ If nothing edible is identifiable, return an empty items array rather than inven
 }
 
 export async function describeMeal(
-  userId: string,
+  accessToken: string,
   text: string | null,
   photo?: { buffer: Buffer; mediaType: "image/jpeg" }
 ): Promise<DescribedItem[]> {
@@ -176,7 +175,7 @@ export async function describeMeal(
   const candidateIds = new Set(candidates.map((c) => c.id));
 
   const prompt = buildPrompt(text, photo != null, candidates);
-  const responseText = await generateAiText(userId, "mealDescription", {
+  const responseText = await generateAiText(accessToken, "mealDescription", {
     prompt,
     images: photo ? [{ buffer: photo.buffer, mediaType: photo.mediaType }] : undefined,
     maxTokens: 4096,

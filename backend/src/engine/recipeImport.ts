@@ -37,9 +37,8 @@ interface RawIngredient {
   sodiumMgPer100g: number | null;
 }
 
-// Same hand-written-JSON-Schema reasoning as describeMeal.ts/labelScan.ts —
-// the SDK's zodOutputFormat helper needs zod's `/v4` subpath, a different
-// namespace from the `zod` v3 every route's request validation already uses.
+// App-specific structured-output guidance sent with the gateway prompt; the
+// normalized response is still parsed and checked locally below.
 const INGREDIENT_SCHEMA = {
   type: "object",
   properties: {
@@ -224,9 +223,9 @@ If a library entry is clearly the same food — not just the same category — s
 If handwriting is ambiguous, use your best reading rather than skipping the ingredient. If the photo doesn't actually contain an ingredient list, return an empty ingredients array rather than inventing one.`;
 }
 
-// Shared by both import paths: takes the model's raw JSON response (already
-// validated against RECIPE_JSON_SCHEMA by the provider) and turns it into a
-// real ImportedRecipe — matching each ingredient against the candidate set
+// Shared by both import paths: takes the gateway-normalized JSON response and
+// validates it locally before turning it into a real ImportedRecipe — matching
+// each ingredient against the candidate set
 // sent in the prompt, or materializing a fresh ai_estimate food when it
 // isn't a match. `notFoundMessage` is the only thing that differs between a
 // non-recipe webpage and a non-ingredient-list photo.
@@ -291,11 +290,11 @@ async function finalizeImportedRecipe(responseText: string, candidates: { id: st
   return { name, servings, totalWeightGrams, ingredients };
 }
 
-export async function importRecipeFromUrl(userId: string, url: string): Promise<ImportedRecipe> {
+export async function importRecipeFromUrl(accessToken: string, url: string): Promise<ImportedRecipe> {
   const pageText = await fetchPageText(url);
   const candidates = await fetchCandidateFoods();
 
-  const responseText = await generateAiText(userId, "recipeImport", {
+  const responseText = await generateAiText(accessToken, "recipeImport", {
     prompt: buildPrompt(pageText, candidates),
     maxTokens: 4096,
     jsonSchema: RECIPE_JSON_SCHEMA,
@@ -308,10 +307,10 @@ export async function importRecipeFromUrl(userId: string, url: string): Promise<
   );
 }
 
-export async function importRecipeFromPhoto(userId: string, image: AiImageInput, description?: string): Promise<ImportedRecipe> {
+export async function importRecipeFromPhoto(accessToken: string, image: AiImageInput, description?: string): Promise<ImportedRecipe> {
   const candidates = await fetchCandidateFoods();
 
-  const responseText = await generateAiText(userId, "recipePhotoImport", {
+  const responseText = await generateAiText(accessToken, "recipePhotoImport", {
     prompt: buildPhotoPrompt(candidates, description),
     images: [image],
     maxTokens: 4096,

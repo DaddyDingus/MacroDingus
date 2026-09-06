@@ -33,12 +33,12 @@ If there is a visible difference, set hasVisibleChange to true and list each con
 }
 
 export async function comparePhotos(
-  userId: string,
+  accessToken: string,
   photoA: { buffer: Buffer; mediaType: "image/jpeg" },
   photoB: { buffer: Buffer; mediaType: "image/jpeg" },
   daysApart: number
 ): Promise<PhotoCompareResult> {
-  const responseText = await generateAiText(userId, "photoComparison", {
+  const responseText = await generateAiText(accessToken, "photoComparison", {
     prompt: buildPrompt(daysApart),
     images: [photoA, photoB],
     maxTokens: 1024,

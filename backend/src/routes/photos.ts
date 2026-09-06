@@ -9,7 +9,8 @@ import { db } from "../db/index.js";
 import { photos } from "../db/schema.js";
 import { comparePhotos } from "../engine/photoCompare.js";
 import { daysBetween } from "../engine/trendWeight.js";
-import { aiTaskConfigured } from "../engine/aiProvider.js";
+import { aiHttpStatus } from "../engine/aiProvider.js";
+import { gatewayAccessToken } from "../auth.js";
 
 const MAX_DIMENSION = 1600;
 const JPEG_QUALITY = 90;
@@ -92,11 +93,6 @@ export function registerPhotoRoutes(app: FastifyInstance, dataDir: string) {
   // engine/photoCompare.ts for
   // why weight/scale numbers are deliberately withheld).
   app.post("/api/photos/compare", async (req, reply) => {
-    if (!(await aiTaskConfigured(req.userId!, "photoComparison"))) {
-      reply.code(503);
-      return { error: "Photo comparison isn't configured on this server yet" };
-    }
-
     const parsed = compareInput.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
     const { photoIdA, photoIdB } = parsed.data;
@@ -119,7 +115,7 @@ export function registerPhotoRoutes(app: FastifyInstance, dataDir: string) {
       const [earlier, later] = photoA.date <= photoB.date ? [photoA, photoB] : [photoB, photoA];
       const [earlierBuffer, laterBuffer] = photoA.date <= photoB.date ? [bufferA, bufferB] : [bufferB, bufferA];
       const result = await comparePhotos(
-        userId,
+        await gatewayAccessToken(req),
         { buffer: earlierBuffer, mediaType: "image/jpeg" },
         { buffer: laterBuffer, mediaType: "image/jpeg" },
         Math.abs(daysBetween(earlier.date, later.date))
@@ -127,7 +123,7 @@ export function registerPhotoRoutes(app: FastifyInstance, dataDir: string) {
       return result;
     } catch (err) {
       req.log.error(err);
-      reply.code(502);
+      reply.code(aiHttpStatus(err));
       return { error: err instanceof Error ? err.message : "Couldn't compare those photos" };
     }
   });

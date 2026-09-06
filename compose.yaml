@@ -6,6 +6,11 @@ services:
     volumes:
       - ./data:/app/data
       - ../gymdaddy/server-backups/.weight-sync-secret:/run/secrets/gymdaddy-weight-sync-key:ro
+    # Historical per-app provider keys stay on the host until they can be
+    # revoked deliberately, but are invisible to the migrated runtime.
+    tmpfs:
+      - /app/data/secrets/ai:mode=0700
+      - /app/data/secrets/anthropic:mode=0700
     environment:
       - NODE_ENV=production
       - PORT=3000
@@ -13,11 +18,8 @@ services:
       # Calendar-day boundaries (check-ins, history windows) follow the
       # household rather than UTC. Override this IANA timezone for a fork.
       - APP_TIME_ZONE=${APP_TIME_ZONE:-Australia/Brisbane}
-      # Optional installation-wide fallback. Each account can instead save
-      # its own key under More > AI features; account keys take precedence.
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - AI_GATEWAY_ORIGIN=https://daddysserver.tail984e80.ts.net:8443
+      - AI_GATEWAY_CLIENT_TIMEOUT_MS=240000
       # Optional integration with a separate weight-sync relay. All three
       # values must be set; otherwise weight mutations remain entirely local.
       - WEIGHT_SYNC_RELAY_URL=${WEIGHT_SYNC_RELAY_URL}
@@ -30,6 +32,9 @@ services:
       - OIDC_BOOTSTRAP_ACCOUNT=Tristan
     extra_hosts:
       - auth.tail984e80.ts.net:100.123.225.109
+      # Preserve HTTPS certificate/SNI validation while pinning the private
+      # Tailscale gateway address for this Docker network.
+      - daddysserver.tail984e80.ts.net:100.122.122.114
       # Family identities are created and disabled in Authentik. First OIDC
       # login provisions a new isolated MacroDaddy account automatically.
     networks:
@@ -40,9 +45,8 @@ services:
     image: tailscale/tailscale:stable
     container_name: macrodaddy-tailscale
     restart: unless-stopped
-    env_file:
-      - ./.env
     environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
       - TS_HOSTNAME=macrodaddy
       - TS_STATE_DIR=/var/lib/tailscale
       - TS_AUTH_ONCE=true

@@ -25,7 +25,7 @@ privacy notes below before exposing an installation to anyone else.
 - Docker with the Compose plugin
 - A Docker network named `proxy`
 - For the included private HTTPS setup: a Tailscale account and auth key
-- Optional AI features: each user can supply their own Anthropic API key
+- Optional AI features through the central AI gateway
 
 Create the network once if your server does not already have it:
 
@@ -60,8 +60,9 @@ internet.
 
 ## AI features and API keys
 
-AI is optional. Without a key, ordinary food logging, coaching calculations,
-recipes, weights, measurements, and photos continue to work. Claude powers:
+AI is optional. Ordinary food logging, coaching calculations, recipes,
+weights, measurements, and photos continue to work when AI is unavailable.
+The central AI gateway powers:
 
 - nutrition-label scanning;
 - meal text/photo descriptions;
@@ -69,19 +70,17 @@ recipes, weights, measurements, and photos continue to work. Claude powers:
 - progress-photo comparisons; and
 - check-in narratives.
 
-The recommended setup is per-account: open **More → AI features**, paste an
-Anthropic API key, and let the server validate it. The key is stored under
-`data/secrets/anthropic/` with restrictive file permissions. It is never
-returned by the API or stored in the PWA/browser. Removing it in settings
-deletes the server-side file.
+MacroDaddy never stores or selects provider credentials or raw models. It
+sends the signed-in user's Authentik access token with the relevant text or
+images to the gateway, which applies the user's server-authoritative access
+policy, credentials, routing, fallbacks, quotas, and logging. A BYOK user can
+add, test, replace, or remove an OpenAI, Anthropic, or Gemini key under
+**More → AI features**; the encrypted credential lives only in the gateway
+and is never returned to MacroDaddy or the browser.
 
-`ANTHROPIC_API_KEY` in `.env` is an optional installation-wide fallback. Any
-account without its own key uses that shared key, so leave it blank if every
-person should pay for their own usage. Set usage limits with Anthropic and
-revoke a key immediately if the server or a backup containing it is exposed.
-
-AI requests send the relevant text or images to Anthropic. Recipe import also
-fetches the supplied webpage, and food/barcode search contacts OpenFoodFacts.
+Recipe import also fetches the supplied webpage, and food/barcode search
+contacts OpenFoodFacts. Provider credentials belong only in the gateway, not
+in MacroDaddy's `.env` or data directory.
 
 ## Access and account model
 
@@ -92,8 +91,8 @@ whenever `OIDC_ISSUER` is configured. Keep Authentik registration closed and
 create or disable family identities centrally.
 
 Foods are shared between accounts on one installation. Logs, weights,
-profiles, goals, programs, check-ins, measurements, recipes, photos, settings,
-and AI keys are account-scoped except where the code explicitly documents a
+profiles, goals, programs, check-ins, measurements, recipes, photos, and settings
+are account-scoped except where the code explicitly documents a
 shared food-library relationship.
 
 The included server backup covers the whole SQLite database and the companion
@@ -135,7 +134,8 @@ AFCD import.
 
 Back up the complete `data/` directory while the container is stopped, or use
 a SQLite-aware backup process. It contains the database, photos, cookie signing
-secret, and per-account AI keys. Treat every backup as sensitive.
+secret, and may still contain inactive historical per-account AI key files from
+before the gateway migration. Treat every backup as sensitive.
 
 ```sh
 docker compose stop macrotrack
@@ -169,4 +169,4 @@ proxies `/api` to the backend address configured in `frontend/vite.config.ts`.
 
 The application source is available under the [ISC License](LICENSE). External
 datasets and services retain their own terms; check the applicable AFCD,
-OpenFoodFacts, Anthropic, and dependency terms for your use and distribution.
+OpenFoodFacts, configured AI-provider, and dependency terms for your use and distribution.

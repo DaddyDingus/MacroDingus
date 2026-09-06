@@ -1,65 +1,53 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronUp, ExternalLink, RefreshCw, Trash2 } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, ExternalLink, Trash2 } from "lucide-react";
 import BottomSheet from "./BottomSheet";
-import { ApiError } from "../api/client";
 import {
+  AI_PROVIDERS,
+  AI_PROVIDER_KEY_URLS,
+  AI_PROVIDER_LABELS,
   useAiSettings,
-  useMarkAiModelsSeen,
-  useRefreshAiModels,
   useRemoveAiKey,
   useSaveAiKey,
-  useSaveAiTask,
-  useSaveAiTaskFallback,
-  useClearAiTaskFallback,
+  useTestAiKey,
   type AiProvider,
-  type AiTaskId,
+  type AiSettingsStatus,
 } from "../api/settings";
 
-const PROVIDERS: AiProvider[] = ["anthropic", "openai", "gemini"];
-const PROVIDER_LABELS: Record<AiProvider, string> = { anthropic: "Anthropic", openai: "OpenAI", gemini: "Google Gemini" };
-// Sentinel value for the fallback provider picker's own "None" entry — never
-// a real AiProvider, so it can share the picker/SelectionSheet plumbing
-// primary provider/model selection already uses instead of a parallel
-// "which kind of picker is this" bolt-on.
-const NO_FALLBACK = "__none__";
+function providerState(data: AiSettingsStatus, provider: AiProvider) {
+  return data.providers.find((entry) => entry.provider === provider);
+}
 
-type TaskDraft = Record<AiTaskId, { provider: AiProvider; model: string }>;
-// Null means "no fallback configured" for this task — distinct from not yet
-// present in the record (not yet initialized from status.data).
-type FallbackDraft = { provider: AiProvider; model: string } | null;
-type PickerState = { task: AiTaskId; kind: "provider" | "model" | "fallbackProvider" | "fallbackModel" };
-
-// Chrome's credential heuristics can ignore autocomplete/data-manager hints
-// and show its password strip for any input near API-key fields. This remains
-// a normal single-line keyboard-editable surface, but it is not an input or
-// textarea, so password managers have no credential field to attach to.
-function EditableText({
+// Keep the existing password-manager-resistant key-entry surface. The value
+// remains local to this mounted sheet and is cleared as soon as it is saved.
+function SecretText({
   value,
   onChange,
   onEnter,
   placeholder,
   ariaLabel,
-  masked = false,
-  className = "",
 }: {
   value: string;
   onChange: (value: string) => void;
-  onEnter?: () => void;
+  onEnter: () => void;
   placeholder: string;
   ariaLabel: string;
-  masked?: boolean;
-  className?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const element = ref.current;
-    if (element && document.activeElement !== element && element.textContent !== value) element.textContent = value;
+    if (
+      element
+      && (value === "" || document.activeElement !== element)
+      && element.textContent !== value
+    ) {
+      element.textContent = value;
+    }
   }, [value]);
 
   return (
-    <div className={`relative min-w-0 ${className}`}>
-      {!value && <span className="absolute inset-y-0 left-3 flex items-center text-muted pointer-events-none font-mono text-sm">{placeholder}</span>}
+    <div className="relative min-w-0 flex-1 rounded-md border border-line bg-surface focus-within:border-accent">
+      {!value && <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center font-mono text-sm text-muted">{placeholder}</span>}
       <div
         ref={ref}
         role="textbox"
@@ -73,610 +61,192 @@ function EditableText({
         onKeyDown={(event) => {
           if (event.key !== "Enter") return;
           event.preventDefault();
-          onEnter?.();
+          onEnter();
         }}
         onPaste={(event) => {
           event.preventDefault();
           document.execCommand("insertText", false, event.clipboardData.getData("text/plain").replace(/[\r\n]+/g, ""));
         }}
-        className={`min-h-9 w-full overflow-hidden whitespace-nowrap px-3 py-2 outline-none font-mono text-sm ${masked ? "[-webkit-text-security:disc]" : ""}`}
+        className="min-h-9 w-full overflow-hidden whitespace-nowrap px-3 py-2 font-mono text-sm outline-none [-webkit-text-security:disc]"
       />
     </div>
   );
 }
 
-function SelectionSheet({
-  title,
-  options,
-  selected,
-  allowCustom = false,
-  onSelect,
-  onCustom,
-  onClose,
-}: {
-  title: string;
-  options: { value: string; label: string; recommended?: boolean; discovered?: boolean; isNew?: boolean }[];
-  selected: string;
-  allowCustom?: boolean;
-  onSelect: (value: string) => void;
-  onCustom?: () => void;
-  onClose: () => void;
-}) {
+function ProviderCard({ provider, data }: { provider: AiProvider; data: AiSettingsStatus }) {
+  const saveKey = useSaveAiKey();
+  const testKey = useTestAiKey();
+  const removeKey = useRemoveAiKey();
+  const [expanded, setExpanded] = useState(false);
+  const [key, setKey] = useState("");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const state = providerState(data, provider);
+  const configured = state?.configured ?? false;
+  const invalid = state?.validationStatus === "invalid";
+  const mutationError = saveError ?? testKey.error ?? removeKey.error;
+
+  function save() {
+    if (key.trim().length < 8 || saveKey.isPending) return;
+    const apiKey = key.trim();
+    setKey("");
+    setSaveError(null);
+    saveKey.mutate(
+      { provider, apiKey },
+      {
+        onError: (error) => setSaveError(error instanceof Error ? error.message : "Couldn't save that key."),
+        onSettled: () => queueMicrotask(() => saveKey.reset()),
+      },
+    );
+  }
+
   return (
-    <BottomSheet onClose={onClose} backdropClassName="bg-black/60" panelClassName="max-h-[70%] bg-surface rounded-t-xl border-t border-line">
-      {(dragHandlers, close) => (
-        <>
-          <div {...dragHandlers} className="px-4 pt-1 pb-2.5 border-b border-line shrink-0 touch-none">
-            <h3 className="text-sm font-medium">{title}</h3>
+    <div className="overflow-hidden rounded-xl border border-line bg-surface-raised">
+      <div className="flex min-h-12 items-center">
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          aria-expanded={expanded}
+          className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2.5 text-left active:bg-surface"
+        >
+          <span className={`h-2 w-2 shrink-0 rounded-full ${configured && !invalid ? "bg-carbs" : invalid ? "bg-protein" : "bg-muted"}`} />
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-medium">{AI_PROVIDER_LABELS[provider]}</span>
+            <span className="block text-[10px] text-muted">
+              {invalid ? "Key is invalid" : configured ? "Key configured" : "No key configured"}
+            </span>
+          </span>
+          {expanded
+            ? <ChevronUp className="h-3.5 w-3.5 shrink-0 text-muted" strokeWidth={2} />
+            : <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted" strokeWidth={2} />}
+        </button>
+        <a
+          href={AI_PROVIDER_KEY_URLS[provider]}
+          target="_blank"
+          rel="noreferrer"
+          className="mr-0.5 p-3 text-accent"
+          aria-label={`Manage ${AI_PROVIDER_LABELS[provider]} keys`}
+        >
+          <ExternalLink size={15} />
+        </a>
+      </div>
+      {expanded && (
+        <div className="space-y-2 border-t border-line px-3 py-3">
+          <div className="flex gap-2">
+            <SecretText
+              value={key}
+              onChange={setKey}
+              onEnter={save}
+              placeholder={configured ? "Replace key…" : "API key"}
+              ariaLabel={`${AI_PROVIDER_LABELS[provider]} API key`}
+            />
+            <button
+              type="button"
+              onClick={save}
+              disabled={key.trim().length < 8 || saveKey.isPending}
+              className="rounded-md bg-accent px-3 text-sm font-semibold disabled:opacity-40"
+              style={{ color: "#0B1210" }}
+            >
+              {saveKey.isPending ? "Checking…" : configured ? "Replace" : "Save"}
+            </button>
           </div>
-          <div className="overflow-y-auto p-3">
-            <div className="rounded-xl bg-dashboardCard overflow-hidden divide-y divide-dashboardDivider">
-              {options.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => {
-                    onSelect(option.value);
-                    close();
-                  }}
-                  className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left active:bg-surface-raised"
-                >
-                  <span className="min-w-0 flex items-center gap-2">
-                    <span className={`text-sm truncate ${option.value === selected ? "text-accent" : ""}`}>{option.label}</span>
-                    {option.isNew && (
-                      <span className="text-[9px] uppercase tracking-wide text-accent border border-accent/50 rounded-full px-1.5 py-0.5 shrink-0">New</span>
-                    )}
-                    {option.recommended && (
-                      <span className="text-[9px] uppercase tracking-wide text-muted bg-line/30 rounded-full px-1.5 py-0.5 shrink-0">Recommended</span>
-                    )}
-                    {!option.isNew && !option.recommended && option.discovered && (
-                      <span className="text-[9px] uppercase tracking-wide text-muted/80 border border-line rounded-full px-1.5 py-0.5 shrink-0">Available</span>
-                    )}
-                  </span>
-                  {option.value === selected && <Check className="w-4 h-4 text-accent shrink-0" strokeWidth={2} />}
-                </button>
-              ))}
-              {allowCustom && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onCustom?.();
-                    close();
-                  }}
-                  className="w-full px-4 py-3 text-left active:bg-surface-raised"
-                >
-                  <span className="block text-sm text-accent">Use an unlisted model ID…</span>
-                  <span className="block text-[10px] text-muted mt-0.5">For a compatible model that is not in the available list.</span>
-                </button>
-              )}
+          {configured && (
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => testKey.mutate(provider)}
+                disabled={testKey.isPending}
+                className="text-xs text-accent disabled:opacity-40"
+              >
+                {testKey.isPending ? "Testing…" : "Test saved key"}
+              </button>
+              <button
+                type="button"
+                onClick={() => removeKey.mutate(provider)}
+                disabled={removeKey.isPending}
+                className="flex items-center gap-1 text-xs text-protein disabled:opacity-40"
+              >
+                <Trash2 size={13} /> Remove
+              </button>
             </div>
-          </div>
-        </>
+          )}
+          <p className="text-[11px] leading-relaxed text-muted">
+            The central gateway encrypts this key and never returns it to MacroDaddy.
+          </p>
+          {mutationError && (
+            <p className="text-xs text-protein">
+              {typeof mutationError === "string"
+                ? mutationError
+                : mutationError instanceof Error
+                  ? mutationError.message
+                  : "Couldn't update that key."}
+            </p>
+          )}
+        </div>
       )}
-    </BottomSheet>
+    </div>
   );
 }
 
-function UnsavedChangesSheet({ onClose, onDiscard }: { onClose: () => void; onDiscard: () => void }) {
+function ServerAccess({ data }: { data: AiSettingsStatus }) {
   return (
-    <BottomSheet onClose={onClose} backdropClassName="bg-black/65" panelClassName="bg-surface rounded-t-xl border-t border-line">
-      {(dragHandlers, close) => (
-        <>
-          <div {...dragHandlers} className="px-4 pt-1 pb-3 text-center border-b border-line touch-none">
-            <h3 className="text-base font-semibold">Unsaved changes</h3>
-            <p className="text-xs text-muted mt-1">Your provider key or model changes haven’t been saved.</p>
+    <div className="space-y-2">
+      {AI_PROVIDERS.map((provider) => {
+        const configured = providerState(data, provider)?.configured ?? false;
+        return (
+          <div key={provider} className="flex items-center justify-between rounded-xl border border-line bg-surface-raised px-3 py-3">
+            <span className="text-sm">{AI_PROVIDER_LABELS[provider]}</span>
+            <span className={`flex items-center gap-1 text-xs ${configured ? "text-carbs" : "text-muted"}`}>
+              {configured && <Check size={13} />} {configured ? "Available" : "Unavailable"}
+            </span>
           </div>
-          <div className="p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] grid gap-2">
-            <button type="button" onClick={close} className="w-full py-3 rounded-full bg-accent text-sm font-semibold" style={{ color: "#0B1210" }}>
-              Keep editing
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                close();
-                onDiscard();
-              }}
-              className="w-full py-3 rounded-full border border-protein/60 text-protein text-sm font-semibold"
-            >
-              Discard changes
-            </button>
-          </div>
-        </>
-      )}
-    </BottomSheet>
+        );
+      })}
+    </div>
   );
 }
 
 export default function AiSettingsSheet({ onClose }: { onClose: () => void }) {
-  const status = useAiSettings();
-  const markModelsSeen = useMarkAiModelsSeen();
-  const refreshModels = useRefreshAiModels();
-  const saveKey = useSaveAiKey();
-  const removeKey = useRemoveAiKey();
-  const saveTask = useSaveAiTask();
-  const saveTaskFallback = useSaveAiTaskFallback();
-  const clearTaskFallback = useClearAiTaskFallback();
-  const [keys, setKeys] = useState<Record<AiProvider, string>>({ anthropic: "", openai: "", gemini: "" });
-  const [savedKey, setSavedKey] = useState<AiProvider | null>(null);
-  const [drafts, setDrafts] = useState<Partial<TaskDraft>>({});
-  const [fallbackDrafts, setFallbackDrafts] = useState<Partial<Record<AiTaskId, FallbackDraft>>>({});
-  const [picker, setPicker] = useState<PickerState | null>(null);
-  const [customModelTasks, setCustomModelTasks] = useState<Partial<Record<AiTaskId, boolean>>>({});
-  const [expandedProvider, setExpandedProvider] = useState<AiProvider | null>(null);
-  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
-  const [savingAll, setSavingAll] = useState(false);
-  const [savedAll, setSavedAll] = useState(false);
-  const [newModels, setNewModels] = useState<Partial<Record<AiProvider, string[]>>>({});
-  const draftsInitialized = useRef(false);
-  const acknowledgedCatalog = useRef("");
-  const allowClose = useRef(false);
-
-  useEffect(() => {
-    if (!status.data || draftsInitialized.current) return;
-    draftsInitialized.current = true;
-    setDrafts(Object.fromEntries(status.data.tasks.map((task) => [task.id, { provider: task.provider, model: task.model }])) as TaskDraft);
-    setFallbackDrafts(Object.fromEntries(status.data.tasks.map((task) => [
-      task.id,
-      task.fallbackProvider && task.fallbackModel ? { provider: task.fallbackProvider, model: task.fallbackModel } : null,
-    ])) as Record<AiTaskId, FallbackDraft>);
-  }, [status.data]);
-
-  useEffect(() => {
-    // Wait for this mount's live response rather than acknowledging from the
-    // persisted query cache. Otherwise the global notifier may already know
-    // about a new model while this sheet snapshots an older catalogue, clears
-    // the dot, and never gets a chance to label the actual model as New.
-    if (!status.data || !status.isFetchedAfterMount || status.isFetching) return;
-    const signature = JSON.stringify(PROVIDERS.map((provider) => status.data?.providers[provider].availableModels ?? []));
-    if (signature === acknowledgedCatalog.current) return;
-    acknowledgedCatalog.current = signature;
-    setNewModels((current) => Object.fromEntries(PROVIDERS.map((provider) => [
-      provider,
-      [...new Set([...(current[provider] ?? []), ...(status.data?.providers[provider].newModels ?? [])])],
-    ])));
-    markModelsSeen.mutate();
-  }, [status.data, status.isFetchedAfterMount, status.isFetching]);
-
-  const changedTasks = status.data?.tasks.filter((task) => {
-    const draft = drafts[task.id];
-    return draft && (draft.provider !== task.provider || draft.model.trim() !== task.model);
-  }) ?? [];
-  const changedFallbackTasks = status.data?.tasks.filter((task) => {
-    if (!(task.id in fallbackDrafts)) return false; // not yet initialized
-    const draft = fallbackDrafts[task.id] ?? null;
-    const current = task.fallbackProvider && task.fallbackModel ? { provider: task.fallbackProvider, model: task.fallbackModel } : null;
-    if (draft === null && current === null) return false;
-    if (draft === null || current === null) return true;
-    return draft.provider !== current.provider || draft.model.trim() !== current.model;
-  }) ?? [];
-  const unsavedKeyProviders = PROVIDERS.filter((provider) => keys[provider].trim().length > 0);
-  const hasUnsavedChanges = changedTasks.length > 0 || changedFallbackTasks.length > 0 || unsavedKeyProviders.length > 0;
-  const hasInvalidKey = unsavedKeyProviders.some((provider) => keys[provider].trim().length < 20);
-
-  function submitKey(provider: AiProvider) {
-    const apiKey = keys[provider].trim();
-    if (apiKey.length < 20 || saveKey.isPending) return;
-    setSavedKey(null);
-    setSavedAll(false);
-    saveKey.mutate({ provider, apiKey }, {
-      onSuccess: () => {
-        setKeys((current) => ({ ...current, [provider]: "" }));
-        setSavedKey(provider);
-      },
-    });
-  }
-
-  function updateDraft(task: AiTaskId, patch: Partial<{ provider: AiProvider; model: string }>) {
-    setSavedAll(false);
-    setDrafts((current) => {
-      const existing = current[task];
-      if (!existing) return current;
-      const next = { ...existing, ...patch };
-      if (patch.provider && patch.provider !== existing.provider) {
-        next.model = status.data?.tasks.find((candidate) => candidate.id === task)?.recommendedModels?.[patch.provider]
-          ?? status.data?.providers[patch.provider].models[0]
-          ?? "";
-      }
-      return { ...current, [task]: next };
-    });
-  }
-
-  function updateFallbackProviderDraft(task: AiTaskId, provider: AiProvider | null) {
-    setSavedAll(false);
-    setFallbackDrafts((current) => {
-      if (provider === null) return { ...current, [task]: null };
-      const existing = current[task];
-      const model = existing?.provider === provider
-        ? existing.model
-        : status.data?.tasks.find((candidate) => candidate.id === task)?.recommendedModels?.[provider]
-          ?? status.data?.providers[provider].models[0]
-          ?? "";
-      return { ...current, [task]: { provider, model } };
-    });
-  }
-
-  function updateFallbackModelDraft(task: AiTaskId, model: string) {
-    setSavedAll(false);
-    setFallbackDrafts((current) => {
-      const existing = current[task];
-      if (!existing) return current;
-      return { ...current, [task]: { ...existing, model } };
-    });
-  }
-
-  async function saveAllChanges() {
-    if (!hasUnsavedChanges || hasInvalidKey || savingAll) return;
-    const taskUpdates = changedTasks.flatMap((task) => {
-      const draft = drafts[task.id];
-      return draft ? [{ task: task.id, ...draft }] : [];
-    });
-    setSavingAll(true);
-    setSavedAll(false);
-    try {
-      for (const provider of unsavedKeyProviders) {
-        await saveKey.mutateAsync({ provider, apiKey: keys[provider].trim() });
-        setKeys((current) => ({ ...current, [provider]: "" }));
-        setSavedKey(provider);
-      }
-      for (const update of taskUpdates) await saveTask.mutateAsync(update);
-      for (const task of changedFallbackTasks) {
-        const draft = fallbackDrafts[task.id] ?? null;
-        if (draft) await saveTaskFallback.mutateAsync({ task: task.id, ...draft });
-        else await clearTaskFallback.mutateAsync(task.id);
-      }
-      setSavedAll(true);
-    } catch {
-      // The mutation hooks expose the provider/task-specific API message in
-      // the sheet; leave every unsaved draft intact so it can be corrected.
-    } finally {
-      setSavingAll(false);
-    }
-  }
+  const settings = useAiSettings();
+  const data = settings.data;
 
   return (
-    <BottomSheet
-      onClose={onClose}
-      onBeforeClose={() => {
-        if (allowClose.current || !hasUnsavedChanges) return true;
-        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-        setShowDiscardConfirm(true);
-        return false;
-      }}
-      backdropClassName="bg-black/50"
-      panelClassName="max-h-[92%] bg-surface rounded-t-xl border-t border-line"
-    >
-      {(dragHandlers, close, scrollDragRef) => (
+    <BottomSheet onClose={onClose} backdropClassName="bg-black/50" panelClassName="max-h-[92%] bg-surface rounded-t-xl border-t border-line">
+      {(dragHandlers, _close, scrollDragRef) => (
         <>
-          <div {...dragHandlers} className="px-4 pt-2 pb-4 text-center touch-none">
-            <h2 className="text-base font-semibold">AI Providers</h2>
+          <div {...dragHandlers} className="px-4 pb-4 pt-2 text-center touch-none">
+            <h2 className="text-base font-semibold">AI features</h2>
           </div>
-          <div ref={scrollDragRef} className="p-4 space-y-5 overflow-y-auto overscroll-y-contain">
-            <p className="text-xs text-muted leading-relaxed">
-              Add one or more provider keys, then choose the provider and model for each AI feature. Keys stay on this server and are never returned to the app.
-            </p>
-
-            <section className="space-y-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">API keys</h3>
-              {PROVIDERS.map((provider) => {
-                const details = status.data?.providers[provider];
-                const key = keys[provider];
-                const canSave = key.trim().length >= 20 && !saveKey.isPending;
-                const expanded = expandedProvider === provider;
-                return (
-                  <div key={provider} className="rounded-xl border border-line bg-surface-raised overflow-hidden">
-                    <div className="flex items-center min-h-12">
-                      <button
-                        type="button"
-                        onClick={() => setExpandedProvider(expanded ? null : provider)}
-                        aria-expanded={expanded}
-                        className="flex-1 min-w-0 flex items-center gap-2.5 px-3 py-2.5 text-left active:bg-surface"
-                      >
-                        <span className={`w-2 h-2 rounded-full shrink-0 ${details?.configured ? "bg-carbs" : "bg-muted"}`} />
-                        <span className="flex-1 min-w-0">
-                          <span className="block text-sm font-medium">{details?.label ?? PROVIDER_LABELS[provider]}</span>
-                          <span className="block text-[10px] text-muted">
-                            {details?.source === "account"
-                              ? "Key configured"
-                              : details?.source === "environment"
-                              ? "Shared server key"
-                              : "No key configured"}
-                          </span>
-                        </span>
-                        {expanded
-                          ? <ChevronUp className="w-3.5 h-3.5 text-muted shrink-0" strokeWidth={2} />
-                          : <ChevronDown className="w-3.5 h-3.5 text-muted shrink-0" strokeWidth={2} />}
-                      </button>
-                      {details?.keyUrl && (
-                        <a href={details.keyUrl} target="_blank" rel="noreferrer" className="p-3 mr-0.5 text-accent" aria-label={`Manage ${details.label} keys`}>
-                          <ExternalLink size={15} />
-                        </a>
-                      )}
-                    </div>
-
-                    {expanded && (
-                      <div className="border-t border-line px-3 py-3 space-y-2">
-                        <div className="flex gap-2">
-                          <EditableText
-                            value={key}
-                            onChange={(value) => {
-                              setKeys((current) => ({ ...current, [provider]: value }));
-                              setSavedKey(null);
-                              setSavedAll(false);
-                            }}
-                            onEnter={() => submitKey(provider)}
-                            placeholder={details?.keyPlaceholder ?? "API key"}
-                            ariaLabel={`${details?.label ?? PROVIDER_LABELS[provider]} API key`}
-                            masked
-                            className="flex-1 border border-line rounded-md focus-within:border-accent bg-surface"
-                          />
-                          <button
-                            onClick={() => submitKey(provider)}
-                            disabled={!canSave}
-                            className="px-3 rounded-md text-sm font-semibold disabled:opacity-40 bg-accent"
-                            style={{ color: "#0B1210" }}
-                          >
-                            {saveKey.isPending && saveKey.variables?.provider === provider ? "Checking…" : details?.source === "account" ? "Replace" : "Save"}
-                          </button>
-                        </div>
-
-                        <div className="flex items-center justify-between min-h-5">
-                          {savedKey === provider ? (
-                            <p className="text-xs text-carbs flex items-center gap-1.5"><Check size={13} /> Key saved and ready.</p>
-                          ) : <span />}
-                          {details?.source === "account" && (
-                            <button
-                              onClick={() => {
-                                setSavedKey(null);
-                                removeKey.mutate(provider);
-                              }}
-                              disabled={removeKey.isPending}
-                              className="text-xs text-protein flex items-center gap-1.5 disabled:opacity-40"
-                            >
-                              <Trash2 size={13} /> Remove key
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              {saveKey.isError && (
-                <p className="text-xs text-protein text-center">
-                  {saveKey.error instanceof ApiError ? saveKey.error.message : "Couldn't save that key."}
+          <div ref={scrollDragRef} className="space-y-4 overflow-y-auto p-4 pt-0 overscroll-y-contain">
+            {settings.isLoading && <p className="text-sm text-muted">Checking AI access…</p>}
+            {settings.error && (
+              <p className="rounded-xl border border-protein/40 bg-protein/10 p-3 text-sm leading-relaxed text-protein">
+                {settings.error instanceof Error ? settings.error.message : "Couldn't load AI access."}
+              </p>
+            )}
+            {data?.policy === "server" && (
+              <>
+                <p className="text-xs leading-relaxed text-muted">
+                  AI access for this account is provided by the central gateway. Provider choice, fallbacks, and usage limits are managed on the server.
                 </p>
-              )}
-            </section>
-
-            <section className="space-y-2">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">Models by task</h3>
-                  <p className="text-[11px] text-muted mt-1">Available models are checked when this screen opens and refresh automatically every hour.</p>
+                <ServerAccess data={data} />
+              </>
+            )}
+            {data?.policy === "bring_your_own_key" && (
+              <>
+                <p className="text-xs leading-relaxed text-muted">
+                  Add one of your own provider keys to use MacroDaddy&apos;s AI features. The central gateway stores it securely; MacroDaddy never does.
+                </p>
+                <div className="space-y-2">
+                  {AI_PROVIDERS.map((provider) => <ProviderCard key={provider} provider={provider} data={data} />)}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => refreshModels.mutate()}
-                  disabled={refreshModels.isPending}
-                  className="shrink-0 flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1.5 text-[11px] text-muted active:bg-surface-raised disabled:opacity-50"
-                >
-                  <RefreshCw size={12} className={refreshModels.isPending ? "animate-spin" : ""} />
-                  {refreshModels.isPending ? "Checking…" : "Refresh"}
-                </button>
-              </div>
-              {status.data?.tasks.map((task) => {
-                const draft = drafts[task.id];
-                if (!draft) return null;
-                const providerDetails = status.data.providers[draft.provider];
-                return (
-                  <div key={task.id} className="rounded-xl border border-line p-3 space-y-2.5">
-                    <div className="flex items-start gap-2">
-                      <span className={`w-2 h-2 rounded-full mt-1.5 ${providerDetails.configured ? "bg-carbs" : "bg-protein"}`} />
-                      <div>
-                        <p className="text-sm font-medium">{task.label}</p>
-                        <p className="text-[11px] text-muted leading-relaxed mt-0.5">{task.description}</p>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setPicker({ task: task.id, kind: "provider" })}
-                        className="min-w-0 flex items-center justify-between gap-1.5 border border-line rounded-md px-2.5 py-2 bg-surface text-sm text-left active:bg-surface-raised"
-                      >
-                        <span className="truncate">{providerDetails.label}</span>
-                        <ChevronDown className="w-3.5 h-3.5 text-muted shrink-0" strokeWidth={2} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPicker({ task: task.id, kind: "model" })}
-                        className="min-w-0 flex items-center justify-between gap-1.5 border border-line rounded-md px-2.5 py-2 bg-surface text-left active:bg-surface-raised"
-                        aria-label={`${task.label} model`}
-                      >
-                        <span className="font-mono text-xs truncate">{draft.model}</span>
-                        <ChevronDown className="w-3.5 h-3.5 text-muted shrink-0" strokeWidth={2} />
-                      </button>
-                    </div>
-                    {customModelTasks[task.id] && (
-                      <div>
-                        <EditableText
-                          value={draft.model}
-                          onChange={(model) => updateDraft(task.id, { model })}
-                          placeholder="Unlisted model ID"
-                          ariaLabel={`${task.label} unlisted model ID`}
-                          className="focus-within:border-accent border border-line rounded-md bg-surface [&_[role=textbox]]:text-xs"
-                        />
-                        <p className="text-[10px] text-muted mt-1 px-0.5">Enter the exact API model identifier supplied by {providerDetails.label}.</p>
-                      </div>
-                    )}
-                    {!providerDetails.configured && <p className="text-[11px] text-protein">Add a {providerDetails.label} key above to use this task.</p>}
-
-                    {(() => {
-                      const fallbackDraft = fallbackDrafts[task.id] ?? null;
-                      const fallbackProviderDetails = fallbackDraft ? status.data.providers[fallbackDraft.provider] : null;
-                      return (
-                        <div className="pt-2 border-t border-line/60 space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <p className="text-[11px] text-muted">Fallback if the above fails</p>
-                            {fallbackDraft && (
-                              <button
-                                type="button"
-                                onClick={() => updateFallbackProviderDraft(task.id, null)}
-                                className="text-[11px] text-muted underline active:text-white"
-                              >
-                                Clear
-                              </button>
-                            )}
-                          </div>
-                          {fallbackDraft ? (
-                            <div className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] gap-2">
-                              <button
-                                type="button"
-                                onClick={() => setPicker({ task: task.id, kind: "fallbackProvider" })}
-                                className="min-w-0 flex items-center justify-between gap-1.5 border border-line rounded-md px-2.5 py-2 bg-surface text-sm text-left active:bg-surface-raised"
-                              >
-                                <span className="truncate">{fallbackProviderDetails?.label}</span>
-                                <ChevronDown className="w-3.5 h-3.5 text-muted shrink-0" strokeWidth={2} />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setPicker({ task: task.id, kind: "fallbackModel" })}
-                                className="min-w-0 flex items-center justify-between gap-1.5 border border-line rounded-md px-2.5 py-2 bg-surface text-left active:bg-surface-raised"
-                                aria-label={`${task.label} fallback model`}
-                              >
-                                <span className="font-mono text-xs truncate">{fallbackDraft.model}</span>
-                                <ChevronDown className="w-3.5 h-3.5 text-muted shrink-0" strokeWidth={2} />
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => setPicker({ task: task.id, kind: "fallbackProvider" })}
-                              className="w-full border border-dashed border-line rounded-md px-2.5 py-2 text-xs text-muted text-left active:bg-surface-raised"
-                            >
-                              + Add a fallback provider
-                            </button>
-                          )}
-                          {fallbackDraft && fallbackProviderDetails && !fallbackProviderDetails.configured && (
-                            <p className="text-[11px] text-protein">Add a {fallbackProviderDetails.label} key above to use this fallback.</p>
-                          )}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                );
-              })}
-              {saveTask.isError && (
-                <p className="text-xs text-protein text-center">
-                  {saveTask.error instanceof ApiError ? saveTask.error.message : "Couldn't save that model selection."}
-                </p>
-              )}
-            </section>
-
-            <p className="text-[11px] text-muted/80 leading-relaxed">
-              Meal text and any photos used by an AI feature are sent only to the provider selected for that task. API usage is billed by that provider.
-            </p>
+              </>
+            )}
+            {data?.policy === "disabled" && (
+              <p className="rounded-xl border border-line bg-surface-raised p-3 text-sm leading-relaxed text-muted">
+                AI features are disabled for this account.
+              </p>
+            )}
           </div>
-
-          <div {...dragHandlers} className="shrink-0 border-t border-line bg-surface px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] touch-none">
-            {hasInvalidKey && <p className="text-[11px] text-protein text-center mb-2">Finish entering the API key before saving.</p>}
-            <button
-              type="button"
-              onClick={saveAllChanges}
-              disabled={!hasUnsavedChanges || hasInvalidKey || savingAll}
-              className="w-full py-3 rounded-full bg-accent text-sm font-semibold disabled:opacity-35"
-              style={{ color: "#0B1210" }}
-            >
-              {savingAll ? "Saving…" : savedAll && !hasUnsavedChanges ? "Saved" : "Save changes"}
-            </button>
-          </div>
-
-          {picker && status.data && drafts[picker.task] && (() => {
-            const task = status.data.tasks.find((candidate) => candidate.id === picker.task);
-            const draft = drafts[picker.task]!;
-            if (!task) return null;
-
-            if (picker.kind === "provider") {
-              return (
-                <SelectionSheet
-                  title={`${task.label} provider`}
-                  options={PROVIDERS.map((provider) => ({ value: provider, label: status.data.providers[provider].label }))}
-                  selected={draft.provider}
-                  onSelect={(value) => {
-                    updateDraft(task.id, { provider: value as AiProvider });
-                    setCustomModelTasks((current) => ({ ...current, [task.id]: false }));
-                  }}
-                  onClose={() => setPicker(null)}
-                />
-              );
-            }
-            if (picker.kind === "model") {
-              return (
-                <SelectionSheet
-                  title={`${task.label} model`}
-                  options={status.data.providers[draft.provider].models.map((model) => ({
-                    value: model,
-                    label: model,
-                    recommended: model === task.recommendedModels?.[draft.provider],
-                    discovered: status.data.providers[draft.provider].discoveredModels?.includes(model),
-                    isNew: newModels[draft.provider]?.includes(model),
-                  }))}
-                  selected={draft.model}
-                  allowCustom
-                  onSelect={(model) => {
-                    updateDraft(task.id, { model });
-                    setCustomModelTasks((current) => ({ ...current, [task.id]: false }));
-                  }}
-                  onCustom={() => setCustomModelTasks((current) => ({ ...current, [task.id]: true }))}
-                  onClose={() => setPicker(null)}
-                />
-              );
-            }
-
-            // Fallback pickers below never fall through to here with a null
-            // fallbackDraft for "fallbackModel" — the model button that opens
-            // it only renders once a fallback provider is already set.
-            const fallbackDraft = fallbackDrafts[task.id] ?? null;
-            if (picker.kind === "fallbackProvider") {
-              return (
-                <SelectionSheet
-                  title={`${task.label} fallback provider`}
-                  options={[
-                    { value: NO_FALLBACK, label: "None" },
-                    ...PROVIDERS.map((provider) => ({ value: provider, label: status.data.providers[provider].label })),
-                  ]}
-                  selected={fallbackDraft?.provider ?? NO_FALLBACK}
-                  onSelect={(value) => updateFallbackProviderDraft(task.id, value === NO_FALLBACK ? null : value as AiProvider)}
-                  onClose={() => setPicker(null)}
-                />
-              );
-            }
-            if (!fallbackDraft) return null;
-            return (
-              <SelectionSheet
-                title={`${task.label} fallback model`}
-                options={status.data.providers[fallbackDraft.provider].models.map((model) => ({
-                  value: model,
-                  label: model,
-                  recommended: model === task.recommendedModels?.[fallbackDraft.provider],
-                  discovered: status.data.providers[fallbackDraft.provider].discoveredModels?.includes(model),
-                  isNew: newModels[fallbackDraft.provider]?.includes(model),
-                }))}
-                selected={fallbackDraft.model}
-                onSelect={(model) => updateFallbackModelDraft(task.id, model)}
-                onClose={() => setPicker(null)}
-              />
-            );
-          })()}
-
-          {showDiscardConfirm && (
-            <UnsavedChangesSheet
-              onClose={() => setShowDiscardConfirm(false)}
-              onDiscard={() => {
-                allowClose.current = true;
-                close();
-              }}
-            />
-          )}
         </>
       )}
     </BottomSheet>

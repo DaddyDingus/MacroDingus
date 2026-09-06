@@ -302,6 +302,13 @@
       "when": 1788393600000,
       "tag": "0042_ai_sourced_foods",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1788652800000,
+      "tag": "0044_gateway_delegation",
+      "breakpoints": true
     }
   ]
 }

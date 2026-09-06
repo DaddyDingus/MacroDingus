@@ -4,24 +4,14 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { userSettings } from "../db/schema.js";
 import {
-  AI_PROVIDER_CATALOG,
   AI_PROVIDERS,
-  AI_TASKS,
-  aiNewProviderModels,
-  aiProviderKeyStatus,
-  aiProviderModelCatalog,
-  aiTaskAssignments,
-  aiTaskFallbackAssignments,
-  markAiProviderModelsSeen,
+  aiHttpStatus,
+  getAiAccess,
   removeAiProviderKey,
-  recommendedModelsForTask,
   saveAiProviderKey,
-  saveAiTaskAssignment,
-  saveAiTaskFallbackAssignment,
-  type AiProvider,
-  type AiProviderModels,
-  type AiTask,
+  testAiProviderKey,
 } from "../engine/aiProvider.js";
+import { gatewayAccessToken } from "../auth.js";
 
 // One loosely-typed JSON blob rather than a strict schema — this is a bag of
 // independent frontend preferences (theme, units, dashboard shortcuts/colors,
@@ -30,113 +20,22 @@ import {
 // merged shallowly into whatever's already stored (see PATCH below), so a
 // client only ever needs to send the keys it actually changed.
 const patchInput = z.record(z.string(), z.unknown());
-const apiKeyInput = z.object({ apiKey: z.string().trim().min(20).max(500) });
+const apiKeyInput = z.object({ apiKey: z.string().trim().min(8).max(8_192) });
 const providerInput = z.enum(AI_PROVIDERS);
-const taskInput = z.enum(AI_TASKS.map((task) => task.id) as [AiTask, ...AiTask[]]);
-const taskAssignmentInput = z.object({
-  provider: providerInput,
-  model: z.string().trim().min(1).max(120).regex(/^[A-Za-z0-9._:/-]+$/, "Invalid model ID"),
-});
 
-async function aiProviderStatuses(userId: string, refreshModels = false) {
-  const providerEntries = await Promise.all(AI_PROVIDERS.map(async (provider) => [
-    provider,
-    {
-      ...AI_PROVIDER_CATALOG[provider],
-      ...await aiProviderModelCatalog(userId, provider, refreshModels),
-      ...aiProviderKeyStatus(userId, provider),
-    },
-  ] as const));
-  return Object.fromEntries(providerEntries) as Record<AiProvider, (typeof providerEntries)[number][1]>;
-}
-
-function availableProviderModels(providers: Awaited<ReturnType<typeof aiProviderStatuses>>): AiProviderModels {
-  return Object.fromEntries(AI_PROVIDERS.map((provider) => [provider, providers[provider].availableModels])) as AiProviderModels;
-}
-
-async function aiModelUpdatesStatus(userId: string, refreshModels = false) {
-  const providers = await aiProviderStatuses(userId, refreshModels);
-  const current = availableProviderModels(providers);
-  const updates = await aiNewProviderModels(userId, current);
-  // The always-mounted nav calls this endpoint, so it owns the quiet first-run
-  // baseline even if the user has never opened AI settings. Without this, an
-  // absent baseline would continue suppressing every future release forever.
-  if (!updates.initialized) {
-    await markAiProviderModelsSeen(userId, current);
-    return { initialized: true, hasUpdates: false, count: 0, newModels: { anthropic: [], openai: [], gemini: [] } };
-  }
-  const count = AI_PROVIDERS.reduce((total, provider) => total + updates.newModels[provider].length, 0);
-  return { initialized: updates.initialized, hasUpdates: count > 0, count, newModels: updates.newModels };
-}
-
-async function aiSettingsStatus(userId: string, refreshModels = false) {
-  const assignments = await aiTaskAssignments(userId);
-  const fallbackAssignments = await aiTaskFallbackAssignments(userId);
-  const legacyAnthropicStatus = aiProviderKeyStatus(userId, "anthropic");
-  const providers = await aiProviderStatuses(userId, refreshModels);
-  const updates = await aiNewProviderModels(userId, availableProviderModels(providers));
-  return {
-    // Top-level fields preserve the old response contract for a cached app
-    // shell during a rolling deploy. The new UI reads `providers` below.
-    configured: legacyAnthropicStatus.configured,
-    source: legacyAnthropicStatus.source,
-    providers: Object.fromEntries(AI_PROVIDERS.map((provider) => [provider, {
-      ...providers[provider],
-      newModels: updates.newModels[provider],
-    }])),
-    hasNewModels: AI_PROVIDERS.some((provider) => updates.newModels[provider].length > 0),
-    tasks: AI_TASKS.map((task) => {
-      const assignment = assignments[task.id];
-      const fallback = fallbackAssignments[task.id] ?? null;
-      return {
-        id: task.id,
-        label: task.label,
-        description: task.description,
-        recommendedModels: recommendedModelsForTask(task.id),
-        ...assignment,
-        configured: aiProviderKeyStatus(userId, assignment.provider).configured,
-        // Nullable and never defaulted (unlike the primary provider/model
-        // above) — absence means "no fallback," not "use some default
-        // fallback," so the UI's own "None" option round-trips cleanly.
-        fallbackProvider: fallback?.provider ?? null,
-        fallbackModel: fallback?.model ?? null,
-        fallbackConfigured: fallback ? aiProviderKeyStatus(userId, fallback.provider).configured : false,
-      };
-    }),
-  };
+function aiErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && typeof (error as { statusCode?: unknown }).statusCode === "number"
+    ? error.message
+    : fallback;
 }
 
 export function registerSettingsRoutes(app: FastifyInstance) {
-  app.get("/api/settings/ai/model-updates", async (req) => aiModelUpdatesStatus(req.userId!));
-
-  app.post("/api/settings/ai/model-updates/seen", async (req) => {
-    const providers = await aiProviderStatuses(req.userId!);
-    await markAiProviderModelsSeen(req.userId!, availableProviderModels(providers));
-    return { initialized: true, hasUpdates: false, count: 0, newModels: { anthropic: [], openai: [], gemini: [] } };
-  });
-
-  app.get("/api/settings/ai", async (req) => {
-    const refreshModels = (req.query as { refreshModels?: string }).refreshModels === "1";
-    return aiSettingsStatus(req.userId!, refreshModels);
-  });
-
-  // Keep these two legacy endpoints working for a cached pre-deploy frontend.
-  app.put("/api/settings/ai", async (req, reply) => {
-    const parsed = apiKeyInput.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "Enter a valid Anthropic API key" });
+  app.get("/api/settings/ai", async (req, reply) => {
     try {
-      await saveAiProviderKey(req.userId!, "anthropic", parsed.data.apiKey);
-      return aiSettingsStatus(req.userId!);
-    } catch (err) {
-      req.log.warn({ err }, "Anthropic API key validation failed");
-      return reply.code(400).send({ error: "Couldn't validate that key with Anthropic" });
+      return await getAiAccess(await gatewayAccessToken(req));
+    } catch (error) {
+      return reply.code(aiHttpStatus(error)).send({ error: aiErrorMessage(error, "Couldn't load AI settings") });
     }
-  });
-
-  app.delete("/api/settings/ai", async (req, reply) => {
-    await removeAiProviderKey(req.userId!, "anthropic");
-    reply.code(204);
-    return null;
   });
 
   app.put("/api/settings/ai/providers/:provider", async (req, reply) => {
@@ -144,49 +43,33 @@ export function registerSettingsRoutes(app: FastifyInstance) {
     const body = apiKeyInput.safeParse(req.body);
     if (!provider.success || !body.success) return reply.code(400).send({ error: "Enter a valid API key" });
     try {
-      await saveAiProviderKey(req.userId!, provider.data, body.data.apiKey);
-      return aiSettingsStatus(req.userId!);
-    } catch (err) {
-      req.log.warn({ err, provider: provider.data }, "AI provider API key validation failed");
-      return reply.code(400).send({ error: `Couldn't validate that key with ${AI_PROVIDER_CATALOG[provider.data].label}` });
+      const credential = await saveAiProviderKey(await gatewayAccessToken(req), provider.data, body.data.apiKey);
+      return { ok: true, credential };
+    } catch (error) {
+      return reply.code(aiHttpStatus(error, 400)).send({ error: aiErrorMessage(error, "Couldn't save that key") });
+    }
+  });
+
+  app.post("/api/settings/ai/providers/:provider/test", async (req, reply) => {
+    const provider = providerInput.safeParse((req.params as { provider?: string }).provider);
+    if (!provider.success) return reply.code(404).send({ error: "Unknown AI provider" });
+    try {
+      const credential = await testAiProviderKey(await gatewayAccessToken(req), provider.data);
+      return { ok: true, credential };
+    } catch (error) {
+      return reply.code(aiHttpStatus(error, 400)).send({ error: aiErrorMessage(error, "Couldn't test that key") });
     }
   });
 
   app.delete("/api/settings/ai/providers/:provider", async (req, reply) => {
     const provider = providerInput.safeParse((req.params as { provider?: string }).provider);
     if (!provider.success) return reply.code(404).send({ error: "Unknown AI provider" });
-    await removeAiProviderKey(req.userId!, provider.data);
-    reply.code(204);
-    return null;
-  });
-
-  app.put("/api/settings/ai/tasks/:task", async (req, reply) => {
-    const task = taskInput.safeParse((req.params as { task?: string }).task);
-    const assignment = taskAssignmentInput.safeParse(req.body);
-    if (!task.success || !assignment.success) return reply.code(400).send({ error: "Choose a valid provider and model" });
-    await saveAiTaskAssignment(req.userId!, task.data, assignment.data as { provider: AiProvider; model: string });
-    return aiSettingsStatus(req.userId!);
-  });
-
-  // Fallback is a second, independent assignment per task — PUT sets it,
-  // DELETE clears it back to "none" (there's no "default fallback" to reset
-  // to, unlike the primary assignment). Deliberately its own pair of
-  // endpoints rather than an optional field folded into the PUT above: the
-  // primary assignment always has a value, this one's whole point is being
-  // absent by default.
-  app.put("/api/settings/ai/tasks/:task/fallback", async (req, reply) => {
-    const task = taskInput.safeParse((req.params as { task?: string }).task);
-    const assignment = taskAssignmentInput.safeParse(req.body);
-    if (!task.success || !assignment.success) return reply.code(400).send({ error: "Choose a valid provider and model" });
-    await saveAiTaskFallbackAssignment(req.userId!, task.data, assignment.data as { provider: AiProvider; model: string });
-    return aiSettingsStatus(req.userId!);
-  });
-
-  app.delete("/api/settings/ai/tasks/:task/fallback", async (req, reply) => {
-    const task = taskInput.safeParse((req.params as { task?: string }).task);
-    if (!task.success) return reply.code(404).send({ error: "Unknown AI task" });
-    await saveAiTaskFallbackAssignment(req.userId!, task.data, null);
-    return aiSettingsStatus(req.userId!);
+    try {
+      const deleted = await removeAiProviderKey(await gatewayAccessToken(req), provider.data);
+      return { ok: true, deleted };
+    } catch (error) {
+      return reply.code(aiHttpStatus(error, 400)).send({ error: aiErrorMessage(error, "Couldn't remove that key") });
+    }
   });
 
   app.get("/api/settings", async (req) => {

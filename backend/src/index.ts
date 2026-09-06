@@ -24,7 +24,6 @@ import { registerAdjustmentRoutes } from "./routes/adjustments.js";
 import { registerEventPlanRoutes } from "./routes/eventPlans.js";
 import { registerStepRoutes } from "./routes/steps.js";
 import { registerIntegrationRoutes } from "./routes/integrations.js";
-import { configureAiProviderStore } from "./engine/aiProvider.js";
 import { startAutomaticServerBackups } from "./lib/serverBackups.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -44,8 +43,6 @@ const HEALTH_CONNECT_RELEASE = {
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(path.join(DATA_DIR, "photos"), { recursive: true });
-configureAiProviderStore(DATA_DIR);
-
 runMigrations();
 
 const app = Fastify({ logger: true });

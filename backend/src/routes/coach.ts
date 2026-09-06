@@ -8,7 +8,6 @@ import { computeTrend, daysBetween, addDaysToDateString } from "../engine/trendW
 import { macroFactorTdee, estimateAdaptiveTdee, adaptiveTdeeCoverage } from "../engine/tdee.js";
 import { generateCoachedProgramDays, type DietType, type ProteinLevel } from "../engine/program.js";
 import { generateCheckinNarrative, type CheckinNarrativeInput } from "../engine/checkinNarrative.js";
-import { aiTaskConfigured } from "../engine/aiProvider.js";
 import {
   currentTrendKg,
   goalRateKgPerWeek,
@@ -110,7 +109,7 @@ function averageDayTargets(days: { targetCalories: number; targetProteinG: numbe
 // — the whole accept/decline flow rests on this staying side-effect-free, so
 // don't reach for db.insert/db.update in here.
 //
-// Deliberately excluded: the narrative. It's a paid Claude call, and nothing
+// Deliberately excluded: the narrative. It's a paid gateway call, and nothing
 // in the preview displays it, so generating one per preview would bill for
 // text nobody reads and produce a second one on accept anyway.
 //
@@ -253,17 +252,22 @@ export async function planCheckin(userId: string) {
 // the completed check-in first, return it to the phone, then fill the optional
 // note in best-effort background work. A failed provider call simply leaves
 // the nullable field empty, exactly as it did before.
-async function generateAndStoreCheckinNarrative(userId: string, checkinId: string, input: CheckinNarrativeInput) {
-  if (!(await aiTaskConfigured(userId, "checkinNarrative"))) return;
+async function generateAndStoreCheckinNarrative(
+  userId: string,
+  checkinId: string,
+  input: CheckinNarrativeInput,
+  getAccessToken?: () => Promise<string>,
+) {
+  if (!getAccessToken) return;
   try {
-    const narrative = await generateCheckinNarrative(userId, input);
+    const narrative = await generateCheckinNarrative(await getAccessToken(), input);
     await db.update(checkins).set({ narrative }).where(and(eq(checkins.id, checkinId), eq(checkins.userId, userId)));
   } catch (err) {
     console.error("checkin narrative generation failed:", err);
   }
 }
 
-export async function performCheckin(userId: string) {
+export async function performCheckin(userId: string, getAccessToken?: () => Promise<string>) {
   const plan = await planCheckin(userId);
   if ("error" in plan) return plan;
   const { profile, latestCheckin, today, dailyCalories, trendWeightKg, tdee, adaptiveTdee, regenerate, targetChanges, activeGoal, currentTargetCalories, currentTargetProteinG, dailyProtein } = plan;
@@ -335,7 +339,7 @@ export async function performCheckin(userId: string) {
   }
 
   const [checkin] = await db.select().from(checkins).where(eq(checkins.id, id));
-  void generateAndStoreCheckinNarrative(userId, id, narrativeInput);
+  void generateAndStoreCheckinNarrative(userId, id, narrativeInput, getAccessToken);
   return { checkin, usedAdaptiveTdee: adaptiveTdee !== null, targetChanges };
 }
 
@@ -394,7 +398,7 @@ export function registerCoachRoutes(app: FastifyInstance) {
   });
 
   app.post("/api/checkins", async (req, reply) => {
-    const result = await performCheckin(req.userId!);
+    const result = await performCheckin(req.userId!, req.getGatewayAccessToken);
     if ("error" in result) return reply.code(400).send(checkinErrorBody(result));
     reply.code(201);
     return result;

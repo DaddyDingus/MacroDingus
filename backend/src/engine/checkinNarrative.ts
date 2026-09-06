@@ -178,8 +178,8 @@ Rules:
 - If the data is genuinely too thin to say much, say that in her voice rather than padding it out.`;
 }
 
-export async function generateCheckinNarrative(userId: string, input: CheckinNarrativeInput): Promise<string> {
-  return generateAiText(userId, "checkinNarrative", {
+export async function generateCheckinNarrative(accessToken: string, input: CheckinNarrativeInput): Promise<string> {
+  return generateAiText(accessToken, "checkinNarrative", {
     prompt: buildPrompt(input),
     maxTokens: 300,
   });

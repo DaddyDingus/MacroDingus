@@ -3,7 +3,6 @@ import { LayoutDashboard, UtensilsCrossed, Target, Menu, type LucideIcon } from 
 import QuickActionsButton from "./QuickActionsSheet";
 import { useNavVisibility } from "../lib/navVisibility";
 import { useCoachStatus } from "../api/coach";
-import { useAiModelUpdates } from "../api/settings";
 
 const TABS_LEFT = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -64,7 +63,6 @@ export default function BottomNav() {
   const location = useLocation();
   const { hidden, shortcutsHidden, dockedBarScrollVisible } = useNavVisibility();
   const coachStatus = useCoachStatus();
-  const aiModelUpdates = useAiModelUpdates();
   const nextCheckinDueDate = coachStatus.data?.nextCheckinDueDate ?? null;
   // The attention dot is a reminder, so an ignored check-in clears it —
   // same rule as the Dashboard's banner (see CoachStatus.checkinIgnored).
@@ -109,8 +107,8 @@ export default function BottomNav() {
         <Tab
           key={t.to}
           {...t}
-          attention={t.to === "/strategy" ? checkinDue : t.to === "/more" && !!aiModelUpdates.data?.hasUpdates}
-          attentionLabel={t.to === "/strategy" ? "check-in due" : "new AI models available"}
+          attention={t.to === "/strategy" && checkinDue}
+          attentionLabel="check-in due"
         />
       ))}
     </nav>

@@ -25,68 +25,31 @@ export function useUpdateSettings() {
   });
 }
 
-export type AiProvider = "anthropic" | "openai" | "gemini";
-export type AiTaskId = "labelScan" | "mealDescription" | "foodLookup" | "recipeImport" | "recipePhotoImport" | "photoComparison" | "checkinNarrative";
+export const AI_PROVIDERS = ["openai", "anthropic", "gemini"] as const;
+export type AiProvider = (typeof AI_PROVIDERS)[number];
+export type AiAccessPolicy = "server" | "bring_your_own_key" | "disabled";
+export type CredentialValidationStatus = "unknown" | "valid" | "invalid";
 
-export interface AiProviderStatus {
-  label: string;
-  keyPlaceholder: string;
-  keyUrl: string;
-  models: string[];
-  availableModels?: string[];
-  discoveredModels?: string[];
-  newModels?: string[];
-  modelCatalogSource?: "live" | "cache" | "fallback";
-  modelsRefreshedAt?: string | null;
-  configured: boolean;
-  source: "account" | "environment" | null;
-}
+export const AI_PROVIDER_LABELS: Record<AiProvider, string> = {
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+  gemini: "Google Gemini",
+};
 
-export interface AiTaskStatus {
-  id: AiTaskId;
-  label: string;
-  description: string;
-  recommendedModels: Record<AiProvider, string>;
-  provider: AiProvider;
-  model: string;
-  configured: boolean;
-  // Null means "no fallback configured" — never defaulted the way
-  // provider/model above are, so "None" round-trips cleanly in the UI.
-  fallbackProvider: AiProvider | null;
-  fallbackModel: string | null;
-  fallbackConfigured: boolean;
-}
+export const AI_PROVIDER_KEY_URLS: Record<AiProvider, string> = {
+  openai: "https://platform.openai.com/api-keys",
+  anthropic: "https://console.anthropic.com/settings/keys",
+  gemini: "https://aistudio.google.com/app/apikey",
+};
 
 export interface AiSettingsStatus {
-  providers: Record<AiProvider, AiProviderStatus>;
-  tasks: AiTaskStatus[];
-  hasNewModels?: boolean;
-}
-
-export interface AiModelUpdates {
-  initialized: boolean;
-  hasUpdates: boolean;
-  count: number;
-  newModels: Record<AiProvider, string[]>;
-}
-
-export function useAiModelUpdates() {
-  const auth = useAuthStatus();
-  return useQuery({
-    queryKey: ["settings", "ai", "model-updates"],
-    queryFn: () => apiFetch<AiModelUpdates>("/settings/ai/model-updates"),
-    enabled: !!auth.data?.authenticated,
-    refetchOnMount: "always",
-    refetchInterval: 60 * 60 * 1000,
-  });
-}
-
-export function useMarkAiModelsSeen() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => apiFetch<AiModelUpdates>("/settings/ai/model-updates/seen", { method: "POST" }),
-    onSuccess: (data) => qc.setQueryData(["settings", "ai", "model-updates"], data),
-  });
+  policy: AiAccessPolicy;
+  enabled: boolean;
+  providers: {
+    provider: AiProvider;
+    configured: boolean;
+    validationStatus?: CredentialValidationStatus;
+  }[];
 }
 
 export function useAiSettings() {
@@ -96,64 +59,38 @@ export function useAiSettings() {
     queryFn: () => apiFetch<AiSettingsStatus>("/settings/ai"),
     enabled: !!auth.data?.authenticated,
     refetchOnMount: "always",
-    refetchInterval: 60 * 60 * 1000,
   });
 }
 
-export function useRefreshAiModels() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => apiFetch<AiSettingsStatus>("/settings/ai?refreshModels=1"),
-    onSuccess: (data) => qc.setQueryData(["settings", "ai"], data),
-  });
+function invalidateAiSettings(qc: ReturnType<typeof useQueryClient>) {
+  return qc.invalidateQueries({ queryKey: ["settings", "ai"] });
 }
 
 export function useSaveAiKey() {
   const qc = useQueryClient();
   return useMutation({
+    // Credential text exists only while this request is in flight. The UI
+    // resets the observer on settlement, and zero GC removes its cache entry.
+    gcTime: 0,
     mutationFn: ({ provider, apiKey }: { provider: AiProvider; apiKey: string }) =>
-      apiFetch<AiSettingsStatus>(`/settings/ai/providers/${provider}`, { method: "PUT", body: JSON.stringify({ apiKey }) }),
-    onSuccess: (data) => qc.setQueryData(["settings", "ai"], data),
+      apiFetch<{ ok: true }>(`/settings/ai/providers/${provider}`, { method: "PUT", body: JSON.stringify({ apiKey }) }),
+    onSuccess: () => invalidateAiSettings(qc),
+  });
+}
+
+export function useTestAiKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (provider: AiProvider) =>
+      apiFetch<{ ok: true }>(`/settings/ai/providers/${provider}/test`, { method: "POST" }),
+    onSuccess: () => invalidateAiSettings(qc),
   });
 }
 
 export function useRemoveAiKey() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (provider: AiProvider) => apiFetch<void>(`/settings/ai/providers/${provider}`, { method: "DELETE" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["settings", "ai"] }),
-  });
-}
-
-export function useSaveAiTask() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ task, provider, model }: { task: AiTaskId; provider: AiProvider; model: string }) =>
-      apiFetch<AiSettingsStatus>(`/settings/ai/tasks/${task}`, {
-        method: "PUT",
-        body: JSON.stringify({ provider, model }),
-      }),
-    onSuccess: (data) => qc.setQueryData(["settings", "ai"], data),
-  });
-}
-
-export function useSaveAiTaskFallback() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ task, provider, model }: { task: AiTaskId; provider: AiProvider; model: string }) =>
-      apiFetch<AiSettingsStatus>(`/settings/ai/tasks/${task}/fallback`, {
-        method: "PUT",
-        body: JSON.stringify({ provider, model }),
-      }),
-    onSuccess: (data) => qc.setQueryData(["settings", "ai"], data),
-  });
-}
-
-export function useClearAiTaskFallback() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (task: AiTaskId) =>
-      apiFetch<AiSettingsStatus>(`/settings/ai/tasks/${task}/fallback`, { method: "DELETE" }),
-    onSuccess: (data) => qc.setQueryData(["settings", "ai"], data),
+    mutationFn: (provider: AiProvider) => apiFetch<{ ok: true }>(`/settings/ai/providers/${provider}`, { method: "DELETE" }),
+    onSuccess: () => invalidateAiSettings(qc),
   });
 }

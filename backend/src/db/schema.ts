@@ -34,6 +34,10 @@ export const appSessions = sqliteTable("app_sessions", {
   tokenHash: text("token_hash").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   oidcSid: text("oidc_sid"),
+  // Authentik access/refresh tokens used only for gateway delegation. The
+  // envelope is AES-GCM encrypted with a key derived from the random session
+  // cookie, which is never stored in SQLite or exposed to browser JavaScript.
+  oidcTokensEncrypted: text("oidc_tokens_encrypted"),
   expiresAt: integer("expires_at").notNull(),
   refreshedAt: integer("refreshed_at").notNull(),
   createdAt: integer("created_at").notNull(),
@@ -399,8 +403,8 @@ export const checkins = sqliteTable("checkins", {
   // the previous check-in (see engine/checkinNarrative.ts) — generated
   // best-effort inside performCheckin() alongside the TDEE snapshot above,
   // so it rides the same weekly cadence rather than a separate schedule.
-  // Null when no account/shared Anthropic key is configured, generation failed, or
-  // this check-in predates the feature — the Dashboard tile and journal
+  // Null when gateway access is unavailable, generation failed, or this
+  // check-in predates the feature — the Dashboard tile and journal
   // screen both just omit a checkin with no narrative rather than fake one.
   narrative: text("narrative"),
   createdAt: text("created_at").notNull(),

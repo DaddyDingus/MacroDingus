@@ -15,7 +15,7 @@ This checklist is agent-owned. At the beginning of every task, inspect `.daddysv
 
 The signing files and `.env` must remain mode `0600`; the Tailscale state directory must remain private. They are gitignored. Back up both signing files together in a mode-`0700` directory on protected storage and keep another encrypted copy off this server. Never regenerate the key after an APK has been installed.
 
-Runtime AI keys, the OIDC transaction secret, session hashes, integration keys, and Tailscale credentials must remain outside source control. Account exports intentionally omit photos and secret AI keys.
+The OIDC transaction secret, encrypted delegated OIDC tokens, session hashes, integration keys, and Tailscale credentials must remain outside source control. AI provider credentials belong only in the central gateway. Account exports intentionally omit photos and secrets.
 
 ## Authentik
 
@@ -29,6 +29,11 @@ Apply `deploy/authentik-blueprint.yaml` to reconcile that existing resource, or 
 - strict redirect: `https://macrodaddy.tail984e80.ts.net/api/auth/oidc/callback`
 - back-channel logout URI: `https://macrodaddy.tail984e80.ts.net/api/auth/backchannel-logout`
 - signing key: the existing Authentik self-signed certificate
+- scope mappings: `openid`, `profile`, `email`, and `offline_access`
+
+MacroDaddy encrypts the delegated access/refresh token set in its server-side
+session and never exposes it to browser JavaScript. Existing sessions from
+before the gateway migration must sign out and back in once.
 
 The app validates signed form-encoded back-channel logout tokens through issuer discovery/JWKS. The shared Authentik `2026.8.0` issuer emits canonical `typ=logout+jwt`; legacy `typ=JWT` logout tokens are rejected.
 
@@ -85,8 +90,8 @@ Confirm the application ID and certificate fingerprint above before publishing. 
 
 The server uses SQLite online backups every 24 hours and retains 14 under `DATA_DIR/backups`, each with a companion `.photos` tree. More → Data & backups shows status and can trigger one manually. These snapshots remain on the same data volume and are not a substitute for an off-server backup.
 
-For full disaster recovery, copy all of `DATA_DIR`—database, WAL/SHM as applicable, photos, runtime secrets, backups, and integration state—to another disk or machine. Use SQLite's online backup API while the service is running, or stop the service before copying the live database files. Preserve runtime encryption/API key files with that backup.
+For full disaster recovery, copy all of `DATA_DIR`—database, WAL/SHM as applicable, photos, runtime secrets, backups, and integration state—to another disk or machine. Use SQLite's online backup API while the service is running, or stop the service before copying the live database files. Gateway credentials are backed up with the gateway, not this app.
 
-The verified 2026-08-24 off-server recovery set in Backblaze B2 contains the current online SQLite snapshot, progress photos, both permanent Android signing files, and a dedicated Tailscale identity archive. Local-to-remote hashes matched, and download response headers reported AES-256 SSE-B2 encryption. The regular stack sync deliberately excludes account-level AI provider keys because they are third-party billing credentials; re-enter those keys after recovery. Refresh the dedicated Tailscale archive after an intentional node identity change rather than folding its private state into the generic nightly sync.
+The verified 2026-08-24 off-server recovery set in Backblaze B2 contains the current online SQLite snapshot, progress photos, both permanent Android signing files, and a dedicated Tailscale identity archive. Local-to-remote hashes matched, and download response headers reported AES-256 SSE-B2 encryption. Historical app-local AI key files are deliberately excluded and are no longer used at runtime. Refresh the dedicated Tailscale archive after an intentional node identity change rather than folding its private state into the generic nightly sync.
 
 To recover Android signing, restore both protected files to `android/`, set mode `0600`, and verify the certificate fingerprint before building. To recover Tailscale, restore the state directory first; use `TS_AUTHKEY` only if no restorable state exists. After recovery, deploy, check `/api/health`, `/api/android/version`, Authentik login/logout, a valid and invalid back-channel logout, row counts, photos, and APK signature.

@@ -8,7 +8,8 @@ import { fetchOffProduct, mapOffProduct, offCaloriesPer100g, searchOffProducts }
 import { scanNutritionLabel } from "../engine/labelScan.js";
 import { describeMeal } from "../engine/describeMeal.js";
 import { lookupSourcedFood } from "../engine/aiFoodLookup.js";
-import { aiTaskConfigured } from "../engine/aiProvider.js";
+import { aiHttpStatus } from "../engine/aiProvider.js";
+import { gatewayAccessToken } from "../auth.js";
 import { toBoundedJpeg } from "../engine/imagePrep.js";
 import { expandFoodQuery, foodTextRelevance, normalizeFoodQuery } from "../engine/foodSearch.js";
 
@@ -278,15 +279,9 @@ export function registerFoodRoutes(app: FastifyInstance) {
   // Vision-based nutrition-label OCR — a photo in, a partial CreateFoodInput
   // out, always via the create-food form (never auto-saved) so a misread
   // stays a one-field edit rather than a silently wrong food in the shared
-  // library. Returns 503 rather than a raw SDK error when no API key is
-  // configured for the selected provider, since that's the most likely
-  // reason it is unavailable.
+  // library. The gateway owns whether this authenticated account may use a
+  // centrally funded credential or must configure BYOK.
   app.post("/api/foods/scan-label", async (req, reply) => {
-    if (!(await aiTaskConfigured(req.userId!, "labelScan"))) {
-      reply.code(503);
-      return { error: "Label scanning isn't configured on this server yet" };
-    }
-
     const data = await req.file();
     if (!data) return reply.code(400).send({ error: "No file uploaded" });
 
@@ -301,12 +296,12 @@ export function registerFoodRoutes(app: FastifyInstance) {
     }
 
     try {
-      const result = await scanNutritionLabel(req.userId!, jpeg, "image/jpeg");
+      const result = await scanNutritionLabel(await gatewayAccessToken(req), jpeg, "image/jpeg");
       return result;
     } catch (err) {
       req.log.error(err);
-      reply.code(502);
-      return { error: "Couldn't read a nutrition label from that photo — try a clearer, closer shot" };
+      reply.code(aiHttpStatus(err));
+      return { error: err instanceof Error ? err.message : "Couldn't read a nutrition label from that photo — try a clearer, closer shot" };
     }
   });
 
@@ -322,11 +317,6 @@ export function registerFoodRoutes(app: FastifyInstance) {
   // was never saved anywhere either) — it only exists long enough to be
   // described, then discarded once describeMeal() returns.
   app.post("/api/foods/describe-meal", async (req, reply) => {
-    if (!(await aiTaskConfigured(req.userId!, "mealDescription"))) {
-      reply.code(503);
-      return { error: "Meal description isn't configured on this server yet" };
-    }
-
     let text: string | null = null;
     let photoRaw: Buffer | null = null;
     for await (const part of req.parts()) {
@@ -357,10 +347,10 @@ export function registerFoodRoutes(app: FastifyInstance) {
     }
 
     try {
-      return await describeMeal(req.userId!, trimmedText, photo);
+      return await describeMeal(await gatewayAccessToken(req), trimmedText, photo);
     } catch (err) {
       req.log.error(err);
-      reply.code(502);
+      reply.code(aiHttpStatus(err));
       return { error: err instanceof Error ? err.message : "Couldn't make sense of that meal" };
     }
   });
@@ -370,19 +360,16 @@ export function registerFoodRoutes(app: FastifyInstance) {
   // meal's intentionally hidden ai_estimate rows, this never asks a model to
   // invent nutrient numbers: the model only resolves among supplied records.
   app.post("/api/foods/ai-lookup", async (req, reply) => {
-    if (!(await aiTaskConfigured(req.userId!, "foodLookup"))) {
-      return reply.code(503).send({ error: "Generic food lookup isn't configured yet — choose a provider in AI features" });
-    }
     const parsed = z.object({
       description: z.string().trim().min(2).max(240),
       clarification: z.string().trim().min(1).max(160).optional(),
     }).safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "Describe the food in 240 characters or fewer" });
     try {
-      return await lookupSourcedFood(req.userId!, parsed.data.description, parsed.data.clarification);
+      return await lookupSourcedFood(await gatewayAccessToken(req), parsed.data.description, parsed.data.clarification);
     } catch (err) {
       req.log.error(err);
-      return reply.code(502).send({ error: err instanceof Error ? err.message : "Couldn't look up that food" });
+      return reply.code(aiHttpStatus(err)).send({ error: err instanceof Error ? err.message : "Couldn't look up that food" });
     }
   });
 

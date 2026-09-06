@@ -75,7 +75,7 @@ export function registerGoalRoutes(app: FastifyInstance) {
     });
 
     if (priorCheckins === 0) {
-      await performCheckin(userId); // best-effort — e.g. no-ops via its own weight_required error if no weigh-in exists yet
+      await performCheckin(userId, req.getGatewayAccessToken); // best-effort — e.g. no-ops via its own weight_required error if no weigh-in exists yet
     }
 
     // First-ever goal is the moment App.tsx's onboarding gate considers this

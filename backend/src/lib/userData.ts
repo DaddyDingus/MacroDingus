@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { sqlite } from "../db/index.js";
-import { AI_PROVIDERS } from "../engine/aiProvider.js";
 
 // The single canonical list of everything one person owns. Two callers need
 // it — "Clear Account Data" (routes/account.ts) and an admin deleting someone
@@ -50,27 +49,18 @@ const USER_TABLES = [
   "profiles",
 ];
 
-function removeStoredSecrets(userId: string, dataDir: string) {
-  // Keys are one file per user per provider (engine/aiProvider.ts), so they
-  // are invisible to the SQL teardown above and would otherwise outlive the
-  // account they belong to.
-  const files = AI_PROVIDERS.map((provider) => path.join(dataDir, "secrets", "ai", provider, path.basename(userId)));
-  files.push(path.join(dataDir, "secrets", "anthropic", path.basename(userId)));
-  for (const file of files) fs.rmSync(file, { force: true });
-}
-
 /**
  * Deletes every row and file belonging to one account, leaving the `users`
  * row itself intact.
  *
- * `removeSecrets` separates the two callers: clearing your own data is a
- * fresh start that keeps the API keys you pasted in, whereas deleting the
- * account should leave nothing of that person behind.
+ * The options argument remains for call-site compatibility. AI credentials
+ * now belong to the central gateway; historical local key files are retained
+ * untouched until the owner deliberately revokes and removes them later.
  */
 export async function purgeUserData(
   userId: string,
   dataDir: string,
-  { removeSecrets = false }: { removeSecrets?: boolean } = {},
+  _options: { removeSecrets?: boolean } = {},
 ): Promise<void> {
   // One transaction: a partial teardown would leave rows pointing at an
   // account that no longer resolves, and the caller in routes/admin.ts is
@@ -88,5 +78,4 @@ export async function purgeUserData(
   purge();
 
   await fs.promises.rm(path.join(dataDir, "photos", path.basename(userId)), { recursive: true, force: true });
-  if (removeSecrets) removeStoredSecrets(userId, dataDir);
 }

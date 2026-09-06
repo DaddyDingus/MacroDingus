@@ -265,8 +265,9 @@ export function registerAccountRoutes(app: FastifyInstance, dataDir: string) {
   app.delete("/api/account/data", async (req, reply) => {
     // Table list lives in lib/userData.ts, shared with the admin delete —
     // this route previously kept its own copy and silently missed the
-    // event-plan tables for as long as they existed. Saved AI keys survive a
-    // self-service clear; only deleting the account removes those.
+    // event-plan tables for as long as they existed. Gateway credentials are
+    // outside this app's data-clear scope; inactive historical local key files
+    // remain untouched until deliberate revocation and removal.
     await purgeUserData(req.userId!, dataDir);
 
     reply.code(204);

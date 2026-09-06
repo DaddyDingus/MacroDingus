@@ -6,7 +6,8 @@ import { db } from "../db/index.js";
 import { foods, recipes, recipeIngredients } from "../db/schema.js";
 import { scaleNutrition, sumNutrition } from "../engine/nutrition.js";
 import { importRecipeFromUrl, importRecipeFromPhoto } from "../engine/recipeImport.js";
-import { aiTaskConfigured } from "../engine/aiProvider.js";
+import { aiHttpStatus } from "../engine/aiProvider.js";
+import { gatewayAccessToken } from "../auth.js";
 import { toBoundedJpeg } from "../engine/imagePrep.js";
 
 // Same reasoning as foods.ts's own LABEL_MAX_DIMENSION — this is reading
@@ -122,26 +123,20 @@ export function registerRecipeRoutes(app: FastifyInstance) {
     return detail;
   });
 
-  // Fetches a recipe URL and hands it to the configured AI model to extract
-  // structured
+  // Fetches a recipe URL and hands it to the gateway to extract structured
   // data, ready for RecipeForm's `initial` prop — same "always a real,
   // reviewable draft, never auto-saved" shape as label scanning and
   // describe-meal. See engine/recipeImport.ts for the fetch/parse/match
-  // logic. Same 503-when-unconfigured convention as those two features.
+  // logic. Gateway policy decides which credentials and route may be used.
   app.post("/api/recipes/import-url", async (req, reply) => {
-    if (!(await aiTaskConfigured(req.userId!, "recipeImport"))) {
-      reply.code(503);
-      return { error: "Recipe import isn't configured on this server yet" };
-    }
-
     const parsed = z.object({ url: z.string().min(1) }).safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
 
     try {
-      return await importRecipeFromUrl(req.userId!, parsed.data.url);
+      return await importRecipeFromUrl(await gatewayAccessToken(req), parsed.data.url);
     } catch (err) {
       req.log.error(err);
-      reply.code(502);
+      reply.code(aiHttpStatus(err));
       return { error: err instanceof Error ? err.message : "Couldn't import a recipe from that link" };
     }
   });
@@ -154,11 +149,6 @@ export function registerRecipeRoutes(app: FastifyInstance) {
   // importRecipeFromPhoto for the vision/matching logic — identical output
   // shape to import-url so the frontend handles both the same way.
   app.post("/api/recipes/import-photo", async (req, reply) => {
-    if (!(await aiTaskConfigured(req.userId!, "recipePhotoImport"))) {
-      reply.code(503);
-      return { error: "Recipe photo import isn't configured on this server yet" };
-    }
-
     const data = await req.file();
     if (!data) return reply.code(400).send({ error: "No file uploaded" });
 
@@ -176,10 +166,10 @@ export function registerRecipeRoutes(app: FastifyInstance) {
     }
 
     try {
-      return await importRecipeFromPhoto(req.userId!, { buffer: jpeg, mediaType: "image/jpeg" }, description);
+      return await importRecipeFromPhoto(await gatewayAccessToken(req), { buffer: jpeg, mediaType: "image/jpeg" }, description);
     } catch (err) {
       req.log.error(err);
-      reply.code(502);
+      reply.code(aiHttpStatus(err));
       return { error: err instanceof Error ? err.message : "Couldn't import a recipe from that photo" };
     }
   });

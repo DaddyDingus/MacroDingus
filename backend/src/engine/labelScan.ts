@@ -29,13 +29,8 @@ const LABEL_SCAN_FIELDS = Object.keys({
   carbsPer100g: 0, fatPer100g: 0, fiberPer100g: 0, sugarPer100g: 0, saturatedFatPer100g: 0, sodiumMgPer100g: 0,
 } satisfies Record<keyof LabelScanResult, 0>) as (keyof LabelScanResult)[];
 
-// Hand-written JSON Schema rather than the SDK's `zodOutputFormat` helper —
-// that helper builds against zod's newer `zod/v4` subpath (`z.toJSONSchema`
-// internally), a different type from the classic `zod` v3 namespace every
-// route's request validation already uses in this backend. Mixing two zod
-// import styles for one helper wasn't worth it; this schema is small enough
-// to maintain by hand, paired with the plain type guard below instead of
-// zod's `.safeParse()`.
+// This app-specific JSON Schema travels with the gateway prompt; the plain
+// type guard below still validates the normalized result before it is used.
 const LABEL_SCAN_JSON_SCHEMA = {
   type: "object",
   properties: Object.fromEntries(
@@ -62,8 +57,8 @@ function coerceLabelScanResult(raw: unknown): LabelScanResult {
 
 const PROMPT = `This is a photo of a food package's Nutrition Facts label. Read it carefully and extract the fields in the schema, normalizing every nutrient amount to a per-100-gram basis — labels state amounts per serving, so use the serving size in grams printed on the label to convert (e.g. a 55g serving with 220 calories is 400 calories per 100g). Also report the serving size in grams and the label's own serving description (e.g. "2/3 cup") separately, unconverted. \`caloriesPer100g\` must always be in kilocalories (Calories/kcal) — if the label's energy row is given only in kilojoules (kJ), convert it to kcal by dividing by 4.184 before applying the per-100g conversion (e.g. "Energy 1046kJ per 100g" is 1046 / 4.184 ≈ 250 kcal per 100g). If a label shows both kJ and kcal, use the kcal figure directly rather than converting. If the product name or brand is visible anywhere in the photo, include it. Sodium is in milligrams; every other nutrient is in grams. If a field isn't present on the label or you can't determine it confidently, return null for that field — never guess or estimate a value.`;
 
-export async function scanNutritionLabel(userId: string, imageBuffer: Buffer, mediaType: "image/jpeg"): Promise<LabelScanResult> {
-  const text = await generateAiText(userId, "labelScan", {
+export async function scanNutritionLabel(accessToken: string, imageBuffer: Buffer, mediaType: "image/jpeg"): Promise<LabelScanResult> {
+  const text = await generateAiText(accessToken, "labelScan", {
     prompt: PROMPT,
     images: [{ buffer: imageBuffer, mediaType }],
     maxTokens: 1024,

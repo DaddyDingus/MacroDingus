@@ -1,6 +1,6 @@
 import sharp from "sharp";
 
-// Shared by every route that hands a freshly-uploaded photo to Claude for
+// Shared by every route that hands a freshly-uploaded photo to the gateway for
 // vision (nutrition-label scan, plate-photo describe) — normalizes to a
 // known, size-capped JPEG buffer before it ever reaches the model, regardless
 // of what the client actually sent (HEIC, huge dimensions, wrong EXIF

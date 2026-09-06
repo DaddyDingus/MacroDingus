@@ -75,8 +75,14 @@ createRoot(document.getElementById("root")!).render(
       client={queryClient}
       persistOptions={{
         persister,
+        // Invalidate the pre-gateway cache once: older builds could persist a
+        // paused key-save mutation (including its plaintext API-key variable).
+        buster: "ai-gateway-v1",
         maxAge: 1000 * 60 * 60 * 24 * 7,
         dehydrateOptions: {
+          // Mutations can contain transient secrets such as a newly entered
+          // BYOK credential and must never be written to the IndexedDB cache.
+          shouldDehydrateMutation: () => false,
           // Cached nutrition data makes reopen instant; cached auth state is
           // actively harmful. In particular, logout stores false and an OIDC
           // callback then reloads into that stale value despite having just

@@ -247,21 +247,14 @@ function safeDisplayName(value: string | null, fallback: string): string {
   return name && name.length <= 140 ? name : fallback;
 }
 
-async function resolveCandidate(userId: string, prompt: string): Promise<Resolution> {
-  try {
-    return parseResolution(await generateAiText(userId, "foodLookup", { prompt, maxTokens: 900, jsonSchema: RESOLUTION_SCHEMA }));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!/(high demand|overloaded|rate limit|\b429\b|\b503\b)/i.test(message)) throw error;
-    // A single short retry absorbs the transient provider spike observed in
-    // the real two-step lamb clarification flow. Longer retry policy remains
-    // the configured cross-provider fallback's job.
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    return parseResolution(await generateAiText(userId, "foodLookup", { prompt, maxTokens: 900, jsonSchema: RESOLUTION_SCHEMA }));
-  }
+async function resolveCandidate(accessToken: string, prompt: string): Promise<Resolution> {
+  // The gateway owns transient retries and provider fallback. A client-side
+  // retry with a fresh idempotency key could turn one user action into two
+  // billable requests after an ambiguous timeout.
+  return parseResolution(await generateAiText(accessToken, "foodLookup", { prompt, maxTokens: 900, jsonSchema: RESOLUTION_SCHEMA }));
 }
 
-export async function lookupSourcedFood(userId: string, description: string, clarification?: string): Promise<AiFoodLookupResult> {
+export async function lookupSourcedFood(accessToken: string, description: string, clarification?: string): Promise<AiFoodLookupResult> {
   const quantityGrams = quantityFromDescription(description);
   let candidates = await localCandidates(description);
   // AFCD is the Australian-first authority. USDA is queried only when local
@@ -295,7 +288,7 @@ Rules:
 
   let resolution: Resolution;
   try {
-    resolution = await resolveCandidate(userId, prompt);
+    resolution = await resolveCandidate(accessToken, prompt);
   } catch (error) {
     if (error instanceof SyntaxError) throw new Error("Couldn't understand the food lookup result");
     throw error;

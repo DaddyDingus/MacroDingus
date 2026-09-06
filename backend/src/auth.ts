@@ -5,7 +5,7 @@ import bcrypt from "bcrypt";
 import fastifyCookie from "@fastify/cookie";
 import fastifyFormbody from "@fastify/formbody";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { Issuer, generators, type Client } from "openid-client";
+import { Issuer, generators, type Client, type TokenSet } from "openid-client";
 import { z } from "zod";
 import { eq, lt } from "drizzle-orm";
 import { db, sqlite } from "./db/index.js";
@@ -15,6 +15,7 @@ import { createRemoteBackchannelLogoutVerifier, type BackchannelLogoutClaims } f
 declare module "fastify" {
   interface FastifyRequest {
     userId?: string;
+    getGatewayAccessToken?: () => Promise<string>;
   }
 }
 
@@ -22,6 +23,8 @@ const COOKIE_NAME = "mt_session";
 const OIDC_COOKIE_NAME = "mt_oidc";
 const SESSION_MS = 365 * 24 * 60 * 60 * 1000;
 const SESSION_REFRESH_AFTER_MS = 24 * 60 * 60 * 1000;
+const ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 60;
+const OIDC_TOKEN_AAD = Buffer.from("macrodaddy:oidc-token:v1", "utf8");
 const OIDC_ISSUER = process.env.OIDC_ISSUER?.trim() ?? "";
 const OIDC_CLIENT_ID = process.env.OIDC_CLIENT_ID?.trim() || "macrodaddy";
 const OIDC_REDIRECT_ORIGINS = new Set((process.env.OIDC_REDIRECT_ORIGINS ?? "")
@@ -95,13 +98,103 @@ interface LiveSession {
   expiresAt: number;
   refreshedAt: number;
   oidcSid: string | null;
+  oidcTokensEncrypted: string | null;
+}
+
+interface DelegatedOidcTokens {
+  accessToken: string;
+  refreshToken: string | null;
+  expiresAt: number;
+}
+
+interface EncryptedOidcTokens {
+  version: 1;
+  iv: string;
+  ciphertext: string;
+  tag: string;
+}
+
+class GatewayReauthenticationError extends Error {
+  readonly statusCode = 401;
+
+  constructor() {
+    super("Sign out and sign in with Authentik again to use AI features.");
+    this.name = "GatewayReauthenticationError";
+  }
 }
 
 function sessionTokenHash(raw: string): string {
   return crypto.createHash("sha256").update(raw).digest("base64url");
 }
 
-async function createSession(reply: import("fastify").FastifyReply, userId: string, oidcSid: string | null = null) {
+function oidcTokenKey(sessionToken: string): Buffer {
+  return Buffer.from(crypto.hkdfSync(
+    "sha256",
+    Buffer.from(sessionToken, "utf8"),
+    Buffer.alloc(0),
+    OIDC_TOKEN_AAD,
+    32,
+  ));
+}
+
+function delegatedTokenPayload(tokens: TokenSet, priorRefreshToken: string | null = null): DelegatedOidcTokens {
+  if (!tokens.access_token) throw new Error("Authentik did not return an access token");
+  return {
+    accessToken: tokens.access_token,
+    refreshToken: tokens.refresh_token ?? priorRefreshToken,
+    expiresAt: tokens.expires_at ?? Math.floor(Date.now() / 1000) + 300,
+  };
+}
+
+function encryptOidcTokens(sessionToken: string, tokens: DelegatedOidcTokens): string {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", oidcTokenKey(sessionToken), iv);
+  cipher.setAAD(OIDC_TOKEN_AAD);
+  const ciphertext = Buffer.concat([
+    cipher.update(JSON.stringify(tokens), "utf8"),
+    cipher.final(),
+  ]);
+  const envelope: EncryptedOidcTokens = {
+    version: 1,
+    iv: iv.toString("base64url"),
+    ciphertext: ciphertext.toString("base64url"),
+    tag: cipher.getAuthTag().toString("base64url"),
+  };
+  return Buffer.from(JSON.stringify(envelope), "utf8").toString("base64url");
+}
+
+function decryptOidcTokens(sessionToken: string, encoded: string): DelegatedOidcTokens {
+  const envelope = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as EncryptedOidcTokens;
+  if (envelope.version !== 1) throw new Error("Unsupported OIDC token envelope");
+  const decipher = crypto.createDecipheriv(
+    "aes-256-gcm",
+    oidcTokenKey(sessionToken),
+    Buffer.from(envelope.iv, "base64url"),
+  );
+  decipher.setAAD(OIDC_TOKEN_AAD);
+  decipher.setAuthTag(Buffer.from(envelope.tag, "base64url"));
+  const plaintext = Buffer.concat([
+    decipher.update(Buffer.from(envelope.ciphertext, "base64url")),
+    decipher.final(),
+  ]);
+  const tokens = JSON.parse(plaintext.toString("utf8")) as DelegatedOidcTokens;
+  if (
+    typeof tokens.accessToken !== "string"
+    || !tokens.accessToken
+    || (tokens.refreshToken !== null && typeof tokens.refreshToken !== "string")
+    || !Number.isFinite(tokens.expiresAt)
+  ) {
+    throw new Error("Invalid OIDC token payload");
+  }
+  return tokens;
+}
+
+async function createSession(
+  reply: import("fastify").FastifyReply,
+  userId: string,
+  oidcSid: string | null = null,
+  oidcTokens?: TokenSet,
+) {
   const token = crypto.randomBytes(32).toString("base64url");
   const now = Date.now();
   await db.delete(appSessions).where(lt(appSessions.expiresAt, now));
@@ -109,12 +202,59 @@ async function createSession(reply: import("fastify").FastifyReply, userId: stri
     tokenHash: sessionTokenHash(token),
     userId,
     oidcSid,
+    oidcTokensEncrypted: oidcTokens ? encryptOidcTokens(token, delegatedTokenPayload(oidcTokens)) : null,
     expiresAt: now + SESSION_MS,
     refreshedAt: now,
     createdAt: now,
   });
   setSessionCookie(reply, token);
   return token;
+}
+
+const oidcRefreshes = new Map<string, Promise<string>>();
+
+async function gatewayAccessTokenForSession(sessionToken: string, session: LiveSession): Promise<string> {
+  if (!session.oidcTokensEncrypted) throw new GatewayReauthenticationError();
+
+  let tokens: DelegatedOidcTokens;
+  try {
+    tokens = decryptOidcTokens(sessionToken, session.oidcTokensEncrypted);
+  } catch {
+    throw new GatewayReauthenticationError();
+  }
+  if (tokens.expiresAt > Math.floor(Date.now() / 1000) + ACCESS_TOKEN_REFRESH_SKEW_SECONDS) {
+    return tokens.accessToken;
+  }
+  if (!tokens.refreshToken) throw new GatewayReauthenticationError();
+
+  const alreadyRefreshing = oidcRefreshes.get(session.tokenHash);
+  if (alreadyRefreshing) return alreadyRefreshing;
+
+  const refresh = (async () => {
+    try {
+      const refreshed = await (await getOidcClient()).refresh(tokens.refreshToken!);
+      const nextTokens = delegatedTokenPayload(refreshed, tokens.refreshToken);
+      const encrypted = encryptOidcTokens(sessionToken, nextTokens);
+      await db.update(appSessions)
+        .set({ oidcTokensEncrypted: encrypted })
+        .where(eq(appSessions.tokenHash, session.tokenHash));
+      session.oidcTokensEncrypted = encrypted;
+      return nextTokens.accessToken;
+    } catch {
+      throw new GatewayReauthenticationError();
+    }
+  })();
+  oidcRefreshes.set(session.tokenHash, refresh);
+  try {
+    return await refresh;
+  } finally {
+    oidcRefreshes.delete(session.tokenHash);
+  }
+}
+
+export async function gatewayAccessToken(req: FastifyRequest): Promise<string> {
+  if (!req.getGatewayAccessToken) throw new GatewayReauthenticationError();
+  return req.getGatewayAccessToken();
 }
 
 async function liveSession(req: FastifyRequest, reply?: import("fastify").FastifyReply): Promise<LiveSession | null> {
@@ -285,6 +425,7 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
   await app.register(fastifyCookie, { secret });
   await app.register(fastifyFormbody);
   app.decorateRequest("userId", undefined);
+  app.decorateRequest("getGatewayAccessToken", undefined);
   await ensureBootstrapAdmin();
   const androidHandoffs = new Map<string, { challenge: string; token: string; expiresAt: number }>();
 
@@ -310,7 +451,10 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
         maxAge: 10 * 60,
       });
       return reply.redirect(client.authorizationUrl({
-        scope: "openid profile email",
+        // The access token is used only by MacroDaddy's backend when calling
+        // the central gateway; offline_access lets it refresh without exposing
+        // either token to browser JavaScript.
+        scope: "openid profile email offline_access",
         redirect_uri: redirectUri,
         state: transaction.state,
         nonce: transaction.nonce,
@@ -341,7 +485,7 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
       });
       const claims = tokens.claims();
       const user = await userForOidcClaims(claims);
-      const token = await createSession(reply, user.id, typeof claims.sid === "string" ? claims.sid : null);
+      const token = await createSession(reply, user.id, typeof claims.sid === "string" ? claims.sid : null, tokens);
       if (transaction.androidChallenge) {
         const code = crypto.randomBytes(32).toString("base64url");
         androidHandoffs.set(code, { challenge: transaction.androidChallenge, token, expiresAt: Date.now() + ANDROID_HANDOFF_MS });
@@ -478,5 +622,7 @@ export async function registerAuth(app: FastifyInstance, dataDir: string) {
     }
 
     req.userId = userId;
+    const sessionToken = req.cookies[COOKIE_NAME]!;
+    req.getGatewayAccessToken = () => gatewayAccessTokenForSession(sessionToken, session);
   });
 }
