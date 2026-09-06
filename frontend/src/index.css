@@ -200,6 +200,19 @@
     -webkit-touch-callout: none;
   }
 
+  /* Belt-and-braces alongside the viewport's user-scalable=no: without this,
+     iOS Safari still holds every tap for ~300-350ms deciding whether it's the
+     first half of a double-tap-to-zoom, which is what made keypad digits
+     (DecimalKeypad) and other buttons feel like they registered a beat late.
+     Doesn't touch charts' pan/pinch overlay (useChartGesture.tsx) — that's a
+     plain div reading raw Pointer Events with its own touch-none, never a
+     native browser gesture in the first place. */
+  button,
+  a,
+  [role="button"] {
+    touch-action: manipulation;
+  }
+
   input,
   textarea,
   [contenteditable]:not([contenteditable="false"]) {

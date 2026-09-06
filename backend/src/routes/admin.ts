@@ -9,15 +9,14 @@ import { revokeUserSessions } from "../auth.js";
 
 const accessSchema = z.object({ disabled: z.boolean() });
 
-// Deep link to Authentik's user list, derived from the issuer rather than
-// hardcoded: everything about identity (creating people, passwords, who may
-// reach this application at all) happens there, and a fork with a different
-// tailnet — or none — should not inherit this household's hostname.
-function authentikUsersUrl(): string | null {
-  const issuer = process.env.OIDC_ISSUER?.trim();
-  if (!issuer) return null;
+// Identity changes belong in the safer mobile administration console rather
+// than Authentik's desktop-first admin UI. Forks can point at their own
+// console; this household defaults to the canonical Auth Daddy people view.
+function accountManagerUrl(): string | null {
+  const configured = process.env.AUTH_DADDY_PEOPLE_URL?.trim()
+    || "https://auth-daddy.tail984e80.ts.net/people";
   try {
-    return new URL("/if/admin/#/identity/users", issuer).toString();
+    return new URL(configured).toString();
   } catch {
     return null;
   }
@@ -50,7 +49,7 @@ export function registerAdminRoutes(app: FastifyInstance, dataDir: string) {
     const photosBy = new Map(photoStats.map((row) => [row.userId, row]));
 
     return {
-      authentikUsersUrl: authentikUsersUrl(),
+      accountManagerUrl: accountManagerUrl(),
       users: accounts
         .map((account) => ({
           id: account.id,

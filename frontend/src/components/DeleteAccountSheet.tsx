@@ -9,11 +9,11 @@ import { useDeleteAccount, type AdminUser } from "../api/admin";
 // no real safety gain at household scale.
 export default function DeleteAccountSheet({
   user,
-  authentikUsersUrl,
+  accountManagerUrl,
   onClose,
 }: {
   user: AdminUser;
-  authentikUsersUrl: string | null;
+  accountManagerUrl: string | null;
   onClose: () => void;
 }) {
   const deleteAccount = useDeleteAccount();
@@ -45,9 +45,9 @@ export default function DeleteAccountSheet({
                 account. To keep someone out, use <span className="text-ink">Block</span> instead, or remove them in
                 Authentik.
               </p>
-              {authentikUsersUrl && (
+              {accountManagerUrl && (
                 <a
-                  href={authentikUsersUrl}
+                  href={accountManagerUrl}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-block text-xs text-accent pt-1"

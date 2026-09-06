@@ -276,6 +276,11 @@ export const profiles = sqliteTable("profiles", {
   // the due date only advances by actually checking in, ignoring holds until
   // the next cycle begins.
   checkinIgnoredForDate: text("checkin_ignored_for_date"),
+  // Stamped once, the first time a goal-less user dismisses Dashboard's
+  // "Set a goal" card. Never cleared — dismissal is permanent by design, not
+  // a snooze. Setting a real goal makes the card disappear on its own
+  // (hasActiveGoal check); this only matters for staying goal-less forever.
+  goalPromptDismissedAt: text("goal_prompt_dismissed_at"),
 });
 
 // A goal is WHAT you want (target weight + rate), separate from a Program

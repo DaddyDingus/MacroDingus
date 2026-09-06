@@ -1,10 +1,10 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
-import { RefreshCw, CalendarClock } from "lucide-react";
+import { RefreshCw, CalendarClock, X } from "lucide-react";
 import { useDayLog } from "../api/logs";
 import { usePrograms } from "../api/programs";
-import { useCoachStatus, useIgnoreCheckin } from "../api/coach";
+import { useCoachStatus, useIgnoreCheckin, useDismissGoalPrompt } from "../api/coach";
 import { localDateString, daysBetween } from "../lib/date";
 import { targetsForDate } from "../lib/programTargets";
 import { forceRefreshApp } from "../lib/forceRefreshApp";
@@ -30,6 +30,7 @@ export default function DashboardScreen() {
   const programs = usePrograms();
   const status = useCoachStatus();
   const ignoreCheckin = useIgnoreCheckin();
+  const dismissGoalPrompt = useDismissGoalPrompt();
 
   const navigate = useNavigate();
   const [refreshing, setRefreshing] = useState(false);
@@ -124,6 +125,7 @@ export default function DashboardScreen() {
   const isCheckinDue = nextCheckinDueDate !== null && nextCheckinDueDate <= checkinToday && !checkinIgnored;
   const daysOverdue = isCheckinDue ? daysBetween(nextCheckinDueDate!, checkinToday) : 0;
   const hasActiveGoal = status.data?.activeGoal != null;
+  const goalPromptDismissed = status.data?.goalPromptDismissed ?? false;
   const hasWeightHistory = status.data?.trendWeightKg != null;
   const directPullProgress = Math.min(pullProgress, 1.4);
   const pullParked = refreshing || Boolean(refreshError);
@@ -171,10 +173,21 @@ export default function DashboardScreen() {
             through leads straight into that same illustrated flow, so this
             card is a preview of it rather than a second, different-looking
             entry point. Disappears the moment a goal exists (query
-            invalidation on creation), same "silent unless relevant, no
-            dismiss needed" pattern as the check-in banner below it. */}
-        {!hasActiveGoal && !status.isLoading && (
-          <div className="rounded-2xl bg-dashboardCard overflow-hidden">
+            invalidation on creation). A goal-less account can also dismiss it
+            permanently via the X — for someone who's only ever going to track,
+            not set a goal, see goalPromptDismissed. Setting a goal later is
+            still reachable via Strategy → New Goal regardless of this flag. */}
+        {!hasActiveGoal && !goalPromptDismissed && !status.isLoading && (
+          <div className="relative rounded-2xl bg-dashboardCard overflow-hidden">
+            <button
+              type="button"
+              className="absolute right-2 top-2 z-10 flex h-9 w-9 items-center justify-center rounded-full text-muted active:bg-white/10"
+              aria-label="Dismiss"
+              onClick={() => dismissGoalPrompt.mutate()}
+              disabled={dismissGoalPrompt.isPending}
+            >
+              <X size={17} />
+            </button>
             <div className="p-3 pb-0">
               <WizardIllustration variant="goal" />
             </div>

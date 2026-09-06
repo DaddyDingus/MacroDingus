@@ -269,6 +269,12 @@ export default function AddFoodSheet({
   const [aiLookupClarification, setAiLookupClarification] = useState<{ question: string; options: string[] } | null>(null);
   const [aiLookupError, setAiLookupError] = useState<string | null>(null);
   const [aiLookupNotice, setAiLookupNotice] = useState<AiLookupNotice | null>(null);
+  // Seeds Describe's text input when the user bails out of a failed AI food
+  // lookup — Describe is the feature that's actually allowed to estimate,
+  // where "AI food" deliberately only ever cites a real AFCD/USDA record.
+  // Cleared by DescribeTab itself once read, so a later unrelated visit to
+  // the tab doesn't inherit stale text.
+  const [describeSeedText, setDescribeSeedText] = useState<string | null>(null);
   const [selectedFood, setSelectedFood] = useState<Food | null>(null);
   // True only for the initialFood open path (QuickActionFlow's recipe
   // picker) — Food Detail's "Add" commits immediately there instead of
@@ -925,6 +931,12 @@ export default function AddFoodSheet({
     if (description.length < 2 || aiFoodLookup.isPending) return;
     dismissNativeKeyboard();
     setAiLookupError(null);
+    // A retry (tapping "AI food" again, or answering a clarification option)
+    // must clear the PREVIOUS round's clarification immediately, not just on
+    // a resolved success — otherwise a fresh attempt that lands on an error
+    // instead of a new clarification leaves the old question/options sitting
+    // on screen underneath the new error message.
+    setAiLookupClarification(null);
     aiFoodLookup.mutate({ description, clarification }, {
       onSuccess: (result) => {
         if (result.status === "clarification") {
@@ -1489,7 +1501,22 @@ export default function AddFoodSheet({
                               </div>
                             </div>
                           )}
-                          {aiLookupError && <p className="mx-4 my-2 text-xs leading-relaxed text-protein">{aiLookupError}</p>}
+                          {aiLookupError && (
+                            <div className="mx-4 my-2">
+                              <p className="text-xs leading-relaxed text-protein">{aiLookupError}</p>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDescribeSeedText(query.trim());
+                                  setAiLookupError(null);
+                                  setActiveTab("describe");
+                                }}
+                                className="mt-1.5 text-xs font-medium text-accent active:opacity-70"
+                              >
+                                Try Describe instead
+                              </button>
+                            </div>
+                          )}
                           {query.trim().length === 1 && (
                             <p className="px-4 py-3 text-sm text-muted">Type at least 2 characters to search.</p>
                           )}
@@ -1517,7 +1544,13 @@ export default function AddFoodSheet({
                       {activeTab === "quickAdd" && <QuickAddTab createFood={createFood} onCreated={addToPlate} />}
 
                       {activeTab === "describe" && (
-                        <DescribeTab onAdded={addToPlate} onActionChange={setDescribeAction} onResolved={celebrateDescribedMeal} />
+                        <DescribeTab
+                          onAdded={addToPlate}
+                          onActionChange={setDescribeAction}
+                          onResolved={celebrateDescribedMeal}
+                          initialText={describeSeedText ?? undefined}
+                          onConsumeInitialText={() => setDescribeSeedText(null)}
+                        />
                       )}
 
                       {activeTab === "library" && (
@@ -2910,12 +2943,25 @@ function DescribeTab({
   onAdded,
   onActionChange,
   onResolved,
+  initialText,
+  onConsumeInitialText,
 }: {
   onAdded: (food: Food, quantityGrams?: number) => void;
   onActionChange: (action: DescribeAction | null) => void;
   onResolved: (count: number) => void;
+  initialText?: string;
+  onConsumeInitialText?: () => void;
 }) {
-  const [text, setText] = useState("");
+  const [text, setText] = useState(initialText ?? "");
+  // This tab is only ever mounted while its own conditional render is true,
+  // so a fresh mount is exactly the moment `initialText` (a failed AI food
+  // lookup's query) should seed the field. Consuming it back to the parent
+  // here — rather than leaving it set — stops a later, unrelated visit to
+  // this tab from silently inheriting stale text.
+  useEffect(() => {
+    if (initialText) onConsumeInitialText?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [photo, setPhoto] = useState<File | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const describeMeal = useDescribeMeal();

@@ -42,9 +42,9 @@ const RESOLUTION_SCHEMA = {
     selectedId: { type: ["string", "null"] },
     displayName: { type: ["string", "null"] },
     confidence: { type: "string", enum: ["high", "medium", "low"] },
-    assumptions: { type: "array", items: { type: "string" }, maxItems: 6 },
+    assumptions: { type: "array", items: { type: "string" } },
     clarificationQuestion: { type: ["string", "null"] },
-    clarificationOptions: { type: "array", items: { type: "string" }, maxItems: 4 },
+    clarificationOptions: { type: "array", items: { type: "string" } },
   },
   required: ["selectedId", "displayName", "confidence", "assumptions", "clarificationQuestion", "clarificationOptions"],
   additionalProperties: false,
@@ -57,14 +57,29 @@ const RESOLUTION_SCHEMA = {
 const QUERY_NOISE = new Set([
   "a", "an", "of", "the", "per", "portion", "serving", "gram", "grams", "g",
   "pellet", "pellets", "smoker", "smoked", "smoking", "cooked", "cooking",
+  "dried", "dehydrated", "dehydrating",
 ]);
 const PREPARATION_WORDS = new Set(["smoked", "smoking", "cooked", "roasted", "grilled", "fried", "boiled", "casseroled", "raw"]);
+// Dehydration removes water and concentrates calories several-fold (real
+// dried kiwi runs ~350 kcal/100g against ~55 for raw) — nothing like the
+// modest swing between cooking methods that PREPARATION_WORDS scores as a
+// soft bonus/penalty. A composition record for the fresh/raw version of a
+// food is not an acceptable stand-in for a dried one, so this gets a hard
+// veto in localScore instead. Found live: AFCD has no dried-kiwi entry at
+// all, so "dehydrated gold kiwifruit" scored positively against the RAW
+// AFCD "Kiwifruit, gold, peeled, raw" row (matching on "gold"+"kiwifruit"
+// alone) since "dehydrated" was just another loosely-optional identity
+// token — the model then dutifully picked the only candidate on offer and
+// relabeled it "Dehydrated gold kiwifruit" without touching its nutrition,
+// landing 35g at 19 kcal instead of the ~123 kcal a real dried kiwi is.
+const MOISTURE_WORDS = new Set(["dried", "dehydrated", "dehydrating"]);
 
-function queryTokens(description: string): { identity: string[]; preparations: string[] } {
+function queryTokens(description: string): { identity: string[]; preparations: string[]; moisture: string[] } {
   const tokens = normalizeFoodQuery(description).split(" ").filter(Boolean);
   return {
     identity: [...new Set(tokens.filter((token) => !QUERY_NOISE.has(token) && !/^\d+(?:\.\d+)?(?:g|gram|grams)?$/.test(token)))],
     preparations: [...new Set(tokens.filter((token) => PREPARATION_WORDS.has(token)))],
+    moisture: [...new Set(tokens.filter((token) => MOISTURE_WORDS.has(token)))],
   };
 }
 
@@ -74,12 +89,15 @@ function quantityFromDescription(description: string): number {
   return Number.isFinite(value) && value > 0 && value <= 10_000 ? value : 100;
 }
 
-function localScore(name: string, identity: string[], preparations: string[]): number {
+function localScore(name: string, identity: string[], preparations: string[], moisture: string[]): number {
   const normalized = normalizeFoodQuery(name);
   const words = new Set(normalized.split(" "));
   const matchedIdentity = identity.filter((token) => words.has(token) || normalized.includes(token));
   if (identity.length > 1 && matchedIdentity.length < Math.min(2, identity.length)) return 0;
   if (matchedIdentity.length === 0) return 0;
+  // Hard veto, not a scoring adjustment: a dried/dehydrated request must
+  // never resolve to a candidate that isn't itself recorded as dried.
+  if (moisture.length > 0 && !moisture.some((word) => words.has(word) || normalized.includes(word))) return 0;
   let score = matchedIdentity.length * 20 - (identity.length - matchedIdentity.length) * 8;
   if (preparations.some((word) => words.has(word))) score += 8;
   if (preparations.some((word) => word === "smoked" || word === "smoking" || word === "cooked")) {
@@ -95,11 +113,11 @@ function candidateFromAfcd(food: FoodRow): Candidate {
 }
 
 async function localCandidates(description: string): Promise<Candidate[]> {
-  const { identity, preparations } = queryTokens(description);
+  const { identity, preparations, moisture } = queryTokens(description);
   if (identity.length === 0) return [];
   const rows = await db.select().from(foods).where(andSource("afcd"));
   return rows
-    .map((food) => ({ food, score: localScore(food.name, identity, preparations) }))
+    .map((food) => ({ food, score: localScore(food.name, identity, preparations, moisture) }))
     .filter((entry) => entry.score > 0)
     .sort((a, b) => b.score - a.score || a.food.name.localeCompare(b.food.name))
     .slice(0, 36)
@@ -198,9 +216,12 @@ function candidateFromUsda(food: FdcFood): Candidate | null {
 }
 
 async function usdaCandidates(description: string): Promise<Candidate[]> {
-  const { identity } = queryTokens(description);
+  const { identity, moisture } = queryTokens(description);
   if (identity.length === 0) return [];
-  const query = identity.join(" ");
+  // Moisture words ride along in the search text (helps FDC's own relevance
+  // ranking surface a real dried/dehydrated record if one exists) even
+  // though they're excluded from `identity`'s scoring role elsewhere.
+  const query = [...identity, ...moisture].join(" ");
   const response = await fetch(`https://api.nal.usda.gov/fdc/v1/foods/search?api_key=${encodeURIComponent(process.env.USDA_FDC_API_KEY?.trim() || "DEMO_KEY")}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -209,9 +230,17 @@ async function usdaCandidates(description: string): Promise<Candidate[]> {
   });
   if (!response.ok) throw new Error(`USDA FoodData Central returned ${response.status}`);
   const body = await response.json() as { foods?: FdcFood[] };
-  return (body.foods ?? []).flatMap((food) => {
+  const candidates = (body.foods ?? []).flatMap((food) => {
     const candidate = candidateFromUsda(food);
     return candidate ? [candidate] : [];
+  });
+  // Same hard veto as the local AFCD path — this fallback only runs once
+  // AFCD had nothing dried to offer, so it must not quietly hand back a
+  // fresh/raw USDA record as if that gap were now filled.
+  if (moisture.length === 0) return candidates;
+  return candidates.filter((candidate) => {
+    const normalized = normalizeFoodQuery(candidate.sourceFoodName);
+    return moisture.some((word) => normalized.includes(word));
   });
 }
 
@@ -280,6 +309,7 @@ ${candidates.map(candidateSummary).join("\n")}
 Rules:
 - Never invent nutrition or an id. selectedId must be one listed candidate id or null.
 - Prefer the closest cooked state, cut, edible portion, and fat/trim state. Smoking without sauce is nutritionally closest to an appropriate cooked/roasted record; the smoker fuel itself adds no macros.
+- Dried, dehydrated, freeze-dried, or powdered is a water-removal transformation, not a minor preparation like roasting versus grilling — it can concentrate calories several-fold over the fresh/raw form of the same food. Only select a candidate that is itself recorded in that dried/concentrated state for such a request; if every candidate is fresh/raw, return selectedId null rather than relabeling a fresh record under a dried name.
 - If an omitted detail creates a materially different calorie result (especially lean/trimmed versus untrimmed, meat-only versus skin/fat, drained versus undrained, or sauce/glaze), return selectedId null and ask one short clarification question with 2-4 concise tap options.
 - Do not ask about details that do not materially affect nutrition. If the user already clarified it, make the best match and disclose any remaining assumption.
 - displayName should be concise and natural, preserve meaningful preparation from the request, and disclose trim state when relevant. Do not claim the cited record was smoked if it was merely the closest roasted proxy; phrase that as an assumption instead.

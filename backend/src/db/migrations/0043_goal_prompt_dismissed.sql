@@ -1,0 +1,1 @@
+ALTER TABLE `profiles` ADD `goal_prompt_dismissed_at` text;

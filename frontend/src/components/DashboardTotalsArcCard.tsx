@@ -105,7 +105,12 @@ function ArcPage({
   const [ringRevealed, setRingRevealed] = useState(false);
   const remaining = targets ? targets.calories - totals.calories : null;
   const ringValue = mode === "remaining" && remaining !== null ? remaining : totals.calories;
-  const ringPct = targets ? pct(ringValue, targets.calories) : 0;
+  // With no target, "% of target" is meaningless — draw the ring solid
+  // instead of leaving it empty, since an empty ring reads as broken/nothing
+  // logged when the total below it is very much not zero. A goal-less
+  // account only ever hits this component in mode="total" (see the !targets
+  // branch below), so this isn't chasing a "% remaining" that doesn't exist.
+  const ringPct = targets ? pct(ringValue, targets.calories) : 100;
 
   // Both swipe pages stay mounted side-by-side, so a mount-only CSS
   // animation would run once while one page is still off-screen and never
@@ -138,11 +143,17 @@ function ArcPage({
   return (
     <div className="w-full shrink-0 space-y-5" style={{ scrollSnapAlign: "center" }}>
       <div className="grid grid-cols-[1fr_auto_1fr] items-center">
+        {/* No goal means no "Remaining" to report — an empty cell keeps the
+            ring centered without a dead "–" beside it. */}
         <div className="flex flex-col items-center justify-center text-center gap-0.5">
-          <span className="text-[11px] tracking-widest uppercase text-muted">{leftLabel}</span>
-          <span className="tabular text-xl font-medium tracking-tight">
-            {leftValue === null ? "–" : fmt(kcalToUnit(Math.abs(leftValue), energyUnit))}
-          </span>
+          {targets && (
+            <>
+              <span className="text-[11px] tracking-widest uppercase text-muted">{leftLabel}</span>
+              <span className="tabular text-xl font-medium tracking-tight">
+                {leftValue === null ? "–" : fmt(kcalToUnit(Math.abs(leftValue), energyUnit))}
+              </span>
+            </>
+          )}
         </div>
 
         {/* No negative margin here — the ring is pre-centered within the SVG's
@@ -177,10 +188,14 @@ function ArcPage({
         </div>
 
         <div className="flex flex-col items-center justify-center text-center gap-0.5">
-          <span className="text-[11px] tracking-widest uppercase text-muted">Target</span>
-          <span className="tabular text-xl font-medium tracking-tight">
-            {targets ? fmt(kcalToUnit(targets.calories, energyUnit)) : "–"}
-          </span>
+          {targets && (
+            <>
+              <span className="text-[11px] tracking-widest uppercase text-muted">Target</span>
+              <span className="tabular text-xl font-medium tracking-tight">
+                {fmt(kcalToUnit(targets.calories, energyUnit))}
+              </span>
+            </>
+          )}
         </div>
       </div>
 
@@ -197,7 +212,7 @@ function ArcPage({
             <span key={`${m.key}-track`} className="block h-1 w-full rounded-full bg-dashboardTrack overflow-hidden">
               <span
                 className={`block h-full rounded-full ${m.colorClass} transition-[width] duration-500 ease-out`}
-                style={{ width: `${m.target !== undefined ? pct(m.displayValue, m.target) : 0}%` }}
+                style={{ width: `${m.target !== undefined ? pct(m.displayValue, m.target) : 100}%` }}
               />
             </span>
           ))}

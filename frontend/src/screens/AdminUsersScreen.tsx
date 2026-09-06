@@ -45,7 +45,7 @@ export default function AdminUsersScreen() {
   const setAccess = useSetAccountAccess();
   const [pendingDelete, setPendingDelete] = useState<AdminUser | null>(null);
 
-  const authentikUsersUrl = accounts.data?.authentikUsersUrl ?? null;
+  const accountManagerUrl = accounts.data?.accountManagerUrl ?? null;
   let block = 0;
 
   return (
@@ -74,9 +74,9 @@ export default function AdminUsersScreen() {
                     passwords, and whether a person exists at all are managed there — this screen manages their
                     MacroDaddy data and access.
                   </p>
-                  {authentikUsersUrl && (
+                  {accountManagerUrl && (
                     <a
-                      href={authentikUsersUrl}
+                      href={accountManagerUrl}
                       target="_blank"
                       rel="noreferrer"
                       className="inline-flex items-center gap-1.5 text-xs text-accent mt-2"
@@ -179,7 +179,7 @@ export default function AdminUsersScreen() {
       {pendingDelete && (
         <DeleteAccountSheet
           user={pendingDelete}
-          authentikUsersUrl={authentikUsersUrl}
+          accountManagerUrl={accountManagerUrl}
           onClose={() => setPendingDelete(null)}
         />
       )}

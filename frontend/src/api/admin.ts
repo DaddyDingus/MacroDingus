@@ -18,7 +18,7 @@ export interface AdminUser {
 }
 
 export interface AdminUsersResponse {
-  authentikUsersUrl: string | null;
+  accountManagerUrl: string | null;
   users: AdminUser[];
 }
 

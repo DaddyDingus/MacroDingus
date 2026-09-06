@@ -104,6 +104,10 @@ export interface CoachStatus {
   // Strategy screen deliberately does not — checking in stays available
   // there, ignored or not. Re-arms itself once a check-in starts a new cycle.
   checkinIgnored: boolean;
+  // The user permanently dismissed Dashboard's "Set a goal" card. Never
+  // re-arms itself (unlike checkinIgnored) — setting a real goal is what
+  // makes the card disappear going forward, via activeGoal instead.
+  goalPromptDismissed: boolean;
   activeGoal: Goal | null;
   activeProgram: (Program & { days: Program["days"] }) | null;
 }
@@ -171,6 +175,16 @@ export function useIgnoreCheckin() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => apiFetch<{ ignored: boolean }>("/checkins/ignore", { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["coach"] }),
+  });
+}
+
+// Permanently dismisses Dashboard's "Set a goal" card — see
+// CoachStatus.goalPromptDismissed. No un-dismiss counterpart by design.
+export function useDismissGoalPrompt() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiFetch<{ profile: Profile }>("/profile/dismiss-goal-prompt", { method: "POST" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["coach"] }),
   });
 }

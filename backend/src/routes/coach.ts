@@ -397,6 +397,25 @@ export function registerCoachRoutes(app: FastifyInstance) {
     return { profile };
   });
 
+  // Permanently dismisses Dashboard's "Set a goal" card for accounts that
+  // will never set a goal. Deliberately no un-dismiss route — permanent
+  // means permanent. Same guarded write-once stamp as complete-onboarding
+  // above; setting a real goal makes the card disappear on its own via
+  // hasActiveGoal and never needs this flag cleared.
+  app.post("/api/profile/dismiss-goal-prompt", async (req, reply) => {
+    const userId = req.userId!;
+    const now = new Date().toISOString();
+
+    await db
+      .update(profiles)
+      .set({ goalPromptDismissedAt: now })
+      .where(and(eq(profiles.userId, userId), isNull(profiles.goalPromptDismissedAt)));
+
+    const [profile] = await db.select().from(profiles).where(eq(profiles.userId, userId));
+    if (!profile) return reply.code(404).send({ error: "Profile not found" });
+    return { profile };
+  });
+
   app.post("/api/checkins", async (req, reply) => {
     const result = await performCheckin(req.userId!, req.getGatewayAccessToken);
     if ("error" in result) return reply.code(400).send(checkinErrorBody(result));
@@ -520,6 +539,7 @@ export function registerCoachRoutes(app: FastifyInstance) {
       // True only while the ignore still describes the *current* cycle — a
       // completed check-in moves the due date on, which re-arms reminders.
       checkinIgnored: profile?.checkinIgnoredForDate != null && profile.checkinIgnoredForDate === checkinCycleKey(nextCheckinDue),
+      goalPromptDismissed: profile?.goalPromptDismissedAt != null,
       activeGoal: activeGoal ? serializeGoal(activeGoal) : null,
       activeProgram: activeProgram ? { ...serializeProgram(activeProgram), days: activeProgramDays } : null,
     };

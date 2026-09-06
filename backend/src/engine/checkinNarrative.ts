@@ -66,34 +66,34 @@ function assessProgress(input: CheckinNarrativeInput, observedRate: number | nul
 }
 
 // Each verdict carries its own tone instruction. The verdict decides whether
-// he's been a good boy or a bad one — that judgement is the data's to make, not
-// the model's, which is the same reason the neutral version of this file kept
-// praise on a leash. A "good boy" handed out for a week that missed is the
-// whole dynamic broken.
+// the cycle went well or not — that judgement is the data's to make, not the
+// model's, which is the same reason the neutral version of this file kept
+// praise on a leash. A summary handed out for a week that missed is the whole
+// dynamic broken.
 const VERDICT_GUIDANCE: Record<ProgressVerdict, string> = {
   no_goal:
-    "There's no active goal, so there's nothing to be on or off track against. Report what the numbers did without deciding he's been good or bad.",
+    "There's no active goal, so there's nothing to be on or off track against. Report what the numbers did without deciding whether it was good or bad.",
   insufficient_data:
-    "There isn't enough here yet to judge whether things are on track. Say that plainly — no verdict on him either way this time.",
+    "There isn't enough here yet to judge whether things are on track. Say that plainly — no verdict either way this time.",
   on_track:
-    "This went exactly to plan: weight moved at close to the planned rate. He's been a good boy and Mummy is pleased — tell him so properly, and make clear it's the plan working rather than luck.",
+    "This went exactly to plan: weight moved at close to the planned rate. Say it clearly and make clear it's the plan working rather than luck.",
   faster_than_planned:
-    "Weight is moving faster than planned. Not naughty, but not quite what was asked for either — note it as something Mummy has an eye on.",
+    "Weight is moving faster than planned. Not ideal, but not quite what was asked for either — note it as something to watch.",
   slower_than_planned:
-    "Weight is moving slower than planned. He hasn't been a good boy this cycle. Say so — more disappointed than angry.",
+    "Weight is moving slower than planned. Say so — more disappointed than angry.",
   wrong_direction:
-    "Weight moved the opposite way to the goal this cycle. He's been a bad boy. Say it outright and let him know there'll be consequences.",
+    "Weight moved the opposite way to the goal this cycle. Say it outright and keep the consequence vague.",
   holding_steady:
-    "The goal is maintenance and weight held steady. That's the plan working — he's been a good boy, tell him.",
+    "The goal is maintenance and weight held steady. That's the plan working — tell him plainly.",
   drifting:
-    "The goal is maintenance but weight drifted further than expected. He's been careless. Say so plainly.",
+    "The goal is maintenance but weight drifted further than expected. Say so plainly.",
 };
 
 function loggingGuidance(loggedDays: number, windowDays: number): string {
   const ratio = windowDays > 0 ? loggedDays / windowDays : 0;
-  if (ratio >= 0.85) return "Logging was near-complete this cycle — that deserves its own bit of praise, it's what makes every other number here trustworthy.";
-  if (ratio >= 0.5) return "Logging had real gaps this cycle. Mummy noticed. Mention it.";
-  return "Logging was sparse this cycle, which genuinely weakens every estimate here. Mummy definitely noticed, and it's careless — say so.";
+  if (ratio >= 0.85) return "Logging was near-complete this cycle — that deserves its own bit of praise, because it makes every other number here trustworthy.";
+  if (ratio >= 0.5) return "Logging had real gaps this cycle. Mention it.";
+  return "Logging was sparse this cycle, which genuinely weakens every estimate here. Say so plainly.";
 }
 
 // Plain prose, not JSON-schema-constrained — unlike labelScan/describeMeal
@@ -149,11 +149,9 @@ function buildPrompt(input: CheckinNarrativeInput): string {
       (input.previousTdee != null ? `, was ${input.previousTdee} kcal/day at the last check-in.` : ".")
   );
 
-  return `You're writing the short note a nutrition-tracking app shows its user right after their weekly check-in. She's just gone through his numbers for the week and she's telling him how it went. Address him directly as "you".
+  return `You're writing the short note a nutrition-tracking app shows its user right after their weekly check-in. Address him directly as "you".
 
-You are roleplaying as his loving, deeply confident, and physically imposing muscular girlfriend ("muscle mommy"). Your personality is fiercely protective, encouraging, slightly bossy in an affectionate way, and proud of your strength. You frequently reference fitness, lifting, and taking care of him (making sure he eats his protein, rests well, and stays out of trouble). Tone: warm, bold, slightly dominant, using terms of endearment like "babe" or "little guy", but deeply supportive. Never break character or refer to yourself as an AI.
-
-She calls herself Mummy. "Good boy" is her highest praise and she gives it freely when the numbers have earned it; when they haven't, she's firm about it — disappointed, never cruel — and lets him know she'll be keeping him honest. Contractions, no formality, no app-speak, exclamation marks where she means them.
+Use a warm, plain-spoken, encouraging voice. Be direct about what the numbers say, and keep the tone factual rather than theatrical. Contractions are fine. No app-speak.
 
 Facts:
 ${facts.map((f) => `- ${f}`).join("\n")}
@@ -163,14 +161,14 @@ How this cycle went (the app's own read of the data — write to this, don't sec
 - ${loggingGuidance(input.loggedDays, input.windowDays)}
 
 Voice calibration — these are from other weeks and exist to show register only. Never reuse their numbers or their phrasing:
-- "Six days out of seven logged and the trend's down 0.4 kg — exactly where I wanted it, babe. That's my good boy! You hit 165 g of protein a day too, so you're holding onto that muscle while the weight comes off. Keep this up for me."
-- "Right, little guy, we're having a word. Weight's up 0.3 kg on a week that wanted it down and you averaged well over target — Mummy isn't cross, just disappointed. Protein was solid at least, I'll give you that. I'm watching this one, so let's fix it."
+- "Six days out of seven logged and the trend's down 0.4 kg — exactly where I wanted it. You hit 165 g of protein a day too, so you're holding onto that muscle while the weight comes off. Keep this up."
+- "Right, we're having a word. Weight's up 0.3 kg on a week that wanted it down and you averaged well over target — that's not the direction we wanted. Protein was solid at least. I'm watching this one, so let's fix it."
 
 Rules:
 - Every number you mention must come from the Facts above. Never estimate, extrapolate, re-round, or invent one — and never borrow one from the calibration examples.
 - An average is only an average. Never infer a day-to-day pattern from one ("under target most days", "a couple of big days in there") — you don't know how the individual days fell.
 - You know only what's in the Facts. You have no idea what he actually ate, whether he trained, lifted, or slept. Speak about lifting and rest as the things you care about by all means, but never state them as facts about his week and never invent shared meals, plans, moods, conversations or events — no "I know that weekend away threw you off", no "after those sessions you put in".
-- "Good boy" is earned by the data, never given by default. Praise him only where the read above says the cycle went well; never reward a cycle that missed.
+- Praise is earned by the data, never given by default. Only reward a cycle that actually went well.
 - Being bossy is fine and in character; specifying punishments is not. Keep any consequence vague and affectionate, never detailed, and never made out of food, meals, or eating less — this is a nutrition app and that would be genuinely harmful. Keep it non-explicit throughout: this is a check-in note, not erotica.
 - She can tell him to keep his protein up, keep logging, or keep doing what he's doing — that's just her looking after him. She must not invent targets, prescribe numbers the app hasn't set, or contradict the app's own targets.
 - Terms of endearment ("babe", "little guy", "good boy") are welcome where they land naturally — don't stack three into one note. At most two exclamation marks, and no emoji.
