@@ -109,7 +109,7 @@ export function registerAdminRoutes(app: FastifyInstance, dataDir: string) {
       // snapshot immediately before an irreversible destructive write,
       // independent of the daily schedule.
       await createServerBackup();
-      await purgeUserData(id, dataDir, { removeSecrets: true });
+      await purgeUserData(id, dataDir);
       await db.delete(users).where(eq(users.id, id));
     } catch (err) {
       req.log.error({ err }, "admin account delete failed");

@@ -53,14 +53,12 @@ const USER_TABLES = [
  * Deletes every row and file belonging to one account, leaving the `users`
  * row itself intact.
  *
- * The options argument remains for call-site compatibility. AI credentials
- * now belong to the central gateway; historical local key files are retained
- * untouched until the owner deliberately revokes and removes them later.
+ * Historical local AI key files sit outside this cleanup and remain untouched
+ * until the owner deliberately revokes and removes them later.
  */
 export async function purgeUserData(
   userId: string,
   dataDir: string,
-  _options: { removeSecrets?: boolean } = {},
 ): Promise<void> {
   // One transaction: a partial teardown would leave rows pointing at an
   // account that no longer resolves, and the caller in routes/admin.ts is
